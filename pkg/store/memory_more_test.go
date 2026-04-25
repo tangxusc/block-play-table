@@ -59,6 +59,40 @@ func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
 	}
 }
 
+func TestMemoryStorePersistsOutboxMessages(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-1", Title: "T", ProjectID: "project-1", AgentType: domain.AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := task.PullEvents()
+	if err := s.AppendEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.OutboxMessages(ctx, false)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending outbox = %d, %v", len(pending), err)
+	}
+	if pending[0].Event.EventType != "TaskCreated" || pending[0].Status != domain.OutboxPending {
+		t.Fatalf("pending message = %+v", pending[0])
+	}
+	if err := s.MarkOutboxPublished(ctx, []string{pending[0].ID}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := s.OutboxMessages(ctx, false); len(pending) != 0 {
+		t.Fatalf("pending outbox after publish = %d", len(pending))
+	}
+	all, err := s.OutboxMessages(ctx, true)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("all outbox = %d, %v", len(all), err)
+	}
+	if all[0].Status != domain.OutboxPublished || all[0].PublishedAt == nil {
+		t.Fatalf("published message = %+v", all[0])
+	}
+}
+
 func TestMemoryStoreNotFoundErrors(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore()

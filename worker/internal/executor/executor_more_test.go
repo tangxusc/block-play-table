@@ -82,6 +82,8 @@ func TestPrepareWorktreeClonesGitRepository(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(worktree, "README.md")); err != nil {
 		t.Fatalf("cloned README missing: %v", err)
 	}
+	runGit(t, worktree, "rev-parse", "--is-inside-work-tree")
+	runGit(t, worktree, "branch", "--show-current")
 }
 
 func TestReporterFuncAndAgentFuncPropagateErrors(t *testing.T) {

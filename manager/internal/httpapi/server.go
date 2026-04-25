@@ -18,24 +18,44 @@ import (
 )
 
 type Server struct {
-	service *app.Service
-	gateway *WorkerGateway
-	logger  *slog.Logger
+	service          *app.Service
+	gateway          *WorkerGateway
+	logger           *slog.Logger
+	workerToken      string
+	heartbeatTimeout time.Duration
 }
 
-func NewServer(service *app.Service) *Server {
-	server := &Server{
-		service: service,
-		logger:  slog.Default(),
+type Option func(*Server)
+
+func WithWorkerToken(token string) Option {
+	return func(s *Server) {
+		s.workerToken = token
 	}
-	server.gateway = NewWorkerGateway(service, server.logger)
+}
+
+func WithWorkerHeartbeatTimeout(timeout time.Duration) Option {
+	return func(s *Server) {
+		s.heartbeatTimeout = timeout
+	}
+}
+
+func NewServer(service *app.Service, options ...Option) *Server {
+	server := &Server{
+		service:          service,
+		logger:           slog.Default(),
+		heartbeatTimeout: 90 * time.Second,
+	}
+	for _, option := range options {
+		option(server)
+	}
+	server.gateway = NewWorkerGateway(service, server.logger, server.workerToken)
 	return server
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
-	mux.HandleFunc("/readyz", s.health)
+	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/graphql", s.graphql)
 	mux.HandleFunc("/worker/ws", s.gateway.Handle)
 	mux.HandleFunc("/subscriptions", s.subscriptions)
@@ -43,6 +63,14 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if err := s.service.Store().Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -138,8 +166,10 @@ func (s *Server) dispatchGraphQL(ctx context.Context, request graphQLRequest) (m
 		if err := decodeVarAny(request, []string{"taskId", "id"}, &taskID); err != nil {
 			return nil, err
 		}
-		_ = s.gateway.SendTaskInterrupt("", taskID)
-		task, err := s.service.Task(ctx, taskID)
+		task, workerID, err := s.service.InterruptTask(ctx, taskID)
+		if err == nil {
+			_ = s.gateway.SendTaskInterrupt(workerID, taskID)
+		}
 		return map[string]any{"interruptTask": task}, err
 	case strings.Contains(query, "taskLogs"):
 		var taskID string
@@ -148,13 +178,36 @@ func (s *Server) dispatchGraphQL(ctx context.Context, request graphQLRequest) (m
 		}
 		logs, err := s.service.Store().TaskLogs(ctx, taskID)
 		return map[string]any{"taskLogs": logs}, err
+	case strings.Contains(query, "taskConversations"):
+		var taskID string
+		if err := decodeVar(request, "taskId", &taskID); err != nil {
+			return nil, err
+		}
+		messages, err := s.service.Store().TaskConversations(ctx, taskID)
+		return map[string]any{"taskConversations": messages}, err
 	case strings.Contains(query, "taskEvents"):
 		var taskID string
 		if err := decodeVar(request, "taskId", &taskID); err != nil {
 			return nil, err
 		}
-		events, err := s.service.Store().DomainEvents(ctx, domain.EventFilter{AggregateID: taskID})
+		events, err := s.service.DomainEvents(ctx, domain.EventFilter{AggregateID: taskID})
 		return map[string]any{"taskEvents": events}, err
+	case strings.Contains(query, "domainEvents"):
+		filter, err := decodeEventFilter(request)
+		if err != nil {
+			return nil, err
+		}
+		events, err := s.service.DomainEvents(ctx, filter)
+		return map[string]any{"domainEvents": events}, err
+	case strings.Contains(query, "outboxMessages"):
+		includePublished := true
+		if raw, ok := request.Variables["includePublished"]; ok {
+			if err := json.Unmarshal(raw, &includePublished); err != nil {
+				return nil, err
+			}
+		}
+		messages, err := s.service.OutboxMessages(ctx, includePublished)
+		return map[string]any{"outboxMessages": messages}, err
 	case strings.Contains(query, "task("):
 		var id string
 		if err := decodeVar(request, "id", &id); err != nil {
@@ -194,12 +247,26 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	filter := domain.EventFilter{
+		AggregateID:   r.URL.Query().Get("aggregateId"),
+		AggregateType: r.URL.Query().Get("aggregateType"),
+		EventType:     r.URL.Query().Get("eventType"),
+	}
+	events, unsubscribe := s.service.SubscribeDomainEvents(r.Context(), filter)
+	defer unsubscribe()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if err := conn.WriteJSON(map[string]any{"type": "DOMAIN_EVENT", "event": event}); err != nil {
+				return
+			}
 		case now := <-ticker.C:
 			if err := conn.WriteJSON(map[string]any{"type": "KEEPALIVE", "timestamp": now}); err != nil {
 				return
@@ -223,6 +290,31 @@ func decodeVarAny(request graphQLRequest, names []string, out any) error {
 		}
 	}
 	return errors.New("missing variable " + strings.Join(names, " or "))
+}
+
+func decodeEventFilter(request graphQLRequest) (domain.EventFilter, error) {
+	var filter domain.EventFilter
+	if raw, ok := request.Variables["filter"]; ok {
+		if err := json.Unmarshal(raw, &filter); err != nil {
+			return filter, err
+		}
+	}
+	if raw, ok := request.Variables["aggregateId"]; ok {
+		if err := json.Unmarshal(raw, &filter.AggregateID); err != nil {
+			return filter, err
+		}
+	}
+	if raw, ok := request.Variables["aggregateType"]; ok {
+		if err := json.Unmarshal(raw, &filter.AggregateType); err != nil {
+			return filter, err
+		}
+	}
+	if raw, ok := request.Variables["eventType"]; ok {
+		if err := json.Unmarshal(raw, &filter.EventType); err != nil {
+			return filter, err
+		}
+	}
+	return filter, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -253,28 +345,51 @@ var defaultUpgrader = websocket.Upgrader{
 }
 
 type WorkerGateway struct {
-	service *app.Service
-	logger  *slog.Logger
+	service     *app.Service
+	logger      *slog.Logger
+	workerToken string
 
 	mu          sync.RWMutex
-	connections map[string]*websocket.Conn
+	connections map[string]*workerConnection
 }
 
-func NewWorkerGateway(service *app.Service, logger *slog.Logger) *WorkerGateway {
-	return &WorkerGateway{service: service, logger: logger, connections: map[string]*websocket.Conn{}}
+type workerConnection struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
+func (c *workerConnection) writeJSON(value any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.conn.WriteJSON(value)
+}
+
+func NewWorkerGateway(service *app.Service, logger *slog.Logger, workerToken string) *WorkerGateway {
+	return &WorkerGateway{service: service, logger: logger, workerToken: workerToken, connections: map[string]*workerConnection{}}
 }
 
 func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
+	if g.workerToken != "" && r.URL.Query().Get("token") != g.workerToken {
+		http.Error(w, "invalid worker token", http.StatusUnauthorized)
+		return
+	}
 	conn, err := defaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
+	wsConn := &workerConnection{conn: conn}
 	workerID := r.URL.Query().Get("worker_id")
+	if workerID != "" {
+		g.trackConnection(workerID, wsConn)
+	}
 	defer func() {
-		if workerID != "" {
-			g.mu.Lock()
-			delete(g.connections, workerID)
-			g.mu.Unlock()
+		removed := g.untrackConnection(workerID, wsConn)
+		if removed {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := g.service.WorkerDisconnected(ctx, workerID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+				g.logger.Warn("mark worker offline failed", "workerId", workerID, "error", err)
+			}
 		}
 		_ = conn.Close()
 	}()
@@ -283,18 +398,43 @@ func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
 		if err := conn.ReadJSON(&envelope); err != nil {
 			return
 		}
-		if envelope.WorkerID != "" {
+		if envelope.WorkerID != "" && envelope.WorkerID != workerID {
+			if workerID != "" {
+				g.untrackConnection(workerID, wsConn)
+			}
 			workerID = envelope.WorkerID
-		}
-		if workerID != "" {
-			g.mu.Lock()
-			g.connections[workerID] = conn
-			g.mu.Unlock()
+			g.trackConnection(workerID, wsConn)
 		}
 		if err := g.apply(r.Context(), envelope, workerID); err != nil {
-			_ = conn.WriteJSON(protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskFailed, WorkerID: workerID, Timestamp: time.Now().UTC(), Payload: map[string]string{"error": err.Error()}})
+			_ = wsConn.writeJSON(protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskFailed, WorkerID: workerID, Timestamp: time.Now().UTC(), Payload: map[string]string{"error": err.Error()}})
 		}
 	}
+}
+
+func (g *WorkerGateway) trackConnection(workerID string, conn *workerConnection) {
+	if workerID == "" {
+		return
+	}
+	g.mu.Lock()
+	previous := g.connections[workerID]
+	g.connections[workerID] = conn
+	g.mu.Unlock()
+	if previous != nil && previous != conn {
+		_ = previous.conn.Close()
+	}
+}
+
+func (g *WorkerGateway) untrackConnection(workerID string, conn *workerConnection) bool {
+	if workerID == "" {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.connections[workerID] != conn {
+		return false
+	}
+	delete(g.connections, workerID)
+	return true
 }
 
 type rawEnvelope struct {
@@ -338,35 +478,69 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 		if worktree == "" {
 			worktree = event.Result
 		}
-		_, err := g.service.ApplyWorkerTaskStarted(ctx, envelope.MessageID, envelope.TaskID, worktree)
+		_, err := g.service.ApplyWorkerTaskStarted(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), worktree)
 		return err
 	case protocol.MessageTaskLog:
 		var event protocol.WorkerEvent
 		if err := json.Unmarshal(envelope.Payload, &event); err != nil {
 			return err
 		}
-		_, err := g.service.ApplyWorkerTaskLog(ctx, envelope.MessageID, envelope.TaskID, event.Stream, event.Content)
+		_, err := g.service.ApplyWorkerTaskLog(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Stream, event.Content)
 		return err
 	case protocol.MessageTaskConversation:
 		var event protocol.WorkerEvent
 		if err := json.Unmarshal(envelope.Payload, &event); err != nil {
 			return err
 		}
-		_, err := g.service.ApplyWorkerConversation(ctx, envelope.MessageID, envelope.TaskID, "assistant", event.Content)
+		role := event.Metadata["role"]
+		if role == "" {
+			role = "assistant"
+		}
+		_, err := g.service.ApplyWorkerConversationWithMetadata(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), role, event.Content, event.Metadata)
+		return err
+	case protocol.MessageTaskWaitingInput:
+		var event protocol.WorkerEvent
+		_ = json.Unmarshal(envelope.Payload, &event)
+		_, err := g.service.ApplyWorkerWaitingInput(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Content)
+		return err
+	case protocol.MessageTaskResult:
+		var event protocol.WorkerEvent
+		_ = json.Unmarshal(envelope.Payload, &event)
+		result := event.Result
+		if result == "" {
+			result = event.Content
+		}
+		_, err := g.service.ApplyWorkerTaskResult(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), result)
 		return err
 	case protocol.MessageTaskCompleted:
 		var event protocol.WorkerEvent
 		_ = json.Unmarshal(envelope.Payload, &event)
-		_, err := g.service.ApplyWorkerTaskCompleted(ctx, envelope.MessageID, envelope.TaskID, event.Result)
+		_, err := g.service.ApplyWorkerTaskCompleted(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Result)
 		return err
 	case protocol.MessageTaskFailed:
 		var event protocol.WorkerEvent
 		_ = json.Unmarshal(envelope.Payload, &event)
-		_, err := g.service.ApplyWorkerTaskFailed(ctx, envelope.MessageID, envelope.TaskID, event.Result)
+		_, err := g.service.ApplyWorkerTaskFailed(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Result)
+		return err
+	case protocol.MessageTaskInterrupted:
+		var event protocol.WorkerEvent
+		_ = json.Unmarshal(envelope.Payload, &event)
+		result := event.Result
+		if result == "" {
+			result = event.Content
+		}
+		_, err := g.service.ApplyWorkerTaskInterrupted(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), result)
 		return err
 	default:
 		return nil
 	}
+}
+
+func taskIDFromEnvelope(envelope rawEnvelope, event protocol.WorkerEvent) string {
+	if envelope.TaskID != "" {
+		return envelope.TaskID
+	}
+	return event.TaskID
 }
 
 func (g *WorkerGateway) SendTaskStart(workerID, taskID string, payload protocol.TaskStartPayload) error {
@@ -400,5 +574,5 @@ func (g *WorkerGateway) send(workerID string, envelope protocol.Envelope) error 
 	if conn == nil {
 		return nil
 	}
-	return conn.WriteJSON(envelope)
+	return conn.writeJSON(envelope)
 }

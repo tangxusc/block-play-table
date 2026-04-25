@@ -137,6 +137,9 @@ func TestConnectAndServeSendsRegistration(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	registered := make(chan protocol.Envelope, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("token"); got != "secret" {
+			t.Errorf("token query = %q, want secret", got)
+		}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Errorf("upgrade: %v", err)
@@ -157,6 +160,7 @@ func TestConnectAndServeSendsRegistration(t *testing.T) {
 	err := New(Config{
 		ManagerWSURL:    "ws" + strings.TrimPrefix(server.URL, "http"),
 		WorkerID:        "worker-1",
+		WorkerToken:     "secret",
 		Name:            "W",
 		WorkDir:         t.TempDir(),
 		SupportedAgents: []domain.AgentType{domain.AgentCodex},

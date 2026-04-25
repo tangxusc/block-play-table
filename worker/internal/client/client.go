@@ -20,6 +20,7 @@ import (
 type Config struct {
 	ManagerWSURL    string
 	WorkerID        string
+	WorkerToken     string
 	Name            string
 	WorkDir         string
 	SupportedAgents []domain.AgentType
@@ -89,6 +90,9 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	}
 	q := wsURL.Query()
 	q.Set("worker_id", c.config.WorkerID)
+	if c.config.WorkerToken != "" {
+		q.Set("token", c.config.WorkerToken)
+	}
 	wsURL.RawQuery = q.Encode()
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL.String(), nil)
 	if err != nil {
@@ -165,12 +169,14 @@ func (c *Client) readLoop(ctx context.Context) error {
 			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
 				return err
 			}
+			if err := c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskAccepted, WorkerID: c.config.WorkerID, TaskID: envelope.TaskID, Timestamp: time.Now().UTC()}); err != nil {
+				return err
+			}
 			go func() {
 				if err := c.executor.Execute(ctx, payload); err != nil {
 					c.logger.Warn("task execution finished with error", "taskId", payload.Task.ID, "error", err)
 				}
 			}()
-			_ = c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskAccepted, WorkerID: c.config.WorkerID, TaskID: envelope.TaskID, Timestamp: time.Now().UTC()})
 		case protocol.MessageTaskInterrupt:
 			c.executor.Interrupt(envelope.TaskID)
 		case protocol.MessagePing:

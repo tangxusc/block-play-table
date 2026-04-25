@@ -11,6 +11,7 @@ import (
 )
 
 type Store interface {
+	Ping(context.Context) error
 	SaveTask(context.Context, *domain.Task) error
 	Task(context.Context, string) (*domain.Task, error)
 	Tasks(context.Context) ([]*domain.Task, error)
@@ -28,6 +29,8 @@ type Store interface {
 	TaskConversations(context.Context, string) ([]domain.ConversationMessage, error)
 	AppendEvents(context.Context, []domain.DomainEvent) error
 	DomainEvents(context.Context, domain.EventFilter) ([]domain.DomainEvent, error)
+	OutboxMessages(context.Context, bool) ([]domain.OutboxMessage, error)
+	MarkOutboxPublished(context.Context, []string, time.Time) error
 	MarkMessageProcessed(context.Context, string) (bool, error)
 }
 
@@ -40,6 +43,7 @@ type MemoryStore struct {
 	logs              []domain.TaskLog
 	conversations     []domain.ConversationMessage
 	events            []domain.DomainEvent
+	outbox            []domain.OutboxMessage
 	processedMessages map[string]struct{}
 }
 
@@ -51,6 +55,10 @@ func NewMemoryStore() *MemoryStore {
 		settings:          domain.NewSettings(time.Now().UTC()),
 		processedMessages: map[string]struct{}{},
 	}
+}
+
+func (s *MemoryStore) Ping(ctx context.Context) error {
+	return nil
 }
 
 func (s *MemoryStore) SaveTask(ctx context.Context, task *domain.Task) error {
@@ -194,6 +202,14 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, events []domain.DomainEv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, events...)
+	for _, event := range events {
+		s.outbox = append(s.outbox, domain.OutboxMessage{
+			ID:        "out_" + event.EventID,
+			Event:     event,
+			Status:    domain.OutboxPending,
+			CreatedAt: event.OccurredAt,
+		})
+	}
 	return nil
 }
 
@@ -214,6 +230,38 @@ func (s *MemoryStore) DomainEvents(ctx context.Context, filter domain.EventFilte
 		out = append(out, event)
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) OutboxMessages(ctx context.Context, includePublished bool) ([]domain.OutboxMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.OutboxMessage, 0, len(s.outbox))
+	for _, message := range s.outbox {
+		if !includePublished && message.Status != domain.OutboxPending {
+			continue
+		}
+		out = append(out, cloneOutboxMessage(message))
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) MarkOutboxPublished(ctx context.Context, ids []string, publishedAt time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	selected := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		selected[id] = struct{}{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.outbox {
+		if _, ok := selected[s.outbox[index].ID]; ok {
+			s.outbox[index].Status = domain.OutboxPublished
+			s.outbox[index].PublishedAt = &publishedAt
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) MarkMessageProcessed(ctx context.Context, messageID string) (bool, error) {
@@ -253,4 +301,13 @@ func cloneProject(project *domain.Project) *domain.Project {
 	copy := *project
 	copy.SetupCommands = append([]string(nil), project.SetupCommands...)
 	return &copy
+}
+
+func cloneOutboxMessage(message domain.OutboxMessage) domain.OutboxMessage {
+	copy := message
+	if message.PublishedAt != nil {
+		publishedAt := *message.PublishedAt
+		copy.PublishedAt = &publishedAt
+	}
+	return copy
 }

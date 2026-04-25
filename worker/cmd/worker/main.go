@@ -23,6 +23,7 @@ func main() {
 	cfg := client.Config{
 		ManagerWSURL:    getenv("MANAGER_WS_URL", "ws://localhost:8080/worker/ws"),
 		WorkerID:        getenv("WORKER_ID", "worker-local"),
+		WorkerToken:     os.Getenv("WORKER_TOKEN"),
 		Name:            getenv("WORKER_NAME", "local-worker"),
 		WorkDir:         getenv("WORKER_WORK_DIR", "./worker-data"),
 		SupportedAgents: agents,

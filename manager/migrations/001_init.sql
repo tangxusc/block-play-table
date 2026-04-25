@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS domain_events (
   causation_id TEXT
 );
 
+CREATE TABLE IF NOT EXISTS outbox_messages (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES domain_events(id),
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  published_at TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS task_logs (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -96,3 +106,13 @@ CREATE TABLE IF NOT EXISTS processed_worker_messages (
   message_id TEXT PRIMARY KEY,
   processed_at TIMESTAMP NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_worker_id ON tasks(worker_id);
+CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
+CREATE INDEX IF NOT EXISTS idx_worker_project_bindings_project_id ON worker_project_bindings(project_id);
+CREATE INDEX IF NOT EXISTS idx_domain_events_aggregate ON domain_events(aggregate_type, aggregate_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_domain_events_type ON domain_events(event_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_messages_status ON outbox_messages(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_conversations_task_id ON task_conversations(task_id, created_at);

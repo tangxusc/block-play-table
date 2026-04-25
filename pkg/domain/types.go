@@ -41,10 +41,25 @@ type DomainEvent struct {
 	CausationID      string          `json:"causationId,omitempty"`
 }
 
+type OutboxStatus string
+
+const (
+	OutboxPending   OutboxStatus = "PENDING"
+	OutboxPublished OutboxStatus = "PUBLISHED"
+)
+
+type OutboxMessage struct {
+	ID          string       `json:"id"`
+	Event       DomainEvent  `json:"event"`
+	Status      OutboxStatus `json:"status"`
+	CreatedAt   time.Time    `json:"createdAt"`
+	PublishedAt *time.Time   `json:"publishedAt,omitempty"`
+}
+
 type EventFilter struct {
-	AggregateID   string
-	AggregateType string
-	EventType     string
+	AggregateID   string `json:"aggregateId"`
+	AggregateType string `json:"aggregateType"`
+	EventType     string `json:"eventType"`
 }
 
 func newEvent(eventType, aggregateType, aggregateID string, version int, payload any, occurredAt time.Time) DomainEvent {

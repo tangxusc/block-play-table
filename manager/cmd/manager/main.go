@@ -7,27 +7,47 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/httpapi"
+	"github.com/tangxusc/block-play-table/manager/migrations"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	addr := getenv("MANAGER_HTTP_ADDR", ":8080")
+	heartbeatTimeout := getenvDuration("WORKER_HEARTBEAT_TIMEOUT", 90*time.Second)
 
-	service := app.NewService(store.NewMemoryStore())
+	ctx := context.Background()
+	st, closeStore, err := openStore(ctx)
+	if err != nil {
+		logger.Error("manager storage setup failed", "error", err)
+		os.Exit(1)
+	}
+	defer closeStore()
+
+	service := app.NewService(st)
+	monitorCtx, stopMonitor := context.WithCancel(context.Background())
+	defer stopMonitor()
+	go service.MonitorWorkerHeartbeats(monitorCtx, heartbeatTimeout, heartbeatTimeout/3)
+
+	apiServer := httpapi.NewServer(
+		service,
+		httpapi.WithWorkerToken(os.Getenv("WORKER_TOKEN")),
+		httpapi.WithWorkerHeartbeatTimeout(heartbeatTimeout),
+	)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewServer(service).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		logger.Info("manager listening", "addr", addr, "trustedMode", true)
+		logger.Info("manager listening", "addr", addr, "trustedMode", true, "workerTokenEnabled", os.Getenv("WORKER_TOKEN") != "")
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("manager failed", "error", err)
 			os.Exit(1)
@@ -42,10 +62,57 @@ func main() {
 	_ = server.Shutdown(ctx)
 }
 
+func openStore(ctx context.Context) (store.Store, func(), error) {
+	driver := strings.ToLower(strings.TrimSpace(getenv("DB_DRIVER", store.SQLDriverSQLite)))
+	switch driver {
+	case store.SQLDriverMemory:
+		return store.NewMemoryStore(), func() {}, nil
+	case store.SQLDriverSQLite, "sqlite3":
+		dsn := getenv("DB_DSN", "./data/manager.db")
+		sqlStore, err := store.OpenSQLStore(ctx, store.SQLDriverSQLite, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+			_ = sqlStore.Close()
+			return nil, nil, err
+		}
+		return sqlStore, func() { _ = sqlStore.Close() }, nil
+	case store.SQLDriverPostgres, "postgresql", "pgx":
+		dsn := strings.TrimSpace(os.Getenv("DB_DSN"))
+		if dsn == "" {
+			return nil, nil, errors.New("DB_DSN is required when DB_DRIVER=postgres")
+		}
+		sqlStore, err := store.OpenSQLStore(ctx, store.SQLDriverPostgres, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+			_ = sqlStore.Close()
+			return nil, nil, err
+		}
+		return sqlStore, func() { _ = sqlStore.Close() }, nil
+	default:
+		return nil, nil, errors.New("unsupported DB_DRIVER " + driver)
+	}
+}
+
 func getenv(key, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
 		return fallback
 	}
 	return value
+}
+
+func getenvDuration(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

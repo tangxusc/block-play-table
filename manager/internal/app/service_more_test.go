@@ -98,3 +98,114 @@ func TestServiceListHelpersAndSettings(t *testing.T) {
 		t.Fatalf("Settings = %+v, %v", settings, err)
 	}
 }
+
+func TestServicePublishesDomainEventsAndMarksOutbox(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{EventType: "ProjectCreated"})
+	defer unsubscribe()
+
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		if event.EventType != "ProjectCreated" || event.AggregateID != project.ID {
+			t.Fatalf("published event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for domain event")
+	}
+
+	stored, err := service.DomainEvents(ctx, domain.EventFilter{AggregateID: project.ID})
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("DomainEvents = %d, %v", len(stored), err)
+	}
+	outbox, err := service.OutboxMessages(ctx, true)
+	if err != nil || len(outbox) != 1 {
+		t.Fatalf("OutboxMessages = %d, %v", len(outbox), err)
+	}
+	if outbox[0].Status != domain.OutboxPublished || outbox[0].PublishedAt == nil {
+		t.Fatalf("outbox message was not marked published: %+v", outbox[0])
+	}
+}
+
+func TestServiceMarksStaleWorkersOfflineAndReconnects(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time { return now }))
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-stale", Name: "W", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(91 * time.Second)
+	if err := service.MarkStaleWorkersOffline(ctx, 90*time.Second); err != nil {
+		t.Fatalf("MarkStaleWorkersOffline returned error: %v", err)
+	}
+	loaded, err := service.Store().Worker(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != domain.WorkerOffline {
+		t.Fatalf("status = %s, want OFFLINE", loaded.Status)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = service.Store().Worker(ctx, worker.ID)
+	if loaded.Status != domain.WorkerOnline {
+		t.Fatalf("status = %s, want ONLINE after reconnect", loaded.Status)
+	}
+}
+
+func TestServiceAutoAssignSkipsUnavailableWorkers(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	targetProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Target", GitURL: "git://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Other", GitURL: "git://other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	offline, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-offline", Name: "Offline", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
+	unsupported, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-unsupported", Name: "Unsupported", SupportedAgents: []domain.AgentType{domain.AgentClaude}, WorkDir: "/tmp"})
+	wrongProject, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-wrong-project", Name: "Wrong Project", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{otherProject.ID}})
+	occupied, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-occupied", Name: "Occupied", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
+	valid, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-valid", Name: "Valid", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{targetProject.ID}})
+	for _, workerID := range []string{unsupported.ID, wrongProject.ID, occupied.ID, valid.ID} {
+		if _, err := service.WorkerConnected(ctx, workerID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	offline.MarkOffline(time.Now())
+	if err := service.Store().SaveWorker(ctx, offline); err != nil {
+		t.Fatal(err)
+	}
+	otherTask, err := service.CreateTask(ctx, CreateTaskInput{Title: "Other Task", ProjectID: targetProject.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AssignWorker(ctx, otherTask.ID, occupied.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "Needs Worker", ProjectID: targetProject.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, _, err := service.StartTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("StartTask returned error: %v", err)
+	}
+	if started.WorkerID != valid.ID {
+		t.Fatalf("worker id = %q, want %q", started.WorkerID, valid.ID)
+	}
+}

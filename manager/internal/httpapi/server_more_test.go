@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
+	"github.com/tangxusc/block-play-table/manager/migrations"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
@@ -62,8 +64,20 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 			t.Fatalf("logs count = %d, want 0", len(logs))
 		}
 	}
+	if messagesValue := postGraphQL(t, server.URL, `query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { id } }`, map[string]any{"taskId": taskID})["data"].(map[string]any)["taskConversations"]; messagesValue != nil {
+		if messages := messagesValue.([]any); len(messages) != 0 {
+			t.Fatalf("conversation count = %d, want 0", len(messages))
+		}
+	}
 	if events := postGraphQL(t, server.URL, `query TaskEvents($taskId: ID!) { taskEvents(taskId: $taskId) { eventType } }`, map[string]any{"taskId": taskID})["data"].(map[string]any)["taskEvents"].([]any); len(events) == 0 {
 		t.Fatal("expected task events")
+	}
+	if events := postGraphQL(t, server.URL, `query DomainEvents($aggregateId: ID!) { domainEvents(aggregateId: $aggregateId) { eventType } }`, map[string]any{"aggregateId": taskID})["data"].(map[string]any)["domainEvents"].([]any); len(events) == 0 {
+		t.Fatal("expected domain events")
+	}
+	outbox := postGraphQL(t, server.URL, `query { outboxMessages { id status event { eventType } } }`, nil)["data"].(map[string]any)["outboxMessages"].([]any)
+	if len(outbox) == 0 || outbox[0].(map[string]any)["status"] != string(domain.OutboxPublished) {
+		t.Fatalf("expected published outbox messages, got %#v", outbox)
 	}
 	if got := postGraphQL(t, server.URL, `mutation InterruptTask($taskId: ID!) { interruptTask(taskId: $taskId) { id } }`, map[string]any{"taskId": taskID})["data"].(map[string]any)["interruptTask"].(map[string]any)["id"]; got != taskID {
 		t.Fatalf("interrupt task id = %v, want %s", got, taskID)
@@ -143,6 +157,39 @@ func TestServerValidationCORSAndSubscriptions(t *testing.T) {
 	}
 }
 
+func TestServerSubscriptionsPushDomainEvents(t *testing.T) {
+	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore())).Handler())
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions?eventType=ProjectCreated", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	_ = postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "P", "gitUrl": "git://repo"},
+	})
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var message map[string]any
+		if err := conn.ReadJSON(&message); err != nil {
+			t.Fatalf("subscription read: %v", err)
+		}
+		if message["type"] != "DOMAIN_EVENT" {
+			continue
+		}
+		event := message["event"].(map[string]any)
+		if event["eventType"] != "ProjectCreated" {
+			t.Fatalf("domain event = %#v", event)
+		}
+		return
+	}
+}
+
 func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
@@ -189,7 +236,9 @@ func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
 	sendWS(t, conn, protocol.Envelope{MessageID: "started-1", Type: protocol.MessageTaskStarted, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
 	sendWS(t, conn, protocol.Envelope{MessageID: "log-1", Type: protocol.MessageTaskLog, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Stream: "stdout", Content: "hello"}})
 	sendWS(t, conn, protocol.Envelope{MessageID: "conv-1", Type: protocol.MessageTaskConversation, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "done"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "done-1", Type: protocol.MessageTaskCompleted, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Result: "completed"}})
+	sendWS(t, conn, protocol.Envelope{MessageID: "waiting-1", Type: protocol.MessageTaskWaitingInput, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "waiting"}})
+	sendWS(t, conn, protocol.Envelope{MessageID: "result-1", Type: protocol.MessageTaskResult, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Result: "structured result"}})
+	sendWS(t, conn, protocol.Envelope{MessageID: "done-1", Type: protocol.MessageTaskCompleted, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{}})
 
 	deadline = time.Now().Add(2 * time.Second)
 	for {
@@ -205,11 +254,96 @@ func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if logs, _ := service.Store().TaskLogs(ctx, task.ID); len(logs) != 1 {
-		t.Fatalf("logs count = %d, want 1", len(logs))
+	loaded, err := service.Task(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Result != "structured result" {
+		t.Fatalf("task result = %q, want structured result", loaded.Result)
+	}
+	if logs, _ := service.Store().TaskLogs(ctx, task.ID); len(logs) != 2 {
+		t.Fatalf("logs count = %d, want 2", len(logs))
 	}
 	if messages, _ := service.Store().TaskConversations(ctx, task.ID); len(messages) != 1 {
 		t.Fatalf("conversation count = %d, want 1", len(messages))
+	}
+}
+
+func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore())
+	server := httptest.NewServer(NewServer(service, WithWorkerToken("secret")).Handler())
+	defer server.Close()
+
+	_, res, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-token", nil)
+	if err == nil {
+		t.Fatal("worker websocket without token should fail")
+	}
+	if res == nil || res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized response = %+v, err = %v", res, err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-token&token=secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendWS(t, conn, protocol.Envelope{MessageID: "reg-token", Type: protocol.MessageWorkerRegister, WorkerID: "worker-token", Timestamp: time.Now(), Payload: map[string]any{
+		"id": "worker-token", "name": "Token Worker", "supportedAgents": []string{"codex"}, "workDir": "/tmp", "projectBindingMode": "ALL_PROJECTS",
+	}})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		worker, err := service.Store().Worker(context.Background(), "worker-token")
+		if err == nil && worker.Status == domain.WorkerOnline {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker did not come online: %+v, %v", worker, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = conn.Close()
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		worker, err := service.Store().Worker(context.Background(), "worker-token")
+		if err == nil && worker.Status == domain.WorkerOffline {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker did not go offline: %+v, %v", worker, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestServerReadyzChecksStorage(t *testing.T) {
+	ctx := context.Background()
+	sqlStore, err := store.OpenSQLStore(ctx, store.SQLDriverSQLite, filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(app.NewService(sqlStore)).Handler())
+	defer server.Close()
+
+	res, err := http.Get(server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("readyz status = %d, want 200", res.StatusCode)
+	}
+	if err := sqlStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Get(server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("readyz status = %d, want 503 after closing db", res.StatusCode)
 	}
 }
 

@@ -175,8 +175,10 @@ func (t *Task) Complete(result string, now time.Time) error {
 	if t.Status != TaskRunning && t.Status != TaskStarting && t.Status != TaskWaitingInput {
 		return fmt.Errorf("%w: complete from %s", ErrInvalidTransition, t.Status)
 	}
-	t.Result = result
-	t.transition(TaskCompleted, now, "TaskCompleted", map[string]any{"result": result})
+	if result != "" {
+		t.Result = result
+	}
+	t.transition(TaskCompleted, now, "TaskCompleted", map[string]any{"result": t.Result})
 	return nil
 }
 
@@ -186,6 +188,16 @@ func (t *Task) Fail(reason string, now time.Time) error {
 	}
 	t.Result = reason
 	t.transition(TaskFailed, now, "TaskFailed", map[string]any{"reason": reason})
+	return nil
+}
+
+func (t *Task) RecordResult(result string, now time.Time) error {
+	if !t.canReceiveRuntimeEvent() {
+		return fmt.Errorf("%w: record result from %s", ErrInvalidTransition, t.Status)
+	}
+	t.Result = result
+	t.touch(now)
+	t.addEvent("TaskResultReported", map[string]any{"result": result}, now)
 	return nil
 }
 

@@ -147,6 +147,62 @@ func TestServiceStartTaskAutoAssignsAvailableWorker(t *testing.T) {
 	}
 }
 
+func TestServiceInterruptsTaskAndReleasesWorkerWhenWorkerConfirms(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+
+	interrupting, workerID, err := service.InterruptTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("InterruptTask returned error: %v", err)
+	}
+	if interrupting.Status != domain.TaskInterrupting {
+		t.Fatalf("status = %s, want INTERRUPTING", interrupting.Status)
+	}
+	if workerID != task.WorkerID {
+		t.Fatalf("worker id = %q, want %q", workerID, task.WorkerID)
+	}
+	interrupted, err := service.ApplyWorkerTaskInterrupted(ctx, "interrupted-1", task.ID, "interrupted")
+	if err != nil {
+		t.Fatalf("ApplyWorkerTaskInterrupted returned error: %v", err)
+	}
+	if interrupted.Status != domain.TaskInterrupted || interrupted.Result != "interrupted" {
+		t.Fatalf("interrupted task = %+v", interrupted)
+	}
+	worker, err := service.Store().Worker(ctx, task.WorkerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.CurrentTaskID != "" {
+		t.Fatalf("worker current task = %q, want released", worker.CurrentTaskID)
+	}
+}
+
+func TestServiceRecordsTaskResultBeforeCompletion(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+
+	withResult, err := service.ApplyWorkerTaskResult(ctx, "result-1", task.ID, "agent result")
+	if err != nil {
+		t.Fatalf("ApplyWorkerTaskResult returned error: %v", err)
+	}
+	if withResult.Status != domain.TaskRunning || withResult.Result != "agent result" {
+		t.Fatalf("task after result = %+v", withResult)
+	}
+	completed, err := service.ApplyWorkerTaskCompleted(ctx, "completed-1", task.ID, "")
+	if err != nil {
+		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
+	}
+	if completed.Result != "agent result" {
+		t.Fatalf("completion should preserve prior result, got %q", completed.Result)
+	}
+}
+
 func seedRunningTask(t *testing.T, ctx context.Context, service *Service) *domain.Task {
 	t.Helper()
 	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "file:///tmp/repo", DefaultBranch: "main", WorktreeNamePrefix: "p"})

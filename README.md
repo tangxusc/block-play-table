@@ -9,7 +9,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 ## Trusted Mode
 
-Authentication and authorization are intentionally disabled in this iteration. Manager, UI, and Workers must run on a trusted network. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -32,7 +32,7 @@ make build GO=/Users/tangxu/sdk/go1.16rc1/bin/go GO_TEST_ENV='GOROOT=/Users/tang
 ## Run Manager And Worker
 
 ```bash
-go run ./manager/cmd/manager
+DB_DRIVER=sqlite DB_DSN=./data/manager.db go run ./manager/cmd/manager
 ```
 
 In another shell:
@@ -42,6 +42,13 @@ MANAGER_WS_URL=ws://localhost:8080/worker/ws \
 WORKER_ID=worker-local \
 WORKER_WORK_DIR=./worker-data \
 go run ./worker/cmd/worker
+```
+
+To require Worker authentication, set the same token for Manager and Worker:
+
+```bash
+WORKER_TOKEN=dev-worker-token DB_DRIVER=sqlite DB_DSN=./data/manager.db go run ./manager/cmd/manager
+WORKER_TOKEN=dev-worker-token MANAGER_WS_URL=ws://localhost:8080/worker/ws go run ./worker/cmd/worker
 ```
 
 Manager endpoints:
@@ -54,6 +61,8 @@ Manager endpoints:
 
 ## Docker Compose
 
+Local SQLite mode:
+
 ```bash
 docker compose up --build manager worker ui
 ```
@@ -63,11 +72,21 @@ Then open:
 - UI: `http://localhost:3000`
 - Manager: `http://localhost:8080`
 
-PostgreSQL is included as an optional profile for team-deployment wiring:
+Team PostgreSQL mode:
 
 ```bash
-docker compose --profile postgres up --build
+cp .env.example .env
+# edit WORKER_TOKEN and POSTGRES_PASSWORD
+docker compose -f docker-compose.team.yml up --build
 ```
+
+Manager storage is selected by:
+
+- `DB_DRIVER=sqlite` with `DB_DSN=/data/manager.db`
+- `DB_DRIVER=postgres` with `DB_DSN=postgres://manager:password@postgres:5432/block_play_table?sslmode=disable`
+- `DB_DRIVER=memory` for temporary tests or demos only
+
+Readiness is exposed at `GET /readyz` and checks the configured store.
 
 ## Tests
 
@@ -110,4 +129,4 @@ npm run e2e:real-agents
 
 ## Current Storage State
 
-The running Manager currently uses an in-memory repository. `manager/migrations/001_init.sql` defines the SQLite/PostgreSQL-compatible schema for the next persistence adapter.
+The running Manager now supports SQLite and PostgreSQL through the shared repository interface. `manager/migrations/001_init.sql` is embedded and applied at startup. In-memory storage is still available with `DB_DRIVER=memory` for tests and short-lived demos.

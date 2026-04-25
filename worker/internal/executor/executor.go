@@ -3,6 +3,8 @@ package executor
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -105,7 +107,9 @@ func NewExecutor(config Config) *Executor {
 func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayload) error {
 	agent, ok := e.agents[payload.Task.AgentType]
 	if !ok {
-		return fmt.Errorf("agent %s is not configured", payload.Task.AgentType)
+		err := fmt.Errorf("agent %s is not configured", payload.Task.AgentType)
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error()})
+		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	e.mu.Lock()
@@ -121,7 +125,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	env := runtimeEnv(payload.AgentRuntimeEnv)
 	worktree, err := e.prepareWorktree(ctx, payload)
 	if err != nil {
-		e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error()})
+		e.reportExecutionError(ctx, payload.Task.ID, err)
 		return err
 	}
 	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskStarted, TaskID: payload.Task.ID, Content: worktree}); err != nil {
@@ -130,17 +134,19 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 
 	for _, command := range payload.Project.SetupCommands {
 		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
-			e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error()})
+			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
 	}
 	for _, command := range payload.Task.PreCommands {
 		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
-			e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error()})
+			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
 	}
 
+	finalResult := ""
+	agentFailed := ""
 	err = agent.Run(ctx, AgentInput{Task: payload.Task, Project: payload.Project, WorktreeDir: worktree, Env: env}, func(event AgentEvent) {
 		switch event.Type {
 		case AgentEventStdout:
@@ -151,6 +157,10 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: event.Content, Metadata: event.Metadata})
 		case AgentEventWaitingInput:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: event.Content})
+		case AgentEventCompleted:
+			finalResult = event.Content
+		case AgentEventFailed:
+			agentFailed = event.Content
 		}
 	})
 	if err != nil {
@@ -161,13 +171,23 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		}
 		return err
 	}
+	if agentFailed != "" {
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: agentFailed})
+		return fmt.Errorf("agent failed: %s", agentFailed)
+	}
 	for _, command := range payload.Task.PostCommands {
 		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
-			e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error()})
+			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
 	}
-	return e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskCompleted, TaskID: payload.Task.ID, Result: "completed"})
+	if finalResult == "" {
+		finalResult = "completed"
+	}
+	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskResult, TaskID: payload.Task.ID, Result: finalResult}); err != nil {
+		return err
+	}
+	return e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskCompleted, TaskID: payload.Task.ID, Result: finalResult})
 }
 
 func (e *Executor) Interrupt(taskID string) {
@@ -183,21 +203,46 @@ func (e *Executor) prepareWorktree(ctx context.Context, payload protocol.TaskSta
 	if err := os.MkdirAll(e.workDir, 0o755); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s-%s-%s", payload.Project.WorktreeNamePrefix, payload.Task.ID, time.Now().Format("01021504"))
-	name = strings.NewReplacer("/", "-", ":", "-", " ", "-").Replace(name)
+	name := worktreeName(payload)
 	target := filepath.Join(e.workDir, name)
 	if payload.Project.GitURL != "" && looksLikeGitRepo(payload.Project.GitURL) {
-		if err := runCommand(ctx, "", nil, "git", "clone", "--no-hardlinks", payload.Project.GitURL, target); err != nil {
+		cacheDir := filepath.Join(e.workDir, ".repos", repositoryCacheName(payload.Project))
+		if err := e.ensureRepositoryCache(ctx, payload.Project.GitURL, cacheDir); err != nil {
 			return "", err
 		}
 		branch := payload.Task.TargetBranch
 		if branch == "" {
-			branch = payload.Project.DefaultBranch
+			branch = "task/" + payload.Task.ID
 		}
-		_ = runCommand(ctx, target, nil, "git", "checkout", "-B", branch)
+		base := payload.Task.BaseBranch
+		if base == "" {
+			base = payload.Project.DefaultBranch
+		}
+		if base == "" {
+			base = "HEAD"
+		}
+		if err := runCommand(ctx, cacheDir, nil, "git", "worktree", "prune"); err != nil {
+			return "", err
+		}
+		if err := runCommand(ctx, cacheDir, nil, "git", "worktree", "add", "-B", branch, target, resolveGitRef(ctx, cacheDir, base)); err != nil {
+			return "", err
+		}
 		return target, nil
 	}
 	return target, os.MkdirAll(target, 0o755)
+}
+
+func (e *Executor) ensureRepositoryCache(ctx context.Context, gitURL, cacheDir string) error {
+	if _, err := os.Stat(filepath.Join(cacheDir, ".git")); err == nil {
+		return runCommand(ctx, cacheDir, nil, "git", "fetch", "--all", "--prune")
+	}
+	if stat, err := os.Stat(cacheDir); err == nil && stat.IsDir() {
+		return fmt.Errorf("repository cache exists but is not a git repository: %s", cacheDir)
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+		return err
+	}
+	return runCommand(ctx, "", nil, "git", "clone", gitURL, cacheDir)
 }
 
 func (e *Executor) runShell(ctx context.Context, taskID, dir string, env map[string]string, command string) error {
@@ -211,10 +256,10 @@ func (e *Executor) runShell(ctx context.Context, taskID, dir string, env map[str
 		shell = "cmd"
 		args = []string{"/C", command}
 	}
-	cmd := exec.CommandContext(ctx, shell, args...)
+	cmd := exec.Command(shell, args...)
 	cmd.Dir = dir
 	cmd.Env = mergeEnv(env)
-	out, err := cmd.CombinedOutput()
+	out, err := combinedOutput(ctx, cmd)
 	if len(out) > 0 {
 		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: taskID, Stream: "stdout", Content: string(out)})
 	}
@@ -237,6 +282,14 @@ func (e *Executor) report(ctx context.Context, event protocol.WorkerEvent) error
 	return e.reporter.Report(ctx, event)
 }
 
+func (e *Executor) reportExecutionError(ctx context.Context, taskID string, err error) {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		_ = e.report(context.Background(), protocol.WorkerEvent{Type: protocol.MessageTaskInterrupted, TaskID: taskID, Result: "interrupted"})
+		return
+	}
+	_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: taskID, Result: err.Error()})
+}
+
 type CommandAgent struct {
 	binary string
 	args   []string
@@ -256,9 +309,10 @@ func (a *CommandAgent) Run(ctx context.Context, input AgentInput, emit func(Agen
 	}
 	args := append([]string(nil), a.args...)
 	args = append(args, prompt)
-	cmd := exec.CommandContext(ctx, a.binary, args...)
+	cmd := exec.Command(a.binary, args...)
 	cmd.Dir = input.WorktreeDir
 	cmd.Env = mergeEnv(input.Env)
+	configureCommandForCancel(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -279,8 +333,19 @@ func (a *CommandAgent) Run(ctx context.Context, input AgentInput, emit func(Agen
 	go scanPipe(&wg, stderr, func(line string) {
 		emit(AgentEvent{Type: AgentEventStderr, Content: line})
 	})
-	wg.Wait()
-	return cmd.Wait()
+	done := make(chan error, 1)
+	go func() {
+		wg.Wait()
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		killCommandProcessGroup(cmd)
+		<-done
+		return ctx.Err()
+	}
 }
 
 func scanPipe(wg *sync.WaitGroup, pipe any, emit func(string)) {
@@ -298,6 +363,9 @@ func scanPipe(wg *sync.WaitGroup, pipe any, emit func(string)) {
 func runtimeEnv(vars []protocol.RuntimeEnvVar) map[string]string {
 	env := map[string]string{}
 	for _, item := range vars {
+		if strings.TrimSpace(item.Key) == "" {
+			continue
+		}
 		env[item.Key] = item.Value
 	}
 	return env
@@ -312,7 +380,7 @@ func mergeEnv(extra map[string]string) []string {
 }
 
 func looksLikeGitRepo(path string) bool {
-	if strings.HasPrefix(path, "git@") || strings.HasSuffix(path, ".git") || strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "ssh://") {
+	if strings.HasPrefix(path, "git@") || strings.HasSuffix(path, ".git") || strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "ssh://") || strings.HasPrefix(path, "git://") || strings.HasPrefix(path, "file://") {
 		return true
 	}
 	if stat, err := os.Stat(filepath.Join(path, ".git")); err == nil && (stat.IsDir() || !stat.IsDir()) {
@@ -321,13 +389,101 @@ func looksLikeGitRepo(path string) bool {
 	return false
 }
 
+func worktreeName(payload protocol.TaskStartPayload) string {
+	prefix := payload.Project.WorktreeNamePrefix
+	if prefix == "" {
+		prefix = payload.Project.ID
+	}
+	if prefix == "" {
+		prefix = "task"
+	}
+	return safePathPart(fmt.Sprintf("%s-%s-%s", prefix, payload.Task.ID, time.Now().Format("01021504")))
+}
+
+func repositoryCacheName(project protocol.ProjectPayload) string {
+	label := project.WorktreeNamePrefix
+	if label == "" {
+		label = project.ID
+	}
+	if label == "" {
+		label = "project"
+	}
+	sum := sha1.Sum([]byte(project.ID + "\x00" + project.GitURL))
+	return safePathPart(label) + "-" + hex.EncodeToString(sum[:])[:12]
+}
+
+func safePathPart(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	builder.Grow(len(value))
+	lastDash := false
+	for _, r := range value {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-'
+		if ok {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-.")
+	if out == "" {
+		return "item"
+	}
+	if len(out) > 80 {
+		return out[:80]
+	}
+	return out
+}
+
+func resolveGitRef(ctx context.Context, repoDir, ref string) string {
+	if ref == "" || ref == "HEAD" {
+		return "HEAD"
+	}
+	if runCommand(ctx, repoDir, nil, "git", "rev-parse", "--verify", ref+"^{commit}") == nil {
+		return ref
+	}
+	remoteRef := "origin/" + ref
+	if runCommand(ctx, repoDir, nil, "git", "rev-parse", "--verify", remoteRef+"^{commit}") == nil {
+		return remoteRef
+	}
+	return ref
+}
+
 func runCommand(ctx context.Context, dir string, env map[string]string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = mergeEnv(env)
-	out, err := cmd.CombinedOutput()
+	out, err := combinedOutput(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, string(out))
 	}
 	return nil
+}
+
+func combinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	configureCommandForCancel(cmd)
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := cmd.CombinedOutput()
+		done <- result{out: out, err: err}
+	}()
+	select {
+	case res := <-done:
+		return res.out, res.err
+	case <-ctx.Done():
+		killCommandProcessGroup(cmd)
+		res := <-done
+		if ctx.Err() != nil {
+			return res.out, ctx.Err()
+		}
+		return res.out, res.err
+	}
 }
