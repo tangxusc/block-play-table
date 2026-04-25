@@ -1,0 +1,55 @@
+services:
+  manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.manager
+    environment:
+      MANAGER_HTTP_ADDR: ":8080"
+      DB_DRIVER: "sqlite"
+      DB_DSN: "/data/manager.db"
+    ports:
+      - "8080:8080"
+    volumes:
+      - manager_data:/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      MANAGER_WS_URL: "ws://manager:8080/worker/ws"
+      WORKER_ID: "worker-001"
+      WORKER_NAME: "local-worker"
+      WORKER_WORK_DIR: "/worker-data"
+      WORKER_SUPPORTED_AGENTS: "codex,claude"
+    volumes:
+      - ./worker-data:/worker-data
+    depends_on:
+      - manager
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+      args:
+        MANAGER_GRAPHQL_URL: "http://localhost:8080/graphql"
+    ports:
+      - "3000:80"
+    depends_on:
+      - manager
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: manager
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: block_play_table
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  manager_data:
+  postgres_data:

@@ -1,0 +1,92 @@
+package httpapi
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/tangxusc/block-play-table/manager/internal/app"
+	"github.com/tangxusc/block-play-table/pkg/domain"
+	"github.com/tangxusc/block-play-table/pkg/store"
+)
+
+func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }`, map[string]any{
+		"input": map[string]any{"name": "Block Play Table", "gitUrl": "file:///tmp/repo", "defaultBranch": "main", "worktreeNamePrefix": "bpt"},
+	})
+	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
+
+	worker := postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }`, map[string]any{
+		"input": map[string]any{"id": "worker-1", "name": "local", "supportedAgents": []any{"codex"}, "workDir": "/tmp/worker", "projectBindingMode": "ALL_PROJECTS"},
+	})
+	if got := worker["data"].(map[string]any)["registerWorker"].(map[string]any)["status"]; got != string(domain.WorkerOnline) {
+		t.Fatalf("registered worker status = %v, want ONLINE", got)
+	}
+
+	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status } }`, map[string]any{
+		"input": map[string]any{"title": "Implement", "projectId": projectID, "agentType": "codex", "baseBranch": "main", "targetBranch": "task/implement"},
+	})
+	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
+	assigned := postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { status workerId } }`, map[string]any{
+		"taskId": taskID, "workerId": "worker-1",
+	})
+	if got := assigned["data"].(map[string]any)["assignWorker"].(map[string]any)["status"]; got != string(domain.TaskAssigned) {
+		t.Fatalf("assigned status = %v, want ASSIGNED", got)
+	}
+
+	tasks := postGraphQL(t, server.URL, `query { tasks { id title status } }`, nil)
+	if got := len(tasks["data"].(map[string]any)["tasks"].([]any)); got != 1 {
+		t.Fatalf("tasks count = %d, want 1", got)
+	}
+}
+
+func TestHealthAndReady(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore())
+	handler := NewServer(service).Handler()
+	for _, path := range []string{"/healthz", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, res.Code)
+		}
+	}
+}
+
+func postGraphQL(t *testing.T, baseURL, query string, variables map[string]any) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/graphql", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var decoded map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("graphql status = %d body = %#v", res.StatusCode, decoded)
+	}
+	if decoded["errors"] != nil {
+		t.Fatalf("graphql errors = %#v", decoded["errors"])
+	}
+	return decoded
+}

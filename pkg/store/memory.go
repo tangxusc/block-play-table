@@ -1,0 +1,256 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/tangxusc/block-play-table/pkg/domain"
+)
+
+type Store interface {
+	SaveTask(context.Context, *domain.Task) error
+	Task(context.Context, string) (*domain.Task, error)
+	Tasks(context.Context) ([]*domain.Task, error)
+	SaveWorker(context.Context, *domain.Worker) error
+	Worker(context.Context, string) (*domain.Worker, error)
+	Workers(context.Context) ([]*domain.Worker, error)
+	SaveProject(context.Context, *domain.Project) error
+	Project(context.Context, string) (*domain.Project, error)
+	Projects(context.Context) ([]*domain.Project, error)
+	SaveSettings(context.Context, *domain.Settings) error
+	Settings(context.Context) (*domain.Settings, error)
+	AppendTaskLog(context.Context, domain.TaskLog) error
+	TaskLogs(context.Context, string) ([]domain.TaskLog, error)
+	AppendConversation(context.Context, domain.ConversationMessage) error
+	TaskConversations(context.Context, string) ([]domain.ConversationMessage, error)
+	AppendEvents(context.Context, []domain.DomainEvent) error
+	DomainEvents(context.Context, domain.EventFilter) ([]domain.DomainEvent, error)
+	MarkMessageProcessed(context.Context, string) (bool, error)
+}
+
+type MemoryStore struct {
+	mu                sync.RWMutex
+	tasks             map[string]*domain.Task
+	workers           map[string]*domain.Worker
+	projects          map[string]*domain.Project
+	settings          *domain.Settings
+	logs              []domain.TaskLog
+	conversations     []domain.ConversationMessage
+	events            []domain.DomainEvent
+	processedMessages map[string]struct{}
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		tasks:             map[string]*domain.Task{},
+		workers:           map[string]*domain.Worker{},
+		projects:          map[string]*domain.Project{},
+		settings:          domain.NewSettings(time.Now().UTC()),
+		processedMessages: map[string]struct{}{},
+	}
+}
+
+func (s *MemoryStore) SaveTask(ctx context.Context, task *domain.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[task.ID] = cloneTask(task)
+	return nil
+}
+
+func (s *MemoryStore) Task(ctx context.Context, id string) (*domain.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	task, ok := s.tasks[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: task %s", domain.ErrNotFound, id)
+	}
+	return cloneTask(task), nil
+}
+
+func (s *MemoryStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*domain.Task, 0, len(s.tasks))
+	for _, task := range s.tasks {
+		out = append(out, cloneTask(task))
+	}
+	slices.SortFunc(out, func(a, b *domain.Task) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
+}
+
+func (s *MemoryStore) SaveWorker(ctx context.Context, worker *domain.Worker) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workers[worker.ID] = cloneWorker(worker)
+	return nil
+}
+
+func (s *MemoryStore) Worker(ctx context.Context, id string) (*domain.Worker, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	worker, ok := s.workers[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: worker %s", domain.ErrNotFound, id)
+	}
+	return cloneWorker(worker), nil
+}
+
+func (s *MemoryStore) Workers(ctx context.Context) ([]*domain.Worker, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*domain.Worker, 0, len(s.workers))
+	for _, worker := range s.workers {
+		out = append(out, cloneWorker(worker))
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) SaveProject(ctx context.Context, project *domain.Project) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projects[project.ID] = cloneProject(project)
+	return nil
+}
+
+func (s *MemoryStore) Project(ctx context.Context, id string) (*domain.Project, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	project, ok := s.projects[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: project %s", domain.ErrNotFound, id)
+	}
+	return cloneProject(project), nil
+}
+
+func (s *MemoryStore) Projects(ctx context.Context) ([]*domain.Project, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*domain.Project, 0, len(s.projects))
+	for _, project := range s.projects {
+		out = append(out, cloneProject(project))
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) SaveSettings(ctx context.Context, settings *domain.Settings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copy := *settings
+	copy.AgentRuntimeEnvVars = append([]domain.AgentRuntimeEnvVar(nil), settings.AgentRuntimeEnvVars...)
+	s.settings = &copy
+	return nil
+}
+
+func (s *MemoryStore) Settings(ctx context.Context) (*domain.Settings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copy := *s.settings
+	copy.AgentRuntimeEnvVars = append([]domain.AgentRuntimeEnvVar(nil), s.settings.AgentRuntimeEnvVars...)
+	return &copy, nil
+}
+
+func (s *MemoryStore) AppendTaskLog(ctx context.Context, log domain.TaskLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logs = append(s.logs, log)
+	return nil
+}
+
+func (s *MemoryStore) TaskLogs(ctx context.Context, taskID string) ([]domain.TaskLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []domain.TaskLog
+	for _, log := range s.logs {
+		if log.TaskID == taskID {
+			out = append(out, log)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) AppendConversation(ctx context.Context, message domain.ConversationMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conversations = append(s.conversations, message)
+	return nil
+}
+
+func (s *MemoryStore) TaskConversations(ctx context.Context, taskID string) ([]domain.ConversationMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []domain.ConversationMessage
+	for _, message := range s.conversations {
+		if message.TaskID == taskID {
+			out = append(out, message)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) AppendEvents(ctx context.Context, events []domain.DomainEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, events...)
+	return nil
+}
+
+func (s *MemoryStore) DomainEvents(ctx context.Context, filter domain.EventFilter) ([]domain.DomainEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []domain.DomainEvent
+	for _, event := range s.events {
+		if filter.AggregateID != "" && event.AggregateID != filter.AggregateID {
+			continue
+		}
+		if filter.AggregateType != "" && event.AggregateType != filter.AggregateType {
+			continue
+		}
+		if filter.EventType != "" && event.EventType != filter.EventType {
+			continue
+		}
+		out = append(out, event)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) MarkMessageProcessed(ctx context.Context, messageID string) (bool, error) {
+	if messageID == "" {
+		return true, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.processedMessages[messageID]; ok {
+		return false, nil
+	}
+	s.processedMessages[messageID] = struct{}{}
+	return true, nil
+}
+
+func cloneTask(task *domain.Task) *domain.Task {
+	copy := *task
+	copy.PreCommands = append([]string(nil), task.PreCommands...)
+	copy.PostCommands = append([]string(nil), task.PostCommands...)
+	return &copy
+}
+
+func cloneWorker(worker *domain.Worker) *domain.Worker {
+	copy := *worker
+	copy.SupportedAgents = append([]domain.AgentType(nil), worker.SupportedAgents...)
+	copy.BoundProjectIDs = append([]string(nil), worker.BoundProjectIDs...)
+	if worker.Capabilities != nil {
+		copy.Capabilities = map[string]string{}
+		for k, v := range worker.Capabilities {
+			copy.Capabilities[k] = v
+		}
+	}
+	return &copy
+}
+
+func cloneProject(project *domain.Project) *domain.Project {
+	copy := *project
+	copy.SetupCommands = append([]string(nil), project.SetupCommands...)
+	return &copy
+}

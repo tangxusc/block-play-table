@@ -14,6 +14,7 @@
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
+coverage-*.txt
 *.coverprofile
 profile.cov
 
@@ -26,6 +27,24 @@ go.work.sum
 
 # env file
 .env
+
+# OS files
+.DS_Store
+
+# Local runtime data
+data/
+worker-data/
+
+# Flutter / Web
+ui/.dart_tool/
+ui/.flutter-plugins
+ui/.flutter-plugins-dependencies
+ui/build/
+
+# Node / e2e
+node_modules/
+test-results/
+playwright-report/
 
 # Editor/IDE
 # .idea/
