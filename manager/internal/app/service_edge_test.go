@@ -153,8 +153,8 @@ func TestServiceValidationNotFoundAndExistingWorkerBranches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Name != worker.Name {
-		t.Fatalf("existing worker name = %q, want %q", again.Name, worker.Name)
+	if again.Name != "Ignored" || len(again.SupportedAgents) != 1 || again.SupportedAgents[0] != domain.AgentClaude {
+		t.Fatalf("existing worker should refresh registration payload, got %+v", again)
 	}
 	if _, err := service.WorkerConnected(ctx, "missing-worker"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("WorkerConnected missing err = %v, want ErrNotFound", err)

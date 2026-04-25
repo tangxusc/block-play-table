@@ -67,6 +67,12 @@ func (p *Project) Update(name, gitURL, defaultBranch, prefix string, setupComman
 	}
 	p.Name = name
 	p.GitURL = gitURL
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	if prefix == "" {
+		prefix = p.ID
+	}
 	p.DefaultBranch = defaultBranch
 	p.WorktreeNamePrefix = prefix
 	p.SetupCommands = append([]string(nil), setupCommands...)

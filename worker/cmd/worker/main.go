@@ -26,7 +26,10 @@ func main() {
 		WorkerToken:     os.Getenv("WORKER_TOKEN"),
 		Name:            getenv("WORKER_NAME", "local-worker"),
 		WorkDir:         getenv("WORKER_WORK_DIR", "./worker-data"),
+		StartupCommand:  os.Getenv("WORKER_STARTUP_COMMAND"),
 		SupportedAgents: agents,
+		BindingMode:     client.ParseProjectBindingMode(os.Getenv("WORKER_PROJECT_BINDING_MODE")),
+		BoundProjectIDs: client.ParseCSV(os.Getenv("WORKER_BOUND_PROJECT_IDS")),
 		Logger:          logger,
 	}
 	logger.Info("worker starting", "manager", cfg.ManagerWSURL, "workerId", cfg.WorkerID, "trustedMode", true)

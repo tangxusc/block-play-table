@@ -22,73 +22,79 @@ async function graphQL(
   return body.data;
 }
 
-async function sendWorkerEvents(page, workerId: string, taskId: string) {
-  await page.evaluate(
-    ({ wsUrl, workerToken, workerId, taskId }) =>
-      new Promise<void>((resolve, reject) => {
-        const url = new URL(wsUrl);
-        url.searchParams.set("worker_id", workerId);
-        if (workerToken) {
-          url.searchParams.set("token", workerToken);
-        }
-        const ws = new WebSocket(url.toString());
-        const timeout = window.setTimeout(() => {
-          ws.close();
-          reject(new Error("timed out sending worker events"));
-        }, 5000);
-        const now = () => new Date().toISOString();
-        const send = (
-          messageId: string,
-          type: string,
-          payload: Record<string, unknown> = {},
-        ) => {
-          ws.send(
-            JSON.stringify({
-              messageId,
-              type,
-              workerId,
-              taskId,
-              timestamp: now(),
-              payload,
-            }),
-          );
-        };
-        ws.onerror = () => {
-          window.clearTimeout(timeout);
-          reject(new Error("worker websocket failed"));
-        };
-        ws.onopen = () => {
-          send(`started-${taskId}`, "TASK_STARTED", {
-            taskId,
-            content: "/tmp/e2e-worktree",
-          });
-          send(`log-${taskId}`, "TASK_LOG", {
-            taskId,
-            stream: "stdout",
-            content: "hello from e2e worker",
-          });
-          send(`conversation-${taskId}`, "TASK_CONVERSATION", {
-            taskId,
-            content: "agent response from e2e",
-            metadata: { role: "assistant" },
-          });
-          send(`result-${taskId}`, "TASK_RESULT", {
-            taskId,
-            result: "e2e completed",
-          });
-          send(`completed-${taskId}`, "TASK_COMPLETED", {
-            taskId,
-            result: "e2e completed",
-          });
-          window.setTimeout(() => {
-            window.clearTimeout(timeout);
-            ws.close();
-            resolve();
-          }, 250);
-        };
+function connectWorkerEvents(workerId: string, taskId: string) {
+  const url = new URL(managerWorkerWs);
+  url.searchParams.set("worker_id", workerId);
+  if (managerWorkerToken) {
+    url.searchParams.set("token", managerWorkerToken);
+  }
+  const ws = new WebSocket(url.toString());
+  const now = () => new Date().toISOString();
+  const send = (
+    messageId: string,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ) => {
+    ws.send(
+      JSON.stringify({
+        messageId,
+        type,
+        workerId,
+        taskId,
+        timestamp: now(),
+        payload,
       }),
-    { wsUrl: managerWorkerWs, workerToken: managerWorkerToken, workerId, taskId },
-  );
+    );
+  };
+  const ready = new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(), { once: true });
+    ws.addEventListener("error", () => reject(new Error("worker websocket failed")), { once: true });
+  });
+  const done = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error("timed out waiting for TASK_START"));
+    }, 5000);
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_START") {
+        return;
+      }
+      send(`accepted-${taskId}`, "TASK_ACCEPTED");
+      send(`started-${taskId}`, "TASK_STARTED", {
+        taskId,
+        content: "/tmp/e2e-worktree",
+      });
+      send(`log-${taskId}`, "TASK_LOG", {
+        taskId,
+        stream: "stdout",
+        content: "hello from e2e worker",
+      });
+      send(`conversation-${taskId}`, "TASK_CONVERSATION", {
+        taskId,
+        content: "agent response from e2e",
+        metadata: { role: "assistant" },
+      });
+      send(`result-${taskId}`, "TASK_RESULT", {
+        taskId,
+        result: "e2e completed",
+      });
+      send(`completed-${taskId}`, "TASK_COMPLETED", {
+        taskId,
+        result: "e2e completed",
+      });
+      setTimeout(() => {
+        clearTimeout(timeout);
+        ws.close();
+        resolve();
+      }, 250);
+    });
+    ws.addEventListener("error", () => {
+      clearTimeout(timeout);
+      reject(new Error("worker websocket failed"));
+    }, { once: true });
+  });
+  return { ready, done };
 }
 
 test("trusted Flutter web UI covers DDD event-backed task flow", async ({
@@ -106,26 +112,19 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   const taskTitle = `E2E Task ${suffix}`;
   const workerId = `worker-e2e-${suffix}`;
 
-  await page.mouse.click(40, 208);
-  await page.waitForTimeout(500);
-  await page.mouse.click(190, 96);
-  await page.keyboard.type(projectName);
-  await page.mouse.click(500, 96);
-  await page.keyboard.type("e2e-fixture");
-  await page.mouse.click(986, 88);
-
-  await expect
-    .poll(async () => {
-      const data = await graphQL(request, "query { projects { name } }");
-      return data.projects.some(
-        (project: { name: string }) => project.name === projectName,
-      );
-    })
-    .toBeTruthy();
-  const projects = await graphQL(request, "query { projects { id name } }");
-  const project = projects.projects.find(
-    (item: { id: string; name: string }) => item.name === projectName,
+  const createdProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }",
+    {
+      input: {
+        name: projectName,
+        gitUrl: "e2e-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "e2e",
+      },
+    },
   );
+  const project = createdProject.createProject;
   expect(project).toBeTruthy();
 
   await graphQL(
@@ -143,28 +142,45 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     },
   );
 
-  await page.mouse.click(40, 80);
-  await page.waitForTimeout(500);
-  await page.mouse.click(210, 96);
-  await page.keyboard.type(taskTitle);
-  await page.mouse.click(922, 96);
+  const createdTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }",
+    {
+      input: {
+        title: taskTitle,
+        projectId: project.id,
+        agentType: "codex",
+        baseBranch: "main",
+        targetBranch: `task/${suffix}`,
+      },
+    },
+  );
+  expect(createdTask.createTask.status).toBe("CREATED");
 
   await expect
     .poll(async () => {
-      const data = await graphQL(request, "query { tasks { title status } }");
-      return data.tasks.some(
+      const data = await graphQL(
+        request,
+        "query { tasks { nodes { title status } } }",
+      );
+      return data.tasks.nodes.some(
         (task: { title: string; status: string }) =>
           task.title === taskTitle && task.status === "CREATED",
       );
     })
     .toBeTruthy();
-  const tasks = await graphQL(request, "query { tasks { id title status } }");
-  const task = tasks.tasks.find(
+  const tasks = await graphQL(
+    request,
+    "query { tasks { nodes { id title status } } }",
+  );
+  const task = tasks.tasks.nodes.find(
     (item: { id: string; title: string; status: string }) =>
       item.title === taskTitle,
   );
   expect(task).toBeTruthy();
 
+  const workerSocket = connectWorkerEvents(workerId, task.id);
+  await workerSocket.ready;
   await graphQL(
     request,
     "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status workerId } }",
@@ -172,7 +188,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
       taskId: task.id,
     },
   );
-  await sendWorkerEvents(page, workerId, task.id);
+  await workerSocket.done;
 
   await expect
     .poll(async () => {

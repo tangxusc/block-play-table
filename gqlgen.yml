@@ -1,0 +1,20 @@
+schema:
+  - manager/internal/graph/schema.graphqls
+
+exec:
+  filename: manager/internal/graph/generated.go
+  package: graph
+
+model:
+  filename: manager/internal/graph/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: manager/internal/graph
+  package: graph
+
+models:
+  Time:
+    model:
+      - github.com/99designs/gqlgen/graphql.Time

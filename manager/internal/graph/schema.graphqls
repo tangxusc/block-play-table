@@ -1,0 +1,360 @@
+scalar Time
+
+enum AgentType {
+  codex
+  claude
+}
+
+enum TaskStatus {
+  CREATED
+  ASSIGNED
+  STARTING
+  RUNNING
+  WAITING_INPUT
+  INTERRUPTING
+  INTERRUPTED
+  COMPLETED
+  FAILED
+  ARCHIVED
+}
+
+enum WorkerStatus {
+  REGISTERED
+  ONLINE
+  OFFLINE
+  ERROR
+  DISABLED
+}
+
+enum WorkerProjectBindingMode {
+  ALL_PROJECTS
+  SPECIFIC_PROJECTS
+}
+
+enum BoardType {
+  KANBAN
+  CALENDAR
+  LIST
+}
+
+type Task {
+  id: ID!
+  title: String!
+  description: String!
+  status: TaskStatus!
+  projectId: ID!
+  workerId: ID
+  agentType: AgentType!
+  baseBranch: String!
+  targetBranch: String!
+  worktreePath: String
+  preCommands: [String!]!
+  postCommands: [String!]!
+  result: String
+  version: Int!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type TaskConnection {
+  nodes: [Task!]!
+  totalCount: Int!
+}
+
+type TaskLog {
+  id: ID!
+  taskId: ID!
+  stream: String!
+  content: String!
+  createdAt: Time!
+}
+
+type ConversationMessage {
+  id: ID!
+  taskId: ID!
+  role: String!
+  content: String!
+  metadata: [KeyValue!]!
+  createdAt: Time!
+}
+
+type Project {
+  id: ID!
+  name: String!
+  gitUrl: String!
+  defaultBranch: String!
+  worktreeNamePrefix: String!
+  setupCommands: [String!]!
+  archived: Boolean!
+  version: Int!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type Worker {
+  id: ID!
+  name: String!
+  status: WorkerStatus!
+  capabilities: [KeyValue!]!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode!
+  boundProjectIds: [ID!]!
+  currentTaskId: ID
+  lastHeartbeatAt: Time
+  version: Int!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type Settings {
+  id: ID!
+  version: Int!
+  agentRuntimeEnvVars: [AgentRuntimeEnvVar!]!
+  workerHeartbeatTimeout: String!
+  securityPolicy: String!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type AgentRuntimeEnvVar {
+  key: String!
+  valueMasked: String!
+  description: String
+  enabled: Boolean!
+  sensitive: Boolean!
+}
+
+type DomainEvent {
+  eventId: ID!
+  eventType: String!
+  aggregateType: String!
+  aggregateId: ID!
+  aggregateVersion: Int!
+  payload: String!
+  occurredAt: Time!
+  correlationId: String
+  causationId: String
+}
+
+type OutboxMessage {
+  id: ID!
+  event: DomainEvent!
+  status: String!
+  createdAt: Time!
+  publishedAt: Time
+}
+
+type Board {
+  id: ID!
+  name: String!
+  type: BoardType!
+  columns: [BoardColumn!]!
+  calendarItems: [BoardCalendarItem!]!
+  tasks: [Task!]!
+}
+
+type BoardColumn {
+  id: ID!
+  title: String!
+  status: TaskStatus!
+  tasks: [Task!]!
+}
+
+type BoardCalendarItem {
+  id: ID!
+  task: Task!
+  date: Time!
+  status: TaskStatus!
+}
+
+type KeyValue {
+  key: String!
+  value: String!
+}
+
+input PageInput {
+  offset: Int
+  limit: Int
+}
+
+input TaskFilter {
+  status: TaskStatus
+  projectId: ID
+  workerId: ID
+  agentType: AgentType
+  includeArchived: Boolean
+}
+
+input WorkerFilter {
+  status: WorkerStatus
+  projectId: ID
+  agentType: AgentType
+  includeDisabled: Boolean
+}
+
+input ProjectFilter {
+  includeArchived: Boolean
+}
+
+input DomainEventFilter {
+  aggregateId: ID
+  aggregateType: String
+  eventType: String
+}
+
+input CreateTaskInput {
+  title: String!
+  description: String
+  projectId: ID!
+  agentType: AgentType!
+  baseBranch: String
+  targetBranch: String
+  preCommands: [String!]
+  postCommands: [String!]
+}
+
+input UpdateTaskInput {
+  id: ID!
+  title: String!
+  description: String
+  projectId: ID!
+  agentType: AgentType!
+  baseBranch: String
+  targetBranch: String
+  preCommands: [String!]
+  postCommands: [String!]
+}
+
+input AssignWorkerInput {
+  taskId: ID!
+  workerId: ID!
+}
+
+input StartTaskInput {
+  taskId: ID!
+}
+
+input CreateWorkerInput {
+  id: ID
+  name: String!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode
+  boundProjectIds: [ID!]
+  capabilities: [KeyValueInput!]
+}
+
+input RegisterWorkerInput {
+  id: ID
+  name: String!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode
+  boundProjectIds: [ID!]
+  capabilities: [KeyValueInput!]
+}
+
+input UpdateWorkerInput {
+  id: ID!
+  name: String!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode!
+  boundProjectIds: [ID!]
+  capabilities: [KeyValueInput!]
+}
+
+input UpdateWorkerProjectBindingsInput {
+  workerId: ID!
+  projectBindingMode: WorkerProjectBindingMode!
+  boundProjectIds: [ID!]
+}
+
+input CreateProjectInput {
+  name: String!
+  gitUrl: String!
+  defaultBranch: String
+  worktreeNamePrefix: String
+  setupCommands: [String!]
+}
+
+input UpdateProjectInput {
+  id: ID!
+  name: String!
+  gitUrl: String!
+  defaultBranch: String!
+  worktreeNamePrefix: String!
+  setupCommands: [String!]
+}
+
+input AgentRuntimeEnvVarInput {
+  key: String!
+  value: String
+  description: String
+  enabled: Boolean!
+  sensitive: Boolean!
+}
+
+input UpdateAgentRuntimeEnvVarsInput {
+  vars: [AgentRuntimeEnvVarInput!]!
+}
+
+input KeyValueInput {
+  key: String!
+  value: String!
+}
+
+type Query {
+  task(id: ID!): Task
+  tasks(filter: TaskFilter, page: PageInput): TaskConnection!
+  taskList(filter: TaskFilter, page: PageInput): [Task!]!
+  worker(id: ID!): Worker
+  workers(filter: WorkerFilter): [Worker!]!
+  project(id: ID!): Project
+  projects(filter: ProjectFilter): [Project!]!
+  board(id: ID): Board!
+  settings: Settings!
+  taskEvents(taskId: ID!): [DomainEvent!]!
+  domainEvents(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
+  outboxMessages(includePublished: Boolean): [OutboxMessage!]!
+  taskLogs(taskId: ID!): [TaskLog!]!
+  taskConversations(taskId: ID!): [ConversationMessage!]!
+}
+
+type Mutation {
+  createTask(input: CreateTaskInput!): Task!
+  updateTask(input: UpdateTaskInput!): Task!
+  assignWorker(input: AssignWorkerInput, taskId: ID, workerId: ID): Task!
+  startTask(input: StartTaskInput, taskId: ID, id: ID): Task!
+  interruptTask(taskId: ID, id: ID): Task!
+  archiveTask(taskId: ID, id: ID): Task!
+  retryTask(taskId: ID, id: ID): Task!
+
+  createWorker(input: CreateWorkerInput!): Worker!
+  registerWorker(input: RegisterWorkerInput!): Worker!
+  updateWorker(input: UpdateWorkerInput!): Worker!
+  updateWorkerProjectBindings(input: UpdateWorkerProjectBindingsInput!): Worker!
+  enableWorker(id: ID!): Worker!
+  disableWorker(id: ID!): Worker!
+  deleteWorker(id: ID!): Boolean!
+
+  createProject(input: CreateProjectInput!): Project!
+  updateProject(input: UpdateProjectInput!): Project!
+  archiveProject(id: ID!): Project!
+
+  updateAgentRuntimeEnvVars(input: UpdateAgentRuntimeEnvVarsInput!): Settings!
+  updateWorkerHeartbeatTimeout(timeout: String!): Settings!
+}
+
+type Subscription {
+  taskUpdated(taskId: ID!): DomainEvent!
+  taskLogAppended(taskId: ID!): TaskLog!
+  taskConversationAppended(taskId: ID!): ConversationMessage!
+  workerUpdated(workerId: ID): DomainEvent!
+  domainEvents(filter: DomainEventFilter): DomainEvent!
+}

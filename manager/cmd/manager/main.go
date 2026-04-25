@@ -73,7 +73,7 @@ func openStore(ctx context.Context) (store.Store, func(), error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+		if err := sqlStore.MigrateVersioned(ctx, toStoreMigrations(migrations.All)); err != nil {
 			_ = sqlStore.Close()
 			return nil, nil, err
 		}
@@ -87,7 +87,7 @@ func openStore(ctx context.Context) (store.Store, func(), error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+		if err := sqlStore.MigrateVersioned(ctx, toStoreMigrations(migrations.All)); err != nil {
 			_ = sqlStore.Close()
 			return nil, nil, err
 		}
@@ -95,6 +95,14 @@ func openStore(ctx context.Context) (store.Store, func(), error) {
 	default:
 		return nil, nil, errors.New("unsupported DB_DRIVER " + driver)
 	}
+}
+
+func toStoreMigrations(items []migrations.Migration) []store.Migration {
+	out := make([]store.Migration, 0, len(items))
+	for _, item := range items {
+		out = append(out, store.Migration{Version: item.Version, SQL: item.SQL})
+	}
+	return out
 }
 
 func getenv(key, fallback string) string {

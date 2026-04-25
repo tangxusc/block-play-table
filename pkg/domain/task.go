@@ -104,12 +104,59 @@ func (t *Task) AssignWorker(workerID string, now time.Time) error {
 	return nil
 }
 
+func (t *Task) Update(input NewTaskInput) error {
+	if t.Status != TaskCreated && t.Status != TaskAssigned {
+		return fmt.Errorf("%w: update task from %s", ErrInvalidTransition, t.Status)
+	}
+	if err := requireNonBlank("task title", input.Title); err != nil {
+		return err
+	}
+	if err := requireNonBlank("project id", input.ProjectID); err != nil {
+		return err
+	}
+	if !input.AgentType.Valid() {
+		return fmt.Errorf("unsupported agent type %q", input.AgentType)
+	}
+	if input.BaseBranch == "" {
+		input.BaseBranch = "main"
+	}
+	if input.TargetBranch == "" {
+		input.TargetBranch = "task/" + t.ID
+	}
+	t.Title = input.Title
+	t.Description = input.Description
+	t.ProjectID = input.ProjectID
+	t.AgentType = input.AgentType
+	t.BaseBranch = input.BaseBranch
+	t.TargetBranch = input.TargetBranch
+	t.PreCommands = append([]string(nil), input.PreCommands...)
+	t.PostCommands = append([]string(nil), input.PostCommands...)
+	t.touch(input.Now)
+	t.addEvent("TaskUpdated", map[string]any{"title": t.Title, "projectId": t.ProjectID}, input.Now)
+	return nil
+}
+
 func (t *Task) Start(now time.Time) error {
 	if t.Status != TaskAssigned {
 		return fmt.Errorf("%w: start from %s", ErrInvalidTransition, t.Status)
 	}
 	t.transition(TaskStarting, now, "TaskStartRequested", map[string]any{"workerId": t.WorkerID})
 	return nil
+}
+
+func (t *Task) Retry(now time.Time) error {
+	switch t.Status {
+	case TaskCompleted, TaskFailed, TaskInterrupted:
+		t.Status = TaskCreated
+		t.WorkerID = ""
+		t.WorktreePath = ""
+		t.Result = ""
+		t.touch(now)
+		t.addEvent("TaskRetried", nil, now)
+		return nil
+	default:
+		return fmt.Errorf("%w: retry from %s", ErrInvalidTransition, t.Status)
+	}
 }
 
 func (t *Task) MarkRunning(worktreePath string, now time.Time) error {

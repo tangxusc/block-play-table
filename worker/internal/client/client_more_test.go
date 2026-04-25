@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,26 @@ func TestSendWorkerEventRequiresConnection(t *testing.T) {
 	cancel()
 	if err := client.send(ctx, protocol.Envelope{}); err == nil {
 		t.Fatal("send with canceled context should fail")
+	}
+}
+
+func TestParseWorkerConfigHelpersAndRunCancellation(t *testing.T) {
+	if got := ParseProjectBindingMode("SPECIFIC_PROJECTS"); got != domain.WorkerSpecificProjects {
+		t.Fatalf("specific binding mode = %s", got)
+	}
+	if got := ParseProjectBindingMode("anything-else"); got != domain.WorkerAllProjects {
+		t.Fatalf("fallback binding mode = %s", got)
+	}
+	items := ParseCSV(" project-1, ,project-2 ,, ")
+	if len(items) != 2 || items[0] != "project-1" || items[1] != "project-2" {
+		t.Fatalf("ParseCSV = %#v", items)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := New(Config{ManagerWSURL: "ws://127.0.0.1:1/worker/ws", WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()}).Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run canceled error = %v, want context canceled", err)
 	}
 }
 
@@ -135,6 +156,7 @@ func TestReadLoopHandlesPingTaskStartAndInterrupt(t *testing.T) {
 		seen[envelope.Type] = true
 	}
 	writeRawEnvelope(t, remote, rawEnvelope{MessageID: "interrupt-1", Type: protocol.MessageTaskInterrupt, TaskID: "task-1"})
+	writeRawEnvelope(t, remote, rawEnvelope{MessageID: "cancel-1", Type: protocol.MessageTaskCancel, TaskID: "task-1"})
 	cancel()
 	_ = remote.Close()
 	select {

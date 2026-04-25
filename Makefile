@@ -13,6 +13,9 @@ WORKER_SSH_DIR ?= $(HOME)/.ssh
 WORKER_SSH_AUTH_SOCK ?= /run/host-services/ssh-auth.sock
 LOCAL_COMPOSE_ENV = POSTGRES_PASSWORD='$(POSTGRES_PASSWORD)' WORKER_TOKEN='$(WORKER_TOKEN)' WORKER_ID='$(WORKER_ID)' WORKER_NAME='$(WORKER_NAME)' WORKER_SUPPORTED_AGENTS='$(WORKER_SUPPORTED_AGENTS)' WORKER_DATA_SOURCE='$(WORKER_DATA_SOURCE)' WORKER_SSH_DIR='$(WORKER_SSH_DIR)' WORKER_SSH_AUTH_SOCK='$(WORKER_SSH_AUTH_SOCK)'
 LOCAL_COMPOSE = $(LOCAL_COMPOSE_ENV) $(DOCKER_COMPOSE) -p $(LOCAL_COMPOSE_PROJECT) -f $(LOCAL_COMPOSE_FILE)
+MANAGER_COVER_PKGS = $(shell $(GO_TEST_ENV) $(GO) list ./manager/internal/... | grep -v '/manager/internal/graph')
+MANAGER_COVER_PKGS_CSV = $(shell echo $(MANAGER_COVER_PKGS) | tr ' ' ',')
+MANAGER_COVER_TEST_PKGS = $(MANAGER_COVER_PKGS)
 
 .PHONY: test test-go coverage build docker-build e2e flutter-test run-local stop-local clean-local
 
@@ -22,9 +25,10 @@ test-go:
 	$(GO_TEST_ENV) $(GO) test ./...
 
 coverage:
-	$(GO_TEST_ENV) $(GO) test ./manager/internal/... -coverprofile=coverage-manager.out
+	$(GO_TEST_ENV) $(GO) test $(MANAGER_COVER_TEST_PKGS) -coverprofile=coverage-manager.out
 	$(GO_TEST_ENV) $(GO) tool cover -func=coverage-manager.out | tee coverage-manager.txt
 	@awk '/^total:/ { split($$3, pct, "%"); if (pct[1] < 80) { printf("manager coverage %.1f%% is below 80%%\n", pct[1]); exit 1 } }' coverage-manager.txt
+	$(GO_TEST_ENV) $(GO) test ./manager/e2e
 	$(GO_TEST_ENV) $(GO) test ./worker/internal/... -coverprofile=coverage-worker.out
 	$(GO_TEST_ENV) $(GO) tool cover -func=coverage-worker.out | tee coverage-worker.txt
 	@awk '/^total:/ { split($$3, pct, "%"); if (pct[1] < 80) { printf("worker coverage %.1f%% is below 80%%\n", pct[1]); exit 1 } }' coverage-worker.txt

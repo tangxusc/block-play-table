@@ -2,7 +2,7 @@
 
 Block Play Table is a trusted-mode task orchestration prototype for AI agent work. It includes:
 
-- Go Manager service with GraphQL-compatible HTTP API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
+- Go Manager service with gqlgen GraphQL API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
 - Go Worker service that registers with Manager, sends heartbeat messages, creates task worktrees, runs setup/pre/post commands, and adapts Codex/Claude non-interactive CLIs.
 - Flutter Web UI scaffold for tasks, board, projects, workers, and settings.
 - Dockerfiles, Docker Compose, SQL schema, Go e2e tests, and coverage gates.
@@ -15,18 +15,18 @@ See `docs/security-trusted-mode.md`.
 
 ## Local Development
 
-The local shell on this machine has multiple Go installations. If you hit a Go toolchain mismatch, run commands with a consistent `GOROOT`:
+The local shell on this machine has multiple Go installations. If you hit a Go toolchain mismatch, unset stale `GOROOT` before running commands:
 
 ```bash
-GOROOT=/Users/tangxu/sdk/go1.16rc1 GOTOOLCHAIN=local /Users/tangxu/sdk/go1.16rc1/bin/go test ./...
+env -u GOROOT go test ./...
 ```
 
 Standard commands:
 
 ```bash
-make test-go GO=/Users/tangxu/sdk/go1.16rc1/bin/go GO_TEST_ENV='GOROOT=/Users/tangxu/sdk/go1.16rc1 GOTOOLCHAIN=local'
-make coverage GO=/Users/tangxu/sdk/go1.16rc1/bin/go GO_TEST_ENV='GOROOT=/Users/tangxu/sdk/go1.16rc1 GOTOOLCHAIN=local'
-make build GO=/Users/tangxu/sdk/go1.16rc1/bin/go GO_TEST_ENV='GOROOT=/Users/tangxu/sdk/go1.16rc1 GOTOOLCHAIN=local'
+make test-go GO=go GO_TEST_ENV='env -u GOROOT'
+make coverage GO=go GO_TEST_ENV='env -u GOROOT'
+make build GO=go GO_TEST_ENV='env -u GOROOT'
 ```
 
 ## Run Manager And Worker

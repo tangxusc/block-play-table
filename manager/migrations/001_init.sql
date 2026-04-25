@@ -63,6 +63,15 @@ CREATE TABLE IF NOT EXISTS system_agent_env_vars (
   updated_at TIMESTAMP NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS system_settings (
+  id TEXT PRIMARY KEY,
+  worker_heartbeat_timeout TEXT NOT NULL,
+  security_policy TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS domain_events (
   id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

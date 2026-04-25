@@ -34,7 +34,7 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatalf("projects count = %d, want 1", len(got))
 	}
 
-	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: RegisterWorkerInput!) { createWorker(input: $input) { id status } }`, map[string]any{
+	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: CreateWorkerInput!) { createWorker(input: $input) { id status } }`, map[string]any{
 		"input": map[string]any{"id": "worker-ops", "name": "W", "supportedAgents": []any{"codex"}, "workDir": "/tmp", "projectBindingMode": "ALL_PROJECTS"},
 	})
 	if got := worker["data"].(map[string]any)["createWorker"].(map[string]any)["status"]; got != string(domain.WorkerOnline) {
@@ -43,6 +43,11 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	if got := postGraphQL(t, server.URL, `query { workers { id } }`, nil)["data"].(map[string]any)["workers"].([]any); len(got) != 1 {
 		t.Fatalf("workers count = %d, want 1", len(got))
 	}
+	workerConn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-ops", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerConn.Close()
 
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"title": "T", "projectId": projectID, "agentType": "codex"},
@@ -91,7 +96,11 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatalf("masked settings = %#v", env)
 	}
 	_ = postGraphQL(t, server.URL, `query { settings { id } }`, nil)
-	archived := postGraphQL(t, server.URL, `mutation ArchiveProject($id: ID!) { archiveProject(id: $id) { archived } }`, map[string]any{"id": projectID})
+	archiveProject := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "Archive", "gitUrl": "git://archive"},
+	})
+	archiveProjectID := archiveProject["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
+	archived := postGraphQL(t, server.URL, `mutation ArchiveProject($id: ID!) { archiveProject(id: $id) { archived } }`, map[string]any{"id": archiveProjectID})
 	if archived["data"].(map[string]any)["archiveProject"].(map[string]any)["archived"] != true {
 		t.Fatal("project should be archived")
 	}
@@ -140,11 +149,15 @@ func TestServerValidationCORSAndSubscriptions(t *testing.T) {
 		t.Fatalf("unsupported query should return errors: %#v", raw)
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions", nil)
+	dialer := websocket.Dialer{Subprotocols: []string{"graphql-transport-ws"}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	if err := conn.WriteJSON(map[string]any{"type": "connection_init"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +165,7 @@ func TestServerValidationCORSAndSubscriptions(t *testing.T) {
 	if err := conn.ReadJSON(&message); err != nil {
 		t.Fatalf("subscription read: %v", err)
 	}
-	if message["type"] != "KEEPALIVE" {
+	if message["type"] != "connection_ack" {
 		t.Fatalf("subscription message = %#v", message)
 	}
 }
@@ -161,11 +174,31 @@ func TestServerSubscriptionsPushDomainEvents(t *testing.T) {
 	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore())).Handler())
 	defer server.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions?eventType=ProjectCreated", nil)
+	dialer := websocket.Dialer{Subprotocols: []string{"graphql-transport-ws"}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	if err := conn.WriteJSON(map[string]any{"type": "connection_init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var ack map[string]any
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("subscription ack: %v", err)
+	}
+	if err := conn.WriteJSON(map[string]any{
+		"id":   "sub-1",
+		"type": "subscribe",
+		"payload": map[string]any{
+			"query": `subscription { domainEvents(filter: { eventType: "ProjectCreated" }) { eventType } }`,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(50 * time.Millisecond)
 
 	_ = postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
@@ -179,10 +212,12 @@ func TestServerSubscriptionsPushDomainEvents(t *testing.T) {
 		if err := conn.ReadJSON(&message); err != nil {
 			t.Fatalf("subscription read: %v", err)
 		}
-		if message["type"] != "DOMAIN_EVENT" {
+		if message["type"] != "next" {
 			continue
 		}
-		event := message["event"].(map[string]any)
+		payload := message["payload"].(map[string]any)
+		data := payload["data"].(map[string]any)
+		event := data["domainEvents"].(map[string]any)
 		if event["eventType"] != "ProjectCreated" {
 			t.Fatalf("domain event = %#v", event)
 		}
@@ -311,6 +346,64 @@ func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
 			t.Fatalf("worker did not go offline: %+v, %v", worker, err)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestWorkerGatewaySendsTaskCancelAndHeartbeatOption(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore())
+	api := NewServer(service, WithWorkerHeartbeatTimeout(7*time.Second))
+	if api.heartbeatTimeout != 7*time.Second {
+		t.Fatalf("heartbeat timeout = %s, want 7s", api.heartbeatTimeout)
+	}
+	server := httptest.NewServer(api.Handler())
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-cancel", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := api.gateway.SendTaskCancel("", "task-1"); err != nil {
+		t.Fatalf("SendTaskCancel with empty worker id returned error: %v", err)
+	}
+	if err := api.gateway.SendTaskCancel("missing-worker", "task-1"); err == nil {
+		t.Fatal("SendTaskCancel to missing worker should fail")
+	}
+	if err := api.gateway.SendTaskInterrupt("", "task-1"); err != nil {
+		t.Fatalf("SendTaskInterrupt with empty worker id returned error: %v", err)
+	}
+	if err := api.gateway.SendTaskInterrupt("missing-worker", "task-1"); err == nil {
+		t.Fatal("SendTaskInterrupt to missing worker should fail")
+	}
+	if err := api.gateway.SendTaskInterrupt("worker-cancel", "task-2"); err != nil {
+		t.Fatalf("SendTaskInterrupt returned error: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var interrupt protocol.Envelope
+	if err := conn.ReadJSON(&interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if interrupt.Type != protocol.MessageTaskInterrupt || interrupt.WorkerID != "worker-cancel" || interrupt.TaskID != "task-2" {
+		t.Fatalf("interrupt envelope = %+v", interrupt)
+	}
+	if err := api.gateway.SendTaskCancel("worker-cancel", "task-1"); err != nil {
+		t.Fatalf("SendTaskCancel returned error: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var envelope protocol.Envelope
+	if err := conn.ReadJSON(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Type != protocol.MessageTaskCancel || envelope.WorkerID != "worker-cancel" || envelope.TaskID != "task-1" {
+		t.Fatalf("cancel envelope = %+v", envelope)
+	}
+	if got := taskIDFromEnvelope(rawEnvelope{}, protocol.WorkerEvent{TaskID: "task-from-event"}); got != "task-from-event" {
+		t.Fatalf("taskIDFromEnvelope fallback = %q", got)
 	}
 }
 

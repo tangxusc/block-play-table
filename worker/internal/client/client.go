@@ -23,9 +23,11 @@ type Config struct {
 	WorkerToken     string
 	Name            string
 	WorkDir         string
+	StartupCommand  string
 	SupportedAgents []domain.AgentType
 	BindingMode     domain.WorkerProjectBindingMode
 	BoundProjectIDs []string
+	Capabilities    map[string]string
 	HeartbeatEvery  time.Duration
 	Logger          *slog.Logger
 }
@@ -118,8 +120,10 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 			Name:               c.config.Name,
 			SupportedAgents:    c.config.SupportedAgents,
 			WorkDir:            c.config.WorkDir,
+			StartupCommand:     c.config.StartupCommand,
 			ProjectBindingMode: c.config.BindingMode,
 			BoundProjectIDs:    c.config.BoundProjectIDs,
+			Capabilities:       c.config.Capabilities,
 		},
 	}); err != nil {
 		return err
@@ -179,6 +183,8 @@ func (c *Client) readLoop(ctx context.Context) error {
 			}()
 		case protocol.MessageTaskInterrupt:
 			c.executor.Interrupt(envelope.TaskID)
+		case protocol.MessageTaskCancel:
+			c.executor.Interrupt(envelope.TaskID)
 		case protocol.MessagePing:
 			_ = c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageWorkerHeartbeat, WorkerID: c.config.WorkerID, Timestamp: time.Now().UTC()})
 		}
@@ -225,8 +231,10 @@ type registerPayload struct {
 	Name               string                          `json:"name"`
 	SupportedAgents    []domain.AgentType              `json:"supportedAgents"`
 	WorkDir            string                          `json:"workDir"`
+	StartupCommand     string                          `json:"startupCommand,omitempty"`
 	ProjectBindingMode domain.WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIDs    []string                        `json:"boundProjectIds"`
+	Capabilities       map[string]string               `json:"capabilities,omitempty"`
 }
 
 type rawEnvelope struct {
@@ -250,4 +258,24 @@ func ParseAgents(value string) []domain.AgentType {
 		}
 	}
 	return agents
+}
+
+func ParseProjectBindingMode(value string) domain.WorkerProjectBindingMode {
+	switch domain.WorkerProjectBindingMode(strings.TrimSpace(value)) {
+	case domain.WorkerSpecificProjects:
+		return domain.WorkerSpecificProjects
+	default:
+		return domain.WorkerAllProjects
+	}
+}
+
+func ParseCSV(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }

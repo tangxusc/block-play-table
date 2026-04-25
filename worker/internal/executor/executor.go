@@ -123,6 +123,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	}()
 
 	env := runtimeEnv(payload.AgentRuntimeEnv)
+	redact := redactor(payload.AgentRuntimeEnv)
 	worktree, err := e.prepareWorktree(ctx, payload)
 	if err != nil {
 		e.reportExecutionError(ctx, payload.Task.ID, err)
@@ -133,13 +134,13 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	}
 
 	for _, command := range payload.Project.SetupCommands {
-		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
+		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command, redact); err != nil {
 			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
 	}
 	for _, command := range payload.Task.PreCommands {
-		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
+		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command, redact); err != nil {
 			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
@@ -150,17 +151,17 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	err = agent.Run(ctx, AgentInput{Task: payload.Task, Project: payload.Project, WorktreeDir: worktree, Env: env}, func(event AgentEvent) {
 		switch event.Type {
 		case AgentEventStdout:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stdout", Content: event.Content})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stdout", Content: redact(event.Content)})
 		case AgentEventStderr:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: event.Content})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: redact(event.Content)})
 		case AgentEventConversation:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: event.Content, Metadata: event.Metadata})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), Metadata: event.Metadata})
 		case AgentEventWaitingInput:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: event.Content})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: redact(event.Content)})
 		case AgentEventCompleted:
-			finalResult = event.Content
+			finalResult = redact(event.Content)
 		case AgentEventFailed:
-			agentFailed = event.Content
+			agentFailed = redact(event.Content)
 		}
 	})
 	if err != nil {
@@ -176,7 +177,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		return fmt.Errorf("agent failed: %s", agentFailed)
 	}
 	for _, command := range payload.Task.PostCommands {
-		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command); err != nil {
+		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command, redact); err != nil {
 			e.reportExecutionError(ctx, payload.Task.ID, err)
 			return err
 		}
@@ -245,7 +246,7 @@ func (e *Executor) ensureRepositoryCache(ctx context.Context, gitURL, cacheDir s
 	return runCommand(ctx, "", nil, "git", "clone", gitURL, cacheDir)
 }
 
-func (e *Executor) runShell(ctx context.Context, taskID, dir string, env map[string]string, command string) error {
+func (e *Executor) runShell(ctx context.Context, taskID, dir string, env map[string]string, command string, redact func(string) string) error {
 	if strings.TrimSpace(command) == "" {
 		return nil
 	}
@@ -261,7 +262,7 @@ func (e *Executor) runShell(ctx context.Context, taskID, dir string, env map[str
 	cmd.Env = mergeEnv(env)
 	out, err := combinedOutput(ctx, cmd)
 	if len(out) > 0 {
-		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: taskID, Stream: "stdout", Content: string(out)})
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: taskID, Stream: "stdout", Content: redact(string(out))})
 	}
 	if err != nil {
 		return fmt.Errorf("command %q failed: %w", command, err)
@@ -369,6 +370,21 @@ func runtimeEnv(vars []protocol.RuntimeEnvVar) map[string]string {
 		env[item.Key] = item.Value
 	}
 	return env
+}
+
+func redactor(vars []protocol.RuntimeEnvVar) func(string) string {
+	values := make([]string, 0, len(vars))
+	for _, item := range vars {
+		if item.Sensitive && item.Value != "" {
+			values = append(values, item.Value)
+		}
+	}
+	return func(value string) string {
+		for _, secret := range values {
+			value = strings.ReplaceAll(value, secret, "********")
+		}
+		return value
+	}
 }
 
 func mergeEnv(extra map[string]string) []string {

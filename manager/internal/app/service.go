@@ -85,6 +85,15 @@ type CreateProjectInput struct {
 	SetupCommands      []string `json:"setupCommands"`
 }
 
+type UpdateProjectInput struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	GitURL             string   `json:"gitUrl"`
+	DefaultBranch      string   `json:"defaultBranch"`
+	WorktreeNamePrefix string   `json:"worktreeNamePrefix"`
+	SetupCommands      []string `json:"setupCommands"`
+}
+
 func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (*domain.Project, error) {
 	now := s.clock()
 	project, err := domain.NewProject(domain.NewProjectInput{
@@ -109,14 +118,57 @@ func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (
 	return project, nil
 }
 
+func (s *Service) Project(ctx context.Context, id string) (*domain.Project, error) {
+	return s.store.Project(ctx, id)
+}
+
 func (s *Service) Projects(ctx context.Context) ([]*domain.Project, error) {
 	return s.store.Projects(ctx)
+}
+
+func (s *Service) ProjectsFiltered(ctx context.Context, includeArchived bool) ([]*domain.Project, error) {
+	projects, err := s.store.Projects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Project, 0, len(projects))
+	for _, project := range projects {
+		if !includeArchived && project.Archived {
+			continue
+		}
+		out = append(out, project)
+	}
+	return out, nil
+}
+
+func (s *Service) UpdateProject(ctx context.Context, input UpdateProjectInput) (*domain.Project, error) {
+	project, err := s.store.Project(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := project.Update(input.Name, input.GitURL, input.DefaultBranch, input.WorktreeNamePrefix, input.SetupCommands, s.clock()); err != nil {
+		return nil, err
+	}
+	events := project.PullEvents()
+	if err := s.store.SaveProject(ctx, project); err != nil {
+		return nil, err
+	}
+	return project, s.appendEvents(ctx, events)
 }
 
 func (s *Service) ArchiveProject(ctx context.Context, id string) (*domain.Project, error) {
 	project, err := s.store.Project(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	tasks, err := s.store.Tasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range tasks {
+		if task.ProjectID == id && !isTaskTerminal(task.Status) {
+			return nil, fmt.Errorf("%w: project %s has unfinished task %s", domain.ErrConflict, id, task.ID)
+		}
 	}
 	project.Archive(s.clock())
 	events := project.PullEvents()
@@ -137,10 +189,39 @@ type CreateTaskInput struct {
 	PostCommands []string         `json:"postCommands"`
 }
 
+type UpdateTaskInput struct {
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Description  string           `json:"description"`
+	ProjectID    string           `json:"projectId"`
+	AgentType    domain.AgentType `json:"agentType"`
+	BaseBranch   string           `json:"baseBranch"`
+	TargetBranch string           `json:"targetBranch"`
+	PreCommands  []string         `json:"preCommands"`
+	PostCommands []string         `json:"postCommands"`
+}
+
+type TaskFilter struct {
+	Status          domain.TaskStatus
+	ProjectID       string
+	WorkerID        string
+	AgentType       domain.AgentType
+	IncludeArchived bool
+}
+
+type PageInput struct {
+	Offset int
+	Limit  int
+}
+
 func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domain.Task, error) {
 	now := s.clock()
-	if _, err := s.store.Project(ctx, input.ProjectID); err != nil {
+	project, err := s.store.Project(ctx, input.ProjectID)
+	if err != nil {
 		return nil, err
+	}
+	if project.Archived {
+		return nil, fmt.Errorf("%w: project %s is archived", domain.ErrConflict, project.ID)
 	}
 	task, err := domain.NewTask(domain.NewTaskInput{
 		ID:           "task_" + uuid.NewString(),
@@ -171,8 +252,127 @@ func (s *Service) Tasks(ctx context.Context) ([]*domain.Task, error) {
 	return s.store.Tasks(ctx)
 }
 
+func (s *Service) TasksFiltered(ctx context.Context, filter TaskFilter, page PageInput) ([]*domain.Task, int, error) {
+	tasks, err := s.store.Tasks(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := make([]*domain.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if filter.Status != "" && task.Status != filter.Status {
+			continue
+		}
+		if filter.ProjectID != "" && task.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.WorkerID != "" && task.WorkerID != filter.WorkerID {
+			continue
+		}
+		if filter.AgentType != "" && task.AgentType != filter.AgentType {
+			continue
+		}
+		if !filter.IncludeArchived && task.Status == domain.TaskArchived {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	total := len(filtered)
+	start := page.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := len(filtered)
+	if page.Limit > 0 && start+page.Limit < end {
+		end = start + page.Limit
+	}
+	return filtered[start:end], total, nil
+}
+
 func (s *Service) Task(ctx context.Context, id string) (*domain.Task, error) {
 	return s.store.Task(ctx, id)
+}
+
+func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*domain.Task, error) {
+	now := s.clock()
+	task, err := s.store.Task(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	project, err := s.store.Project(ctx, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if project.Archived {
+		return nil, fmt.Errorf("%w: project %s is archived", domain.ErrConflict, project.ID)
+	}
+	if task.WorkerID != "" {
+		worker, err := s.store.Worker(ctx, task.WorkerID)
+		if err != nil {
+			return nil, err
+		}
+		if !workerCanRunTask(worker, input.AgentType, input.ProjectID, task.ID) {
+			return nil, fmt.Errorf("%w: worker %s cannot run updated task %s", domain.ErrConflict, worker.ID, task.ID)
+		}
+	}
+	if err := task.Update(domain.NewTaskInput{
+		ID:           task.ID,
+		Title:        input.Title,
+		Description:  input.Description,
+		ProjectID:    input.ProjectID,
+		AgentType:    input.AgentType,
+		BaseBranch:   input.BaseBranch,
+		TargetBranch: input.TargetBranch,
+		PreCommands:  input.PreCommands,
+		PostCommands: input.PostCommands,
+		Now:          now,
+	}); err != nil {
+		return nil, err
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, s.appendEvents(ctx, events)
+}
+
+func (s *Service) ArchiveTask(ctx context.Context, taskID string) (*domain.Task, error) {
+	task, err := s.store.Task(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := task.Archive(s.clock()); err != nil {
+		return nil, err
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, s.appendEvents(ctx, events)
+}
+
+func (s *Service) RetryTask(ctx context.Context, taskID string) (*domain.Task, error) {
+	now := s.clock()
+	task, err := s.store.Task(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	previousWorkerID := task.WorkerID
+	if err := task.Retry(now); err != nil {
+		return nil, err
+	}
+	if previousWorkerID != "" {
+		if err := s.releaseWorkerIDFromTask(ctx, previousWorkerID, taskID, now); err != nil {
+			return nil, err
+		}
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, s.appendEvents(ctx, events)
 }
 
 type RegisterWorkerInput struct {
@@ -180,6 +380,7 @@ type RegisterWorkerInput struct {
 	Name            string                          `json:"name"`
 	SupportedAgents []domain.AgentType              `json:"supportedAgents"`
 	WorkDir         string                          `json:"workDir"`
+	StartupCommand  string                          `json:"startupCommand"`
 	BindingMode     domain.WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIDs []string                        `json:"boundProjectIds"`
 	Capabilities    map[string]string               `json:"capabilities"`
@@ -191,6 +392,28 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 		id = "worker_" + uuid.NewString()
 	}
 	if existing, err := s.store.Worker(ctx, id); err == nil {
+		if input.Name != "" && input.WorkDir != "" && len(input.SupportedAgents) > 0 {
+			if err := existing.Update(domain.NewWorkerInput{
+				ID:                 existing.ID,
+				Name:               input.Name,
+				SupportedAgents:    input.SupportedAgents,
+				WorkDir:            input.WorkDir,
+				StartupCommand:     input.StartupCommand,
+				ProjectBindingMode: input.BindingMode,
+				BoundProjectIDs:    input.BoundProjectIDs,
+				Capabilities:       input.Capabilities,
+				Now:                s.clock(),
+			}); err != nil {
+				return nil, err
+			}
+			events := existing.PullEvents()
+			if err := s.store.SaveWorker(ctx, existing); err != nil {
+				return nil, err
+			}
+			if err := s.appendEvents(ctx, events); err != nil {
+				return nil, err
+			}
+		}
 		return existing, nil
 	}
 	worker, err := domain.NewWorker(domain.NewWorkerInput{
@@ -198,6 +421,7 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 		Name:               input.Name,
 		SupportedAgents:    input.SupportedAgents,
 		WorkDir:            input.WorkDir,
+		StartupCommand:     input.StartupCommand,
 		ProjectBindingMode: input.BindingMode,
 		BoundProjectIDs:    input.BoundProjectIDs,
 		Capabilities:       input.Capabilities,
@@ -218,6 +442,126 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 
 func (s *Service) Workers(ctx context.Context) ([]*domain.Worker, error) {
 	return s.store.Workers(ctx)
+}
+
+type WorkerFilter struct {
+	Status          domain.WorkerStatus
+	ProjectID       string
+	AgentType       domain.AgentType
+	IncludeDisabled bool
+}
+
+func (s *Service) Worker(ctx context.Context, id string) (*domain.Worker, error) {
+	return s.store.Worker(ctx, id)
+}
+
+func (s *Service) WorkersFiltered(ctx context.Context, filter WorkerFilter) ([]*domain.Worker, error) {
+	workers, err := s.store.Workers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Worker, 0, len(workers))
+	for _, worker := range workers {
+		if filter.Status != "" && worker.Status != filter.Status {
+			continue
+		}
+		if !filter.IncludeDisabled && worker.Status == domain.WorkerDisabled {
+			continue
+		}
+		if filter.AgentType != "" && !workerSupportsAgent(worker, filter.AgentType) {
+			continue
+		}
+		if filter.ProjectID != "" && !workerAllowsProject(worker, filter.ProjectID) {
+			continue
+		}
+		out = append(out, worker)
+	}
+	return out, nil
+}
+
+func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (*domain.Worker, error) {
+	worker, err := s.store.Worker(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := worker.Update(domain.NewWorkerInput{
+		ID:                 worker.ID,
+		Name:               input.Name,
+		SupportedAgents:    input.SupportedAgents,
+		WorkDir:            input.WorkDir,
+		StartupCommand:     input.StartupCommand,
+		ProjectBindingMode: input.BindingMode,
+		BoundProjectIDs:    input.BoundProjectIDs,
+		Capabilities:       input.Capabilities,
+		Now:                s.clock(),
+	}); err != nil {
+		return nil, err
+	}
+	events := worker.PullEvents()
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, err
+	}
+	return worker, s.appendEvents(ctx, events)
+}
+
+func (s *Service) UpdateWorkerProjectBindings(ctx context.Context, workerID string, mode domain.WorkerProjectBindingMode, projectIDs []string) (*domain.Worker, error) {
+	worker, err := s.store.Worker(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.clock()
+	if mode == domain.WorkerAllProjects || mode == "" {
+		worker.ShareAcrossAllProjects(now)
+	} else {
+		for _, projectID := range projectIDs {
+			if _, err := s.store.Project(ctx, projectID); err != nil {
+				return nil, err
+			}
+		}
+		worker.BindProjects(projectIDs, now)
+	}
+	events := worker.PullEvents()
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, err
+	}
+	return worker, s.appendEvents(ctx, events)
+}
+
+func (s *Service) EnableWorker(ctx context.Context, workerID string) (*domain.Worker, error) {
+	worker, err := s.store.Worker(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	worker.Enable(s.clock())
+	events := worker.PullEvents()
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, err
+	}
+	return worker, s.appendEvents(ctx, events)
+}
+
+func (s *Service) DisableWorker(ctx context.Context, workerID string) (*domain.Worker, error) {
+	worker, err := s.store.Worker(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	worker.Disable(s.clock())
+	events := worker.PullEvents()
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, err
+	}
+	return worker, s.appendEvents(ctx, events)
+}
+
+func (s *Service) DeleteWorker(ctx context.Context, workerID string) error {
+	worker, err := s.store.Worker(ctx, workerID)
+	if err != nil {
+		return err
+	}
+	if worker.CurrentTaskID != "" {
+		return fmt.Errorf("%w: worker %s has current task %s", domain.ErrConflict, workerID, worker.CurrentTaskID)
+	}
+	return s.store.DeleteWorker(ctx, workerID)
 }
 
 func (s *Service) WorkerConnected(ctx context.Context, workerID string) (*domain.Worker, error) {
@@ -435,6 +779,14 @@ func (s *Service) assignFirstAvailableWorker(ctx context.Context, task *domain.T
 	return task, nil
 }
 
+func (s *Service) ApplyWorkerTaskAccepted(ctx context.Context, messageID, taskID string) (*domain.Task, error) {
+	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
+	if err != nil || !ok {
+		return s.store.Task(ctx, taskID)
+	}
+	return s.store.Task(ctx, taskID)
+}
+
 func (s *Service) ApplyWorkerTaskStarted(ctx context.Context, messageID, taskID, worktreePath string) (*domain.Task, error) {
 	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
 	if err != nil || !ok {
@@ -626,8 +978,15 @@ func (s *Service) releaseWorkerFromTask(ctx context.Context, task *domain.Task, 
 	if task.WorkerID == "" {
 		return nil
 	}
-	worker, err := s.store.Worker(ctx, task.WorkerID)
+	return s.releaseWorkerIDFromTask(ctx, task.WorkerID, task.ID, now)
+}
+
+func (s *Service) releaseWorkerIDFromTask(ctx context.Context, workerID, taskID string, now time.Time) error {
+	worker, err := s.store.Worker(ctx, workerID)
 	if err != nil {
+		return nil
+	}
+	if worker.CurrentTaskID != "" && worker.CurrentTaskID != taskID {
 		return nil
 	}
 	worker.ReleaseTask(now)
@@ -648,6 +1007,25 @@ func (s *Service) UpdateAgentRuntimeEnvVars(ctx context.Context, vars []domain.A
 		return nil, err
 	}
 	settings.UpdateAgentRuntimeEnvVars(vars, s.clock())
+	events := settings.PullEvents()
+	if err := s.store.SaveSettings(ctx, settings); err != nil {
+		return nil, err
+	}
+	return settings, s.appendEvents(ctx, events)
+}
+
+func (s *Service) UpdateWorkerHeartbeatTimeout(ctx context.Context, timeout string) (*domain.Settings, error) {
+	if timeout != "" {
+		parsed, err := time.ParseDuration(timeout)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("invalid worker heartbeat timeout %q", timeout)
+		}
+	}
+	settings, err := s.store.Settings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings.UpdateWorkerHeartbeatTimeout(timeout, s.clock())
 	events := settings.PullEvents()
 	if err := s.store.SaveSettings(ctx, settings); err != nil {
 		return nil, err
@@ -726,6 +1104,43 @@ func buildStartPayload(task *domain.Task, project *domain.Project, settings *dom
 		},
 		AgentRuntimeEnv: env,
 	}
+}
+
+func isTaskTerminal(status domain.TaskStatus) bool {
+	switch status {
+	case domain.TaskCompleted, domain.TaskFailed, domain.TaskInterrupted, domain.TaskArchived:
+		return true
+	default:
+		return false
+	}
+}
+
+func workerCanRunTask(worker *domain.Worker, agent domain.AgentType, projectID, taskID string) bool {
+	if worker.Status != domain.WorkerOnline || (worker.CurrentTaskID != "" && worker.CurrentTaskID != taskID) {
+		return false
+	}
+	return workerSupportsAgent(worker, agent) && workerAllowsProject(worker, projectID)
+}
+
+func workerSupportsAgent(worker *domain.Worker, agent domain.AgentType) bool {
+	for _, supported := range worker.SupportedAgents {
+		if supported == agent {
+			return true
+		}
+	}
+	return false
+}
+
+func workerAllowsProject(worker *domain.Worker, projectID string) bool {
+	if worker.ProjectBindingMode == domain.WorkerAllProjects {
+		return true
+	}
+	for _, bound := range worker.BoundProjectIDs {
+		if bound == projectID {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

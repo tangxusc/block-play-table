@@ -18,6 +18,7 @@ type Store interface {
 	SaveWorker(context.Context, *domain.Worker) error
 	Worker(context.Context, string) (*domain.Worker, error)
 	Workers(context.Context) ([]*domain.Worker, error)
+	DeleteWorker(context.Context, string) error
 	SaveProject(context.Context, *domain.Project) error
 	Project(context.Context, string) (*domain.Project, error)
 	Projects(context.Context) ([]*domain.Project, error)
@@ -114,6 +115,16 @@ func (s *MemoryStore) Workers(ctx context.Context) ([]*domain.Worker, error) {
 		out = append(out, cloneWorker(worker))
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) DeleteWorker(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workers[id]; !ok {
+		return fmt.Errorf("%w: worker %s", domain.ErrNotFound, id)
+	}
+	delete(s.workers, id)
+	return nil
 }
 
 func (s *MemoryStore) SaveProject(ctx context.Context, project *domain.Project) error {

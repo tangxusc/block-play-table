@@ -46,16 +46,16 @@ func TestTrustedManagerWorkerFlow(t *testing.T) {
 		t.Fatalf("register worker: %v", err)
 	}
 
-	project := postGraphQL(t, server.URL, `mutation { createProject(input: $input) { id } }`, map[string]any{
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"name": "Repo", "gitUrl": t.TempDir(), "defaultBranch": "main", "worktreeNamePrefix": "repo"},
 	})
 	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
-	task := postGraphQL(t, server.URL, `mutation { createTask(input: $input) { id } }`, map[string]any{
+	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"title": "E2E", "projectId": projectID, "agentType": "codex", "baseBranch": "main", "targetBranch": "task/e2e"},
 	})
 	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
-	postGraphQL(t, server.URL, `mutation { assignWorker(taskId: $taskId, workerId: $workerId) { id } }`, map[string]any{"taskId": taskID, "workerId": "worker-e2e"})
-	postGraphQL(t, server.URL, `mutation { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
+	postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { id } }`, map[string]any{"taskId": taskID, "workerId": "worker-e2e"})
+	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
 
 	var start rawEnvelope
 	if err := conn.ReadJSON(&start); err != nil {
@@ -74,14 +74,14 @@ func TestTrustedManagerWorkerFlow(t *testing.T) {
 		}
 	}
 
-	loaded := eventuallyGraphQL(t, server.URL, `query { task(id: $id) { id status } }`, map[string]any{"id": taskID}, func(body map[string]any) bool {
+	loaded := eventuallyGraphQL(t, server.URL, `query Task($id: ID!) { task(id: $id) { id status } }`, map[string]any{"id": taskID}, func(body map[string]any) bool {
 		task := body["data"].(map[string]any)["task"].(map[string]any)
 		return task["status"] == string(domain.TaskCompleted)
 	})
 	if loaded == nil {
 		t.Fatal("task did not complete")
 	}
-	logs := postGraphQL(t, server.URL, `query { taskLogs(taskId: $taskId) { content } }`, map[string]any{"taskId": taskID})
+	logs := postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { content } }`, map[string]any{"taskId": taskID})
 	if got := len(logs["data"].(map[string]any)["taskLogs"].([]any)); got != 1 {
 		t.Fatalf("logs count = %d, want 1", got)
 	}

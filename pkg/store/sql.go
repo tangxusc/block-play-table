@@ -29,6 +29,11 @@ type SQLStore struct {
 	dialect string
 }
 
+type Migration struct {
+	Version string
+	SQL     string
+}
+
 func OpenSQLStore(ctx context.Context, driver, dsn string) (*SQLStore, error) {
 	driver = strings.ToLower(strings.TrimSpace(driver))
 	dsn = strings.TrimSpace(dsn)
@@ -81,6 +86,47 @@ func (s *SQLStore) Migrate(ctx context.Context, migration string) error {
 		}
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("run migration statement %q: %w", statement, err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLStore) MigrateVersioned(ctx context.Context, migrations []Migration) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMP NOT NULL)`); err != nil {
+		return err
+	}
+	for _, migration := range migrations {
+		if strings.TrimSpace(migration.Version) == "" || strings.TrimSpace(migration.SQL) == "" {
+			continue
+		}
+		var applied string
+		err := s.db.QueryRowContext(ctx, `SELECT version FROM schema_migrations WHERE version = `+s.bind(1), migration.Version).Scan(&applied)
+		if err == nil {
+			continue
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, statement := range strings.Split(migration.SQL, ";") {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("run migration %s statement %q: %w", migration.Version, statement, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (`+s.bindList(1, 2)+`)`, migration.Version, time.Now().UTC()); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -214,16 +260,53 @@ func (s *SQLStore) Workers(ctx context.Context) ([]*domain.Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := make([]*domain.Worker, 0)
 	for rows.Next() {
-		worker, err := s.scanWorker(ctx, rows)
+		worker, err := scanWorkerFields(rows)
 		if err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
 		out = append(out, worker)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, worker := range out {
+		boundIDs, err := s.boundProjectIDs(ctx, worker.ID)
+		if err != nil {
+			return nil, err
+		}
+		worker.BoundProjectIDs = boundIDs
+	}
+	return out, nil
+}
+
+func (s *SQLStore) DeleteWorker(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_project_bindings WHERE worker_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM workers WHERE id = `+s.bind(1), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: worker %s", domain.ErrNotFound, id)
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) SaveProject(ctx context.Context, project *domain.Project) error {
@@ -285,6 +368,13 @@ func (s *SQLStore) SaveSettings(ctx context.Context, settings *domain.Settings) 
 		return err
 	}
 	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, s.upsertSQL(
+		"system_settings",
+		[]string{"id", "worker_heartbeat_timeout", "security_policy", "version", "created_at", "updated_at"},
+		[]string{"worker_heartbeat_timeout", "security_policy", "version", "updated_at"},
+	), settings.ID, settings.WorkerHeartbeat, settings.SecurityPolicy, settings.Version, settings.CreatedAt, settings.UpdatedAt); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM system_agent_env_vars`); err != nil {
 		return err
 	}
@@ -301,12 +391,16 @@ func (s *SQLStore) SaveSettings(ctx context.Context, settings *domain.Settings) 
 }
 
 func (s *SQLStore) Settings(ctx context.Context) (*domain.Settings, error) {
+	settings := domain.NewSettings(time.Now().UTC())
+	row := s.db.QueryRowContext(ctx, `SELECT id, worker_heartbeat_timeout, security_policy, version, created_at, updated_at FROM system_settings WHERE id = `+s.bind(1), "settings")
+	if err := row.Scan(&settings.ID, &settings.WorkerHeartbeat, &settings.SecurityPolicy, &settings.Version, &settings.CreatedAt, &settings.UpdatedAt); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value, description, enabled, sensitive FROM system_agent_env_vars ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	settings := domain.NewSettings(time.Now().UTC())
 	for rows.Next() {
 		var item domain.AgentRuntimeEnvVar
 		var description sql.NullString
@@ -482,6 +576,36 @@ func (s *SQLStore) MarkMessageProcessed(ctx context.Context, messageID string) (
 }
 
 func (s *SQLStore) scanWorker(ctx context.Context, scanner interface{ Scan(...any) error }) (*domain.Worker, error) {
+	worker, err := scanWorkerFields(scanner)
+	if err != nil {
+		return nil, err
+	}
+	boundIDs, err := s.boundProjectIDs(ctx, worker.ID)
+	if err != nil {
+		return nil, err
+	}
+	worker.BoundProjectIDs = boundIDs
+	return worker, nil
+}
+
+func (s *SQLStore) boundProjectIDs(ctx context.Context, workerID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM worker_project_bindings WHERE worker_id = `+s.bind(1)+` ORDER BY project_id`, workerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func scanWorkerFields(scanner interface{ Scan(...any) error }) (*domain.Worker, error) {
 	var worker domain.Worker
 	var capabilities string
 	var supportedAgents string
@@ -502,29 +626,7 @@ func (s *SQLStore) scanWorker(ctx context.Context, scanner interface{ Scan(...an
 	if lastHeartbeatAt.Valid {
 		worker.LastHeartbeatAt = &lastHeartbeatAt.Time
 	}
-	boundIDs, err := s.boundProjectIDs(ctx, worker.ID)
-	if err != nil {
-		return nil, err
-	}
-	worker.BoundProjectIDs = boundIDs
 	return &worker, nil
-}
-
-func (s *SQLStore) boundProjectIDs(ctx context.Context, workerID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM worker_project_bindings WHERE worker_id = `+s.bind(1)+` ORDER BY project_id`, workerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 func (s *SQLStore) upsertSQL(table string, columns, updateColumns []string) string {

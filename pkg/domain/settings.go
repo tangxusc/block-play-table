@@ -7,6 +7,7 @@ type Settings struct {
 	Version             int                  `json:"version"`
 	AgentRuntimeEnvVars []AgentRuntimeEnvVar `json:"agentRuntimeEnvVars"`
 	WorkerHeartbeat     string               `json:"workerHeartbeatTimeout"`
+	SecurityPolicy      string               `json:"securityPolicy"`
 	CreatedAt           time.Time            `json:"createdAt"`
 	UpdatedAt           time.Time            `json:"updatedAt"`
 
@@ -27,16 +28,40 @@ func NewSettings(now time.Time) *Settings {
 		ID:              "settings",
 		Version:         1,
 		WorkerHeartbeat: "90s",
+		SecurityPolicy:  "TRUSTED",
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 }
 
 func (s *Settings) UpdateAgentRuntimeEnvVars(vars []AgentRuntimeEnvVar, now time.Time) {
-	s.AgentRuntimeEnvVars = append([]AgentRuntimeEnvVar(nil), vars...)
+	existing := make(map[string]AgentRuntimeEnvVar, len(s.AgentRuntimeEnvVars))
+	for _, item := range s.AgentRuntimeEnvVars {
+		existing[item.Key] = item
+	}
+	next := make([]AgentRuntimeEnvVar, 0, len(vars))
+	for _, item := range vars {
+		if item.Value == "" {
+			if prior, ok := existing[item.Key]; ok && prior.Sensitive {
+				item.Value = prior.Value
+			}
+		}
+		next = append(next, item)
+	}
+	s.AgentRuntimeEnvVars = next
 	s.Version++
 	s.UpdatedAt = now
 	s.pendingEvents = append(s.pendingEvents, newEvent("AgentRuntimeEnvUpdated", "Settings", s.ID, s.Version, map[string]any{"count": len(vars)}, now))
+}
+
+func (s *Settings) UpdateWorkerHeartbeatTimeout(timeout string, now time.Time) {
+	if timeout == "" {
+		timeout = "90s"
+	}
+	s.WorkerHeartbeat = timeout
+	s.Version++
+	s.UpdatedAt = now
+	s.pendingEvents = append(s.pendingEvents, newEvent("WorkerHeartbeatTimeoutUpdated", "Settings", s.ID, s.Version, map[string]any{"timeout": timeout}, now))
 }
 
 func (s Settings) MaskedEnvVars() []AgentRuntimeEnvVar {

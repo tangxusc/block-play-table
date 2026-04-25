@@ -126,6 +126,40 @@ func (w *Worker) Enable(now time.Time) {
 	w.addEvent("WorkerEnabled", nil, now)
 }
 
+func (w *Worker) Update(input NewWorkerInput) error {
+	if err := requireNonBlank("worker name", input.Name); err != nil {
+		return err
+	}
+	if err := requireNonBlank("work dir", input.WorkDir); err != nil {
+		return err
+	}
+	if len(input.SupportedAgents) == 0 {
+		return fmt.Errorf("supported agents is required")
+	}
+	for _, agent := range input.SupportedAgents {
+		if !agent.Valid() {
+			return fmt.Errorf("unsupported agent type %q", agent)
+		}
+	}
+	if input.ProjectBindingMode == "" {
+		input.ProjectBindingMode = WorkerAllProjects
+	}
+	w.Name = input.Name
+	w.Capabilities = cloneMap(input.Capabilities)
+	w.SupportedAgents = append([]AgentType(nil), input.SupportedAgents...)
+	w.WorkDir = input.WorkDir
+	w.StartupCommand = input.StartupCommand
+	w.ProjectBindingMode = input.ProjectBindingMode
+	if w.ProjectBindingMode == WorkerAllProjects {
+		w.BoundProjectIDs = nil
+	} else {
+		w.BoundProjectIDs = append([]string(nil), input.BoundProjectIDs...)
+	}
+	w.touch(input.Now)
+	w.addEvent("WorkerUpdated", map[string]any{"name": w.Name}, input.Now)
+	return nil
+}
+
 func (w *Worker) BindProjects(projectIDs []string, now time.Time) {
 	w.ProjectBindingMode = WorkerSpecificProjects
 	w.BoundProjectIDs = append([]string(nil), projectIDs...)

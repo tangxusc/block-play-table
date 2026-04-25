@@ -43,8 +43,8 @@ func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
 		t.Fatalf("assigned status = %v, want ASSIGNED", got)
 	}
 
-	tasks := postGraphQL(t, server.URL, `query { tasks { id title status } }`, nil)
-	if got := len(tasks["data"].(map[string]any)["tasks"].([]any)); got != 1 {
+	tasks := postGraphQL(t, server.URL, `query { tasks { nodes { id title status } totalCount } }`, nil)
+	if got := int(tasks["data"].(map[string]any)["tasks"].(map[string]any)["totalCount"].(float64)); got != 1 {
 		t.Fatalf("tasks count = %d, want 1", got)
 	}
 }

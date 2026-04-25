@@ -9,20 +9,22 @@ import (
 type MessageType string
 
 const (
-	MessageTaskStart        MessageType = "TASK_START"
-	MessageTaskInterrupt    MessageType = "TASK_INTERRUPT"
-	MessageWorkerRegister   MessageType = "WORKER_REGISTER"
-	MessageWorkerHeartbeat  MessageType = "WORKER_HEARTBEAT"
-	MessageTaskAccepted     MessageType = "TASK_ACCEPTED"
-	MessageTaskStarted      MessageType = "TASK_STARTED"
-	MessageTaskLog          MessageType = "TASK_LOG"
-	MessageTaskConversation MessageType = "TASK_CONVERSATION"
-	MessageTaskWaitingInput MessageType = "TASK_WAITING_INPUT"
-	MessageTaskInterrupted  MessageType = "TASK_INTERRUPTED"
-	MessageTaskCompleted    MessageType = "TASK_COMPLETED"
-	MessageTaskFailed       MessageType = "TASK_FAILED"
-	MessageTaskResult       MessageType = "TASK_RESULT"
-	MessagePing             MessageType = "PING"
+	MessageTaskStart          MessageType = "TASK_START"
+	MessageTaskInterrupt      MessageType = "TASK_INTERRUPT"
+	MessageTaskCancel         MessageType = "TASK_CANCEL"
+	MessageWorkerConfigUpdate MessageType = "WORKER_CONFIG_UPDATE"
+	MessageWorkerRegister     MessageType = "WORKER_REGISTER"
+	MessageWorkerHeartbeat    MessageType = "WORKER_HEARTBEAT"
+	MessageTaskAccepted       MessageType = "TASK_ACCEPTED"
+	MessageTaskStarted        MessageType = "TASK_STARTED"
+	MessageTaskLog            MessageType = "TASK_LOG"
+	MessageTaskConversation   MessageType = "TASK_CONVERSATION"
+	MessageTaskWaitingInput   MessageType = "TASK_WAITING_INPUT"
+	MessageTaskInterrupted    MessageType = "TASK_INTERRUPTED"
+	MessageTaskCompleted      MessageType = "TASK_COMPLETED"
+	MessageTaskFailed         MessageType = "TASK_FAILED"
+	MessageTaskResult         MessageType = "TASK_RESULT"
+	MessagePing               MessageType = "PING"
 )
 
 type Envelope struct {

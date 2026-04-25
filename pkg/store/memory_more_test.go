@@ -106,3 +106,56 @@ func TestMemoryStoreNotFoundErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryStoreListsDeletesAndFiltersEvents(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	if err := s.Ping(ctx); err != nil {
+		t.Fatalf("Ping returned error: %v", err)
+	}
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	taskA, err := domain.NewTask(domain.NewTaskInput{ID: "task-a", Title: "A", ProjectID: "project-1", AgentType: domain.AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := domain.NewTask(domain.NewTaskInput{ID: "task-b", Title: "B", ProjectID: "project-1", AgentType: domain.AgentClaude, Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveTask(ctx, taskB); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveTask(ctx, taskA); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.Tasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[0].ID != "task-a" {
+		t.Fatalf("tasks order = %+v", tasks)
+	}
+	worker, err := domain.NewWorker(domain.NewWorkerInput{ID: "worker-delete", Name: "W", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", Capabilities: map[string]string{"os": "linux"}, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveWorker(ctx, worker); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteWorker(ctx, worker.ID); err != nil {
+		t.Fatalf("DeleteWorker returned error: %v", err)
+	}
+	if err := s.DeleteWorker(ctx, worker.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("DeleteWorker missing err = %v, want not found", err)
+	}
+	if err := s.AppendEvents(ctx, append(taskA.PullEvents(), domain.DomainEvent{EventID: "evt-worker", EventType: "WorkerConnected", AggregateType: "Worker", AggregateID: "worker-1", OccurredAt: now})); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.DomainEvents(ctx, domain.EventFilter{AggregateType: "Worker", EventType: "WorkerConnected"})
+	if err != nil || len(events) != 1 || events[0].AggregateID != "worker-1" {
+		t.Fatalf("filtered events = %+v, %v", events, err)
+	}
+	if err := s.MarkOutboxPublished(ctx, nil, now); err != nil {
+		t.Fatalf("MarkOutboxPublished(nil) returned error: %v", err)
+	}
+}
