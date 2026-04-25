@@ -76,9 +76,15 @@ Team PostgreSQL mode:
 
 ```bash
 cp .env.example .env
-# edit WORKER_TOKEN and POSTGRES_PASSWORD
+# edit WORKER_TOKEN, POSTGRES_PASSWORD, and WORKER_SSH_DIR
 docker compose -f docker-compose.team.yml up --build
 ```
+
+For local `git@github.com:...` project URLs, the Worker image includes `openssh-client`.
+`make run-local` passes `WORKER_SSH_DIR=$(HOME)/.ssh` and Docker Desktop's
+`WORKER_SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock` into the Worker container.
+The GitHub SSH key must be usable non-interactively by either the mounted SSH
+directory or the forwarded ssh-agent.
 
 Manager storage is selected by:
 

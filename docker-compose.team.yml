@@ -26,8 +26,13 @@ services:
       WORKER_WORK_DIR: "/worker-data"
       WORKER_SUPPORTED_AGENTS: "${WORKER_SUPPORTED_AGENTS:-codex,claude}"
       WORKER_TOKEN: "${WORKER_TOKEN:?set WORKER_TOKEN in .env}"
+      HOME: "/root"
+      SSH_AUTH_SOCK: "/ssh-agent"
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
     volumes:
-      - worker_data:/worker-data
+      - ${WORKER_DATA_SOURCE:-worker_data}:/worker-data
+      - ${WORKER_SSH_DIR}:/root/.ssh:ro
+      - ${WORKER_SSH_AUTH_SOCK}:/ssh-agent
     depends_on:
       - manager
 

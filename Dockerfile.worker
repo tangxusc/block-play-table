@@ -10,6 +10,8 @@ FROM debian:12-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates bash nodejs npm \
   && npm install -g @openai/codex @anthropic-ai/claude-code \
   && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /out/worker /worker
 EXPOSE 8080
 ENTRYPOINT ["/worker"]
