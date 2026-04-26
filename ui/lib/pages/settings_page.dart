@@ -17,7 +17,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late Future<SettingsData> _future;
   SettingsData? _settings;
-  List<EnvVarItem> _vars = const [];
   final _heartbeat = TextEditingController();
   RealtimeRefreshController? _realtime;
 
@@ -42,7 +41,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<SettingsData> _load() async {
     final settings = await widget.apiClient.fetchSettings();
     _settings = settings;
-    _vars = List<EnvVarItem>.from(settings.agentRuntimeEnvVars);
     _heartbeat.text = settings.workerHeartbeatTimeout;
     return settings;
   }
@@ -66,11 +64,6 @@ class _SettingsPageState extends State<SettingsPage> {
           tooltip: 'Refresh settings',
           onPressed: _reload,
           icon: const Icon(Icons.refresh),
-        ),
-        FilledButton.icon(
-          onPressed: _settings == null ? null : () => _openEnvDialog(),
-          icon: const Icon(Icons.add),
-          label: const Text('New env var'),
         ),
         FilledButton.icon(
           onPressed: _settings == null ? null : _save,
@@ -116,54 +109,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Agent runtime environment',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  if (_vars.isEmpty)
-                    const EmptyState(
-                      icon: Icons.key_outlined,
-                      title: 'No environment variables',
-                    )
-                  else
-                    ..._vars.map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Card(
-                          child: ListTile(
-                            leading: Icon(
-                              item.enabled
-                                  ? Icons.toggle_on_outlined
-                                  : Icons.toggle_off_outlined,
-                            ),
-                            title: Text(item.key),
-                            subtitle: Text(
-                              '${item.valueMasked}  ${item.description}',
-                            ),
-                            trailing: Wrap(
-                              spacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                if (item.sensitive)
-                                  const Icon(Icons.visibility_off_outlined),
-                                IconButton(
-                                  tooltip: 'Edit env var',
-                                  onPressed: () => _openEnvDialog(item),
-                                  icon: const Icon(Icons.edit_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Remove env var',
-                                  onPressed: () => _removeEnvVar(item),
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
                 ],
               ),
               if (snapshot.connectionState != ConnectionState.done)
@@ -180,36 +125,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _openEnvDialog([EnvVarItem? item]) async {
-    final result = await showEnvVarDialog(context, item: item);
-    if (result == null) {
-      return;
-    }
-    setState(() {
-      _vars = [
-        ..._vars.where((existing) => existing.key != result.key),
-        result,
-      ];
-    });
-    await _save();
-  }
-
-  Future<void> _removeEnvVar(EnvVarItem item) async {
-    final confirmed = await confirmAction(
-      context,
-      title: 'Remove environment variable',
-      message: 'Remove "${item.key}"?',
-      confirmLabel: 'Remove',
-    );
-    if (!confirmed) {
-      return;
-    }
-    setState(() {
-      _vars = _vars.where((existing) => existing.key != item.key).toList();
-    });
-    await _save();
-  }
-
   Future<void> _save() async {
     final settings = _settings;
     if (settings == null) {
@@ -217,7 +132,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     await widget.apiClient.updateSettings(
       SettingsData(
-        agentRuntimeEnvVars: _vars,
         workerHeartbeatTimeout:
             _heartbeat.text.trim().isEmpty ? '90s' : _heartbeat.text.trim(),
         securityPolicy: settings.securityPolicy,
@@ -225,88 +139,4 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     _reload();
   }
-}
-
-Future<EnvVarItem?> showEnvVarDialog(BuildContext context, {EnvVarItem? item}) {
-  final key = TextEditingController(text: item?.key ?? '');
-  final value = TextEditingController();
-  final description = TextEditingController(text: item?.description ?? '');
-  var enabled = item?.enabled ?? true;
-  var sensitive = item?.sensitive ?? true;
-  return showDialog<EnvVarItem>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(item == null ? 'Create env var' : 'Edit env var'),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: key,
-                decoration: const InputDecoration(labelText: 'Key'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: value,
-                decoration: InputDecoration(
-                  labelText: item == null ? 'Value' : 'New value',
-                  helperText: item == null
-                      ? null
-                      : 'Leave blank to keep current value.',
-                ),
-                obscureText: sensitive,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: description,
-                decoration: const InputDecoration(labelText: 'Description'),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                children: [
-                  FilterChip(
-                    label: const Text('Enabled'),
-                    selected: enabled,
-                    onSelected: (value) => setState(() => enabled = value),
-                  ),
-                  FilterChip(
-                    label: const Text('Sensitive'),
-                    selected: sensitive,
-                    onSelected: (value) => setState(() => sensitive = value),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (key.text.trim().isEmpty) {
-                return;
-              }
-              Navigator.of(context).pop(
-                EnvVarItem(
-                  key: key.text.trim(),
-                  valueMasked: sensitive ? '********' : value.text.trim(),
-                  description: description.text.trim(),
-                  enabled: enabled,
-                  sensitive: sensitive,
-                  valueInput: value.text,
-                ),
-              );
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    ),
-  );
 }

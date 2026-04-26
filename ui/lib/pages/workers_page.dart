@@ -226,6 +226,22 @@ Future<bool?> showWorkerFormDialog(
   };
   var bindingMode = worker?.projectBindingMode ?? 'ALL_PROJECTS';
   final boundProjectIds = <String>{...(worker?.boundProjectIds ?? const [])};
+  final envByAgent = <String, List<EnvVarItem>>{
+    for (final group
+        in worker?.agentRuntimeEnv ?? const <WorkerAgentRuntimeEnvItem>[])
+      group.agentType: List<EnvVarItem>.from(group.vars),
+  };
+  var selectedEnvAgent = agents.first;
+
+  List<WorkerAgentRuntimeEnvItem> agentRuntimeEnvInput() => agents
+      .map(
+        (agent) => WorkerAgentRuntimeEnvItem(
+          agentType: agent,
+          vars: List<EnvVarItem>.from(envByAgent[agent] ?? const []),
+        ),
+      )
+      .where((group) => group.vars.isNotEmpty)
+      .toList();
 
   return showDialog<bool>(
     context: context,
@@ -291,6 +307,76 @@ Future<bool?> showWorkerFormDialog(
                     agents
                       ..clear()
                       ..addAll(values);
+                    if (!agents.contains(selectedEnvAgent)) {
+                      selectedEnvAgent = agents.first;
+                    }
+                  }),
+                ),
+                const SizedBox(height: 18),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Runtime environment',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: agents
+                      .map(
+                        (agent) => ButtonSegment(
+                          value: agent,
+                          icon: Icon(
+                            agent == 'claude'
+                                ? Icons.chat_bubble_outline
+                                : Icons.terminal,
+                          ),
+                          label: Text(_agentLabel(agent)),
+                        ),
+                      )
+                      .toList(),
+                  selected: {selectedEnvAgent},
+                  onSelectionChanged: (values) =>
+                      setState(() => selectedEnvAgent = values.first),
+                ),
+                const SizedBox(height: 8),
+                _WorkerEnvEditor(
+                  agent: selectedEnvAgent,
+                  vars: envByAgent[selectedEnvAgent] ?? const [],
+                  onAdd: () async {
+                    final item = await showWorkerEnvVarDialog(context);
+                    if (item == null) {
+                      return;
+                    }
+                    setState(() {
+                      final vars = [
+                        ...(envByAgent[selectedEnvAgent] ?? const [])
+                            .where((existing) => existing.key != item.key),
+                        item,
+                      ];
+                      envByAgent[selectedEnvAgent] = vars;
+                    });
+                  },
+                  onEdit: (item) async {
+                    final result =
+                        await showWorkerEnvVarDialog(context, item: item);
+                    if (result == null) {
+                      return;
+                    }
+                    setState(() {
+                      final vars = [
+                        ...(envByAgent[selectedEnvAgent] ?? const [])
+                            .where((existing) => existing.key != item.key),
+                        result,
+                      ];
+                      envByAgent[selectedEnvAgent] = vars;
+                    });
+                  },
+                  onRemove: (item) => setState(() {
+                    envByAgent[selectedEnvAgent] =
+                        (envByAgent[selectedEnvAgent] ?? const [])
+                            .where((existing) => existing.key != item.key)
+                            .toList();
                   }),
                 ),
                 const SizedBox(height: 12),
@@ -362,6 +448,7 @@ Future<bool?> showWorkerFormDialog(
                   boundProjectIds: bindingMode == 'ALL_PROJECTS'
                       ? const []
                       : boundProjectIds.toList(),
+                  agentRuntimeEnv: agentRuntimeEnvInput(),
                 );
               } else {
                 await apiClient.updateWorker(
@@ -376,6 +463,7 @@ Future<bool?> showWorkerFormDialog(
                     boundProjectIds: bindingMode == 'ALL_PROJECTS'
                         ? const []
                         : boundProjectIds.toList(),
+                    agentRuntimeEnv: agentRuntimeEnvInput(),
                     lastHeartbeatAt: worker.lastHeartbeatAt,
                     currentTaskId: worker.currentTaskId,
                   ),
@@ -384,6 +472,186 @@ Future<bool?> showWorkerFormDialog(
               if (context.mounted) {
                 Navigator.of(context).pop(true);
               }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+String _agentLabel(String agent) => switch (agent) {
+      'codex' => 'Codex',
+      'claude' => 'Claude',
+      _ => agent,
+    };
+
+class _WorkerEnvEditor extends StatelessWidget {
+  const _WorkerEnvEditor({
+    required this.agent,
+    required this.vars,
+    required this.onAdd,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final String agent;
+  final List<EnvVarItem> vars;
+  final VoidCallback onAdd;
+  final ValueChanged<EnvVarItem> onEdit;
+  final ValueChanged<EnvVarItem> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _agentLabel(agent),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: onAdd,
+                  icon: const Icon(Icons.add),
+                  label: const Text('New env var'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (vars.isEmpty)
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('No environment variables'),
+              )
+            else
+              ...vars.map(
+                (item) => ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    item.enabled
+                        ? Icons.toggle_on_outlined
+                        : Icons.toggle_off_outlined,
+                  ),
+                  title: Text(item.key),
+                  subtitle: Text('${item.valueMasked}  ${item.description}'),
+                  trailing: Wrap(
+                    spacing: 6,
+                    children: [
+                      if (item.sensitive)
+                        const Icon(Icons.visibility_off_outlined),
+                      IconButton(
+                        tooltip: 'Edit env var',
+                        onPressed: () => onEdit(item),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Remove env var',
+                        onPressed: () => onRemove(item),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<EnvVarItem?> showWorkerEnvVarDialog(
+  BuildContext context, {
+  EnvVarItem? item,
+}) {
+  final key = TextEditingController(text: item?.key ?? '');
+  final value = TextEditingController(
+    text: item != null && !item.sensitive ? item.valueMasked : '',
+  );
+  final description = TextEditingController(text: item?.description ?? '');
+  var enabled = item?.enabled ?? true;
+  var sensitive = item?.sensitive ?? true;
+  return showDialog<EnvVarItem>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text(item == null ? 'Create env var' : 'Edit env var'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: key,
+                decoration: const InputDecoration(labelText: 'Key'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: value,
+                decoration: InputDecoration(
+                  labelText: item == null ? 'Value' : 'New value',
+                  helperText: item != null && sensitive
+                      ? 'Leave blank to keep current value.'
+                      : null,
+                ),
+                obscureText: sensitive,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: description,
+                decoration: const InputDecoration(labelText: 'Description'),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilterChip(
+                    label: const Text('Enabled'),
+                    selected: enabled,
+                    onSelected: (value) => setState(() => enabled = value),
+                  ),
+                  FilterChip(
+                    label: const Text('Sensitive'),
+                    selected: sensitive,
+                    onSelected: (value) => setState(() => sensitive = value),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (key.text.trim().isEmpty) {
+                return;
+              }
+              Navigator.of(context).pop(
+                EnvVarItem(
+                  key: key.text.trim(),
+                  valueMasked: sensitive ? '********' : value.text.trim(),
+                  description: description.text.trim(),
+                  enabled: enabled,
+                  sensitive: sensitive,
+                  valueInput: value.text,
+                ),
+              );
             },
             child: const Text('Save'),
           ),

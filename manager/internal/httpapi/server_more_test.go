@@ -34,11 +34,30 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatalf("projects count = %d, want 1", len(got))
 	}
 
-	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: CreateWorkerInput!) { createWorker(input: $input) { id status } }`, map[string]any{
-		"input": map[string]any{"id": "worker-ops", "name": "W", "supportedAgents": []any{"codex"}, "workDir": "/tmp", "projectBindingMode": "ALL_PROJECTS"},
+	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: CreateWorkerInput!) { createWorker(input: $input) { id status agentRuntimeEnv { agentType vars { key valueMasked enabled sensitive } } } }`, map[string]any{
+		"input": map[string]any{
+			"id":                 "worker-ops",
+			"name":               "W",
+			"supportedAgents":    []any{"codex"},
+			"workDir":            "/tmp",
+			"projectBindingMode": "ALL_PROJECTS",
+			"agentRuntimeEnv": []any{map[string]any{
+				"agentType": "codex",
+				"vars": []any{
+					map[string]any{"key": "TOKEN", "value": "secret", "enabled": true, "sensitive": true},
+					map[string]any{"key": "DISABLED", "value": "ignored", "enabled": false, "sensitive": false},
+				},
+			}},
+		},
 	})
-	if got := worker["data"].(map[string]any)["createWorker"].(map[string]any)["status"]; got != string(domain.WorkerOnline) {
+	createdWorker := worker["data"].(map[string]any)["createWorker"].(map[string]any)
+	if got := createdWorker["status"]; got != string(domain.WorkerOnline) {
 		t.Fatalf("worker status = %v, want ONLINE", got)
+	}
+	workerEnv := createdWorker["agentRuntimeEnv"].([]any)
+	firstVar := workerEnv[0].(map[string]any)["vars"].([]any)[0].(map[string]any)
+	if firstVar["valueMasked"] != "********" {
+		t.Fatalf("worker env should mask sensitive values: %#v", workerEnv)
 	}
 	if got := postGraphQL(t, server.URL, `query { workers { id } }`, nil)["data"].(map[string]any)["workers"].([]any); len(got) != 1 {
 		t.Fatalf("workers count = %d, want 1", len(got))
@@ -59,6 +78,20 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	started := postGraphQL(t, server.URL, `mutation StartTask($id: ID!) { startTask(id: $id) { status } }`, map[string]any{"id": taskID})
 	if got := started["data"].(map[string]any)["startTask"].(map[string]any)["status"]; got != string(domain.TaskStarting) {
 		t.Fatalf("task status = %v, want STARTING", got)
+	}
+	_ = workerConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var start rawEnvelope
+	if err := workerConn.ReadJSON(&start); err != nil {
+		t.Fatal(err)
+	}
+	var payload protocol.TaskStartPayload
+	if data, err := json.Marshal(start.Payload); err != nil {
+		t.Fatal(err)
+	} else if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.AgentRuntimeEnv) != 1 || payload.AgentRuntimeEnv[0].Key != "TOKEN" || payload.AgentRuntimeEnv[0].Value != "secret" {
+		t.Fatalf("task start env = %+v", payload.AgentRuntimeEnv)
 	}
 
 	if got := postGraphQL(t, server.URL, `query Task($id: ID!) { task(id: $id) { id } }`, map[string]any{"id": taskID})["data"].(map[string]any)["task"].(map[string]any)["id"]; got != taskID {
@@ -88,12 +121,11 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatalf("interrupt task id = %v, want %s", got, taskID)
 	}
 
-	settings := postGraphQL(t, server.URL, `mutation UpdateSettings($input: UpdateAgentRuntimeEnvVarsInput!) { updateAgentRuntimeEnvVars(input: $input) { agentRuntimeEnvVars { key valueMasked } } }`, map[string]any{
+	rawSettingsEnv := postRawGraphQL(t, server.URL, `mutation UpdateSettings($input: UpdateAgentRuntimeEnvVarsInput!) { updateAgentRuntimeEnvVars(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"vars": []any{map[string]any{"key": "TOKEN", "value": "secret", "enabled": true, "sensitive": true}}},
 	})
-	env := settings["data"].(map[string]any)["updateAgentRuntimeEnvVars"].(map[string]any)["agentRuntimeEnvVars"].([]any)
-	if env[0].(map[string]any)["valueMasked"] != "********" {
-		t.Fatalf("masked settings = %#v", env)
+	if rawSettingsEnv["errors"] == nil {
+		t.Fatalf("old settings env mutation should be removed: %#v", rawSettingsEnv)
 	}
 	_ = postGraphQL(t, server.URL, `query { settings { id } }`, nil)
 	archiveProject := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{

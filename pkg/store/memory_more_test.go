@@ -13,7 +13,17 @@ func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore()
 	now := time.Now().UTC()
-	worker, err := domain.NewWorker(domain.NewWorkerInput{ID: "worker-1", Name: "W", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", Now: now})
+	worker, err := domain.NewWorker(domain.NewWorkerInput{
+		ID:              "worker-1",
+		Name:            "W",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp",
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars:      []domain.AgentRuntimeEnvVar{{Key: "A", Value: "B", Enabled: true}},
+		}},
+		Now: now,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,11 +40,18 @@ func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
 	if workers, _ := s.Workers(ctx); len(workers) != 1 {
 		t.Fatalf("workers count = %d", len(workers))
 	}
+	loadedWorker, err := s.Worker(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime := loadedWorker.EnabledRuntimeEnv(domain.AgentCodex); len(runtime) != 1 || runtime[0].Value != "B" {
+		t.Fatalf("worker env = %+v", loadedWorker.AgentRuntimeEnv)
+	}
 	if projects, _ := s.Projects(ctx); len(projects) != 1 {
 		t.Fatalf("projects count = %d", len(projects))
 	}
 	settings := domain.NewSettings(now)
-	settings.UpdateAgentRuntimeEnvVars([]domain.AgentRuntimeEnvVar{{Key: "A", Value: "B", Enabled: true}}, now)
+	settings.UpdateWorkerHeartbeatTimeout("45s", now)
 	if err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -42,8 +59,8 @@ func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.AgentRuntimeEnvVars[0].Value != "B" {
-		t.Fatalf("settings env = %+v", loaded.AgentRuntimeEnvVars)
+	if loaded.WorkerHeartbeat != "45s" {
+		t.Fatalf("settings = %+v", loaded)
 	}
 	first, err := s.MarkMessageProcessed(ctx, "msg-1")
 	if err != nil || !first {

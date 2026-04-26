@@ -132,25 +132,27 @@ func (r *mutationResolver) RetryTask(ctx context.Context, taskID *string, id *st
 
 // CreateWorker is the resolver for the createWorker field.
 func (r *mutationResolver) CreateWorker(ctx context.Context, input model.CreateWorkerInput) (*model.Worker, error) {
-	return r.registerWorkerFromInput(ctx, input.ID, input.Name, input.SupportedAgents, input.WorkDir, input.StartupCommand, input.ProjectBindingMode, input.BoundProjectIds, input.Capabilities, true)
+	return r.registerWorkerFromInput(ctx, input.ID, input.Name, input.SupportedAgents, input.WorkDir, input.StartupCommand, input.ProjectBindingMode, input.BoundProjectIds, input.AgentRuntimeEnv, input.Capabilities, true)
 }
 
 // RegisterWorker is the resolver for the registerWorker field.
 func (r *mutationResolver) RegisterWorker(ctx context.Context, input model.RegisterWorkerInput) (*model.Worker, error) {
-	return r.registerWorkerFromInput(ctx, input.ID, input.Name, input.SupportedAgents, input.WorkDir, input.StartupCommand, input.ProjectBindingMode, input.BoundProjectIds, input.Capabilities, true)
+	return r.registerWorkerFromInput(ctx, input.ID, input.Name, input.SupportedAgents, input.WorkDir, input.StartupCommand, input.ProjectBindingMode, input.BoundProjectIds, input.AgentRuntimeEnv, input.Capabilities, true)
 }
 
 // UpdateWorker is the resolver for the updateWorker field.
 func (r *mutationResolver) UpdateWorker(ctx context.Context, input model.UpdateWorkerInput) (*model.Worker, error) {
 	worker, err := r.Service.UpdateWorker(ctx, app.RegisterWorkerInput{
-		ID:              input.ID,
-		Name:            input.Name,
-		SupportedAgents: domainAgents(input.SupportedAgents),
-		WorkDir:         input.WorkDir,
-		StartupCommand:  valueOrEmpty(input.StartupCommand),
-		BindingMode:     domain.WorkerProjectBindingMode(input.ProjectBindingMode),
-		BoundProjectIDs: append([]string(nil), input.BoundProjectIds...),
-		Capabilities:    fromKeyValueInputs(input.Capabilities),
+		ID:                     input.ID,
+		Name:                   input.Name,
+		SupportedAgents:        domainAgents(input.SupportedAgents),
+		WorkDir:                input.WorkDir,
+		StartupCommand:         valueOrEmpty(input.StartupCommand),
+		BindingMode:            domain.WorkerProjectBindingMode(input.ProjectBindingMode),
+		BoundProjectIDs:        append([]string(nil), input.BoundProjectIds...),
+		AgentRuntimeEnv:        fromWorkerAgentRuntimeEnvInputs(input.AgentRuntimeEnv),
+		ReplaceAgentRuntimeEnv: true,
+		Capabilities:           fromKeyValueInputs(input.Capabilities),
 	})
 	return toModelWorker(worker), err
 }
@@ -208,25 +210,6 @@ func (r *mutationResolver) UpdateProject(ctx context.Context, input model.Update
 func (r *mutationResolver) ArchiveProject(ctx context.Context, id string) (*model.Project, error) {
 	project, err := r.Service.ArchiveProject(ctx, id)
 	return toModelProject(project), err
-}
-
-// UpdateAgentRuntimeEnvVars is the resolver for the updateAgentRuntimeEnvVars field.
-func (r *mutationResolver) UpdateAgentRuntimeEnvVars(ctx context.Context, input model.UpdateAgentRuntimeEnvVarsInput) (*model.Settings, error) {
-	vars := make([]domain.AgentRuntimeEnvVar, 0, len(input.Vars))
-	for _, item := range input.Vars {
-		if item == nil {
-			continue
-		}
-		vars = append(vars, domain.AgentRuntimeEnvVar{
-			Key:         item.Key,
-			Value:       valueOrEmpty(item.Value),
-			Description: valueOrEmpty(item.Description),
-			Enabled:     item.Enabled,
-			Sensitive:   item.Sensitive,
-		})
-	}
-	settings, err := r.Service.UpdateAgentRuntimeEnvVars(ctx, vars)
-	return toModelSettings(settings), err
 }
 
 // UpdateWorkerHeartbeatTimeout is the resolver for the updateWorkerHeartbeatTimeout field.

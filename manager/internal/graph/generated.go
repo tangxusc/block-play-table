@@ -109,7 +109,6 @@ type ComplexityRoot struct {
 		RegisterWorker               func(childComplexity int, input model.RegisterWorkerInput) int
 		RetryTask                    func(childComplexity int, taskID *string, id *string) int
 		StartTask                    func(childComplexity int, input *model.StartTaskInput, taskID *string, id *string) int
-		UpdateAgentRuntimeEnvVars    func(childComplexity int, input model.UpdateAgentRuntimeEnvVarsInput) int
 		UpdateProject                func(childComplexity int, input model.UpdateProjectInput) int
 		UpdateTask                   func(childComplexity int, input model.UpdateTaskInput) int
 		UpdateWorker                 func(childComplexity int, input model.UpdateWorkerInput) int
@@ -155,7 +154,6 @@ type ComplexityRoot struct {
 	}
 
 	Settings struct {
-		AgentRuntimeEnvVars    func(childComplexity int) int
 		CreatedAt              func(childComplexity int) int
 		ID                     func(childComplexity int) int
 		SecurityPolicy         func(childComplexity int) int
@@ -204,6 +202,7 @@ type ComplexityRoot struct {
 	}
 
 	Worker struct {
+		AgentRuntimeEnv    func(childComplexity int) int
 		BoundProjectIds    func(childComplexity int) int
 		Capabilities       func(childComplexity int) int
 		CreatedAt          func(childComplexity int) int
@@ -218,6 +217,11 @@ type ComplexityRoot struct {
 		UpdatedAt          func(childComplexity int) int
 		Version            func(childComplexity int) int
 		WorkDir            func(childComplexity int) int
+	}
+
+	WorkerAgentRuntimeEnv struct {
+		AgentType func(childComplexity int) int
+		Vars      func(childComplexity int) int
 	}
 }
 
@@ -239,7 +243,6 @@ type MutationResolver interface {
 	CreateProject(ctx context.Context, input model.CreateProjectInput) (*model.Project, error)
 	UpdateProject(ctx context.Context, input model.UpdateProjectInput) (*model.Project, error)
 	ArchiveProject(ctx context.Context, id string) (*model.Project, error)
-	UpdateAgentRuntimeEnvVars(ctx context.Context, input model.UpdateAgentRuntimeEnvVarsInput) (*model.Settings, error)
 	UpdateWorkerHeartbeatTimeout(ctx context.Context, timeout string) (*model.Settings, error)
 }
 type QueryResolver interface {
@@ -646,17 +649,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.StartTask(childComplexity, args["input"].(*model.StartTaskInput), args["taskId"].(*string), args["id"].(*string)), true
-	case "Mutation.updateAgentRuntimeEnvVars":
-		if e.ComplexityRoot.Mutation.UpdateAgentRuntimeEnvVars == nil {
-			break
-		}
-
-		args, err := ec.field_Mutation_updateAgentRuntimeEnvVars_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Mutation.UpdateAgentRuntimeEnvVars(childComplexity, args["input"].(model.UpdateAgentRuntimeEnvVarsInput)), true
 	case "Mutation.updateProject":
 		if e.ComplexityRoot.Mutation.UpdateProject == nil {
 			break
@@ -950,12 +942,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.Workers(childComplexity, args["filter"].(*model.WorkerFilter)), true
 
-	case "Settings.agentRuntimeEnvVars":
-		if e.ComplexityRoot.Settings.AgentRuntimeEnvVars == nil {
-			break
-		}
-
-		return e.ComplexityRoot.Settings.AgentRuntimeEnvVars(childComplexity), true
 	case "Settings.createdAt":
 		if e.ComplexityRoot.Settings.CreatedAt == nil {
 			break
@@ -1184,6 +1170,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.TaskLog.TaskID(childComplexity), true
 
+	case "Worker.agentRuntimeEnv":
+		if e.ComplexityRoot.Worker.AgentRuntimeEnv == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Worker.AgentRuntimeEnv(childComplexity), true
 	case "Worker.boundProjectIds":
 		if e.ComplexityRoot.Worker.BoundProjectIds == nil {
 			break
@@ -1269,6 +1261,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Worker.WorkDir(childComplexity), true
 
+	case "WorkerAgentRuntimeEnv.agentType":
+		if e.ComplexityRoot.WorkerAgentRuntimeEnv.AgentType == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WorkerAgentRuntimeEnv.AgentType(childComplexity), true
+	case "WorkerAgentRuntimeEnv.vars":
+		if e.ComplexityRoot.WorkerAgentRuntimeEnv.Vars == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WorkerAgentRuntimeEnv.Vars(childComplexity), true
+
 	}
 	return 0, false
 }
@@ -1289,11 +1294,11 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputRegisterWorkerInput,
 		ec.unmarshalInputStartTaskInput,
 		ec.unmarshalInputTaskFilter,
-		ec.unmarshalInputUpdateAgentRuntimeEnvVarsInput,
 		ec.unmarshalInputUpdateProjectInput,
 		ec.unmarshalInputUpdateTaskInput,
 		ec.unmarshalInputUpdateWorkerInput,
 		ec.unmarshalInputUpdateWorkerProjectBindingsInput,
+		ec.unmarshalInputWorkerAgentRuntimeEnvInput,
 		ec.unmarshalInputWorkerFilter,
 	)
 	first := true
@@ -1581,17 +1586,6 @@ func (ec *executionContext) field_Mutation_startTask_args(ctx context.Context, r
 		return nil, err
 	}
 	args["id"] = arg2
-	return args, nil
-}
-
-func (ec *executionContext) field_Mutation_updateAgentRuntimeEnvVars_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateAgentRuntimeEnvVarsInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐUpdateAgentRuntimeEnvVarsInput)
-	if err != nil {
-		return nil, err
-	}
-	args["input"] = arg0
 	return args, nil
 }
 
@@ -3656,6 +3650,8 @@ func (ec *executionContext) fieldContext_Mutation_createWorker(ctx context.Conte
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -3727,6 +3723,8 @@ func (ec *executionContext) fieldContext_Mutation_registerWorker(ctx context.Con
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -3798,6 +3796,8 @@ func (ec *executionContext) fieldContext_Mutation_updateWorker(ctx context.Conte
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -3869,6 +3869,8 @@ func (ec *executionContext) fieldContext_Mutation_updateWorkerProjectBindings(ct
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -3940,6 +3942,8 @@ func (ec *executionContext) fieldContext_Mutation_enableWorker(ctx context.Conte
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -4011,6 +4015,8 @@ func (ec *executionContext) fieldContext_Mutation_disableWorker(ctx context.Cont
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -4263,63 +4269,6 @@ func (ec *executionContext) fieldContext_Mutation_archiveProject(ctx context.Con
 	return fc, nil
 }
 
-func (ec *executionContext) _Mutation_updateAgentRuntimeEnvVars(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Mutation_updateAgentRuntimeEnvVars,
-		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().UpdateAgentRuntimeEnvVars(ctx, fc.Args["input"].(model.UpdateAgentRuntimeEnvVarsInput))
-		},
-		nil,
-		ec.marshalNSettings2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSettings,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Mutation_updateAgentRuntimeEnvVars(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Mutation",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_Settings_id(ctx, field)
-			case "version":
-				return ec.fieldContext_Settings_version(ctx, field)
-			case "agentRuntimeEnvVars":
-				return ec.fieldContext_Settings_agentRuntimeEnvVars(ctx, field)
-			case "workerHeartbeatTimeout":
-				return ec.fieldContext_Settings_workerHeartbeatTimeout(ctx, field)
-			case "securityPolicy":
-				return ec.fieldContext_Settings_securityPolicy(ctx, field)
-			case "createdAt":
-				return ec.fieldContext_Settings_createdAt(ctx, field)
-			case "updatedAt":
-				return ec.fieldContext_Settings_updatedAt(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type Settings", field.Name)
-		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Mutation_updateAgentRuntimeEnvVars_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
-	}
-	return fc, nil
-}
-
 func (ec *executionContext) _Mutation_updateWorkerHeartbeatTimeout(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4349,8 +4298,6 @@ func (ec *executionContext) fieldContext_Mutation_updateWorkerHeartbeatTimeout(c
 				return ec.fieldContext_Settings_id(ctx, field)
 			case "version":
 				return ec.fieldContext_Settings_version(ctx, field)
-			case "agentRuntimeEnvVars":
-				return ec.fieldContext_Settings_agentRuntimeEnvVars(ctx, field)
 			case "workerHeartbeatTimeout":
 				return ec.fieldContext_Settings_workerHeartbeatTimeout(ctx, field)
 			case "securityPolicy":
@@ -5039,6 +4986,8 @@ func (ec *executionContext) fieldContext_Query_worker(ctx context.Context, field
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -5110,6 +5059,8 @@ func (ec *executionContext) fieldContext_Query_workers(ctx context.Context, fiel
 				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
 			case "boundProjectIds":
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
 			case "currentTaskId":
 				return ec.fieldContext_Worker_currentTaskId(ctx, field)
 			case "lastHeartbeatAt":
@@ -5343,8 +5294,6 @@ func (ec *executionContext) fieldContext_Query_settings(_ context.Context, field
 				return ec.fieldContext_Settings_id(ctx, field)
 			case "version":
 				return ec.fieldContext_Settings_version(ctx, field)
-			case "agentRuntimeEnvVars":
-				return ec.fieldContext_Settings_agentRuntimeEnvVars(ctx, field)
 			case "workerHeartbeatTimeout":
 				return ec.fieldContext_Settings_workerHeartbeatTimeout(ctx, field)
 			case "securityPolicy":
@@ -5804,47 +5753,6 @@ func (ec *executionContext) fieldContext_Settings_version(_ context.Context, fie
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Settings_agentRuntimeEnvVars(ctx context.Context, field graphql.CollectedField, obj *model.Settings) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Settings_agentRuntimeEnvVars,
-		func(ctx context.Context) (any, error) {
-			return obj.AgentRuntimeEnvVars, nil
-		},
-		nil,
-		ec.marshalNAgentRuntimeEnvVar2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentRuntimeEnvVarᚄ,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Settings_agentRuntimeEnvVars(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Settings",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "key":
-				return ec.fieldContext_AgentRuntimeEnvVar_key(ctx, field)
-			case "valueMasked":
-				return ec.fieldContext_AgentRuntimeEnvVar_valueMasked(ctx, field)
-			case "description":
-				return ec.fieldContext_AgentRuntimeEnvVar_description(ctx, field)
-			case "enabled":
-				return ec.fieldContext_AgentRuntimeEnvVar_enabled(ctx, field)
-			case "sensitive":
-				return ec.fieldContext_AgentRuntimeEnvVar_sensitive(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type AgentRuntimeEnvVar", field.Name)
 		},
 	}
 	return fc, nil
@@ -7194,6 +7102,41 @@ func (ec *executionContext) fieldContext_Worker_boundProjectIds(_ context.Contex
 	return fc, nil
 }
 
+func (ec *executionContext) _Worker_agentRuntimeEnv(ctx context.Context, field graphql.CollectedField, obj *model.Worker) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Worker_agentRuntimeEnv,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentRuntimeEnv, nil
+		},
+		nil,
+		ec.marshalNWorkerAgentRuntimeEnv2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Worker_agentRuntimeEnv(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Worker",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "agentType":
+				return ec.fieldContext_WorkerAgentRuntimeEnv_agentType(ctx, field)
+			case "vars":
+				return ec.fieldContext_WorkerAgentRuntimeEnv_vars(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WorkerAgentRuntimeEnv", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Worker_currentTaskId(ctx context.Context, field graphql.CollectedField, obj *model.Worker) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7334,6 +7277,76 @@ func (ec *executionContext) fieldContext_Worker_updatedAt(_ context.Context, fie
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkerAgentRuntimeEnv_agentType(ctx context.Context, field graphql.CollectedField, obj *model.WorkerAgentRuntimeEnv) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkerAgentRuntimeEnv_agentType,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentType, nil
+		},
+		nil,
+		ec.marshalNAgentType2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkerAgentRuntimeEnv_agentType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkerAgentRuntimeEnv",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type AgentType does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkerAgentRuntimeEnv_vars(ctx context.Context, field graphql.CollectedField, obj *model.WorkerAgentRuntimeEnv) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkerAgentRuntimeEnv_vars,
+		func(ctx context.Context) (any, error) {
+			return obj.Vars, nil
+		},
+		nil,
+		ec.marshalNAgentRuntimeEnvVar2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentRuntimeEnvVarᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkerAgentRuntimeEnv_vars(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkerAgentRuntimeEnv",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "key":
+				return ec.fieldContext_AgentRuntimeEnvVar_key(ctx, field)
+			case "valueMasked":
+				return ec.fieldContext_AgentRuntimeEnvVar_valueMasked(ctx, field)
+			case "description":
+				return ec.fieldContext_AgentRuntimeEnvVar_description(ctx, field)
+			case "enabled":
+				return ec.fieldContext_AgentRuntimeEnvVar_enabled(ctx, field)
+			case "sensitive":
+				return ec.fieldContext_AgentRuntimeEnvVar_sensitive(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type AgentRuntimeEnvVar", field.Name)
 		},
 	}
 	return fc, nil
@@ -9028,7 +9041,7 @@ func (ec *executionContext) unmarshalInputCreateWorkerInput(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "capabilities"}
+	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "agentRuntimeEnv", "capabilities"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9084,6 +9097,13 @@ func (ec *executionContext) unmarshalInputCreateWorkerInput(ctx context.Context,
 				return it, err
 			}
 			it.BoundProjectIds = data
+		case "agentRuntimeEnv":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentRuntimeEnv"))
+			data, err := ec.unmarshalOWorkerAgentRuntimeEnvInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentRuntimeEnv = data
 		case "capabilities":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("capabilities"))
 			data, err := ec.unmarshalOKeyValueInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐKeyValueInputᚄ(ctx, v)
@@ -9255,7 +9275,7 @@ func (ec *executionContext) unmarshalInputRegisterWorkerInput(ctx context.Contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "capabilities"}
+	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "agentRuntimeEnv", "capabilities"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9311,6 +9331,13 @@ func (ec *executionContext) unmarshalInputRegisterWorkerInput(ctx context.Contex
 				return it, err
 			}
 			it.BoundProjectIds = data
+		case "agentRuntimeEnv":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentRuntimeEnv"))
+			data, err := ec.unmarshalOWorkerAgentRuntimeEnvInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentRuntimeEnv = data
 		case "capabilities":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("capabilities"))
 			data, err := ec.unmarshalOKeyValueInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐKeyValueInputᚄ(ctx, v)
@@ -9406,36 +9433,6 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 				return it, err
 			}
 			it.IncludeArchived = data
-		}
-	}
-	return it, nil
-}
-
-func (ec *executionContext) unmarshalInputUpdateAgentRuntimeEnvVarsInput(ctx context.Context, obj any) (model.UpdateAgentRuntimeEnvVarsInput, error) {
-	var it model.UpdateAgentRuntimeEnvVarsInput
-	if obj == nil {
-		return it, nil
-	}
-
-	asMap := map[string]any{}
-	for k, v := range obj.(map[string]any) {
-		asMap[k] = v
-	}
-
-	fieldsInOrder := [...]string{"vars"}
-	for _, k := range fieldsInOrder {
-		v, ok := asMap[k]
-		if !ok {
-			continue
-		}
-		switch k {
-		case "vars":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("vars"))
-			data, err := ec.unmarshalNAgentRuntimeEnvVarInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentRuntimeEnvVarInputᚄ(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Vars = data
 		}
 	}
 	return it, nil
@@ -9589,7 +9586,7 @@ func (ec *executionContext) unmarshalInputUpdateWorkerInput(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "capabilities"}
+	fieldsInOrder := [...]string{"id", "name", "supportedAgents", "workDir", "startupCommand", "projectBindingMode", "boundProjectIds", "agentRuntimeEnv", "capabilities"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9645,6 +9642,13 @@ func (ec *executionContext) unmarshalInputUpdateWorkerInput(ctx context.Context,
 				return it, err
 			}
 			it.BoundProjectIds = data
+		case "agentRuntimeEnv":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentRuntimeEnv"))
+			data, err := ec.unmarshalOWorkerAgentRuntimeEnvInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentRuntimeEnv = data
 		case "capabilities":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("capabilities"))
 			data, err := ec.unmarshalOKeyValueInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐKeyValueInputᚄ(ctx, v)
@@ -9696,6 +9700,43 @@ func (ec *executionContext) unmarshalInputUpdateWorkerProjectBindingsInput(ctx c
 				return it, err
 			}
 			it.BoundProjectIds = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWorkerAgentRuntimeEnvInput(ctx context.Context, obj any) (model.WorkerAgentRuntimeEnvInput, error) {
+	var it model.WorkerAgentRuntimeEnvInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"agentType", "vars"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "agentType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentType"))
+			data, err := ec.unmarshalNAgentType2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentType = data
+		case "vars":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("vars"))
+			data, err := ec.unmarshalNAgentRuntimeEnvVarInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentRuntimeEnvVarInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Vars = data
 		}
 	}
 	return it, nil
@@ -10307,13 +10348,6 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "updateAgentRuntimeEnvVars":
-			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
-				return ec._Mutation_updateAgentRuntimeEnvVars(ctx, field)
-			})
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
 		case "updateWorkerHeartbeatTimeout":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_updateWorkerHeartbeatTimeout(ctx, field)
@@ -10849,11 +10883,6 @@ func (ec *executionContext) _Settings(ctx context.Context, sel ast.SelectionSet,
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "agentRuntimeEnvVars":
-			out.Values[i] = ec._Settings_agentRuntimeEnvVars(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
 		case "workerHeartbeatTimeout":
 			out.Values[i] = ec._Settings_workerHeartbeatTimeout(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -11178,6 +11207,11 @@ func (ec *executionContext) _Worker(ctx context.Context, sel ast.SelectionSet, o
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "agentRuntimeEnv":
+			out.Values[i] = ec._Worker_agentRuntimeEnv(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "currentTaskId":
 			out.Values[i] = ec._Worker_currentTaskId(ctx, field, obj)
 		case "lastHeartbeatAt":
@@ -11194,6 +11228,50 @@ func (ec *executionContext) _Worker(ctx context.Context, sel ast.SelectionSet, o
 			}
 		case "updatedAt":
 			out.Values[i] = ec._Worker_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var workerAgentRuntimeEnvImplementors = []string{"WorkerAgentRuntimeEnv"}
+
+func (ec *executionContext) _WorkerAgentRuntimeEnv(ctx context.Context, sel ast.SelectionSet, obj *model.WorkerAgentRuntimeEnv) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, workerAgentRuntimeEnvImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WorkerAgentRuntimeEnv")
+		case "agentType":
+			out.Values[i] = ec._WorkerAgentRuntimeEnv_agentType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "vars":
+			out.Values[i] = ec._WorkerAgentRuntimeEnv_vars(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -12123,11 +12201,6 @@ func (ec *executionContext) marshalNTime2timeᚐTime(ctx context.Context, sel as
 	return res
 }
 
-func (ec *executionContext) unmarshalNUpdateAgentRuntimeEnvVarsInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐUpdateAgentRuntimeEnvVarsInput(ctx context.Context, v any) (model.UpdateAgentRuntimeEnvVarsInput, error) {
-	res, err := ec.unmarshalInputUpdateAgentRuntimeEnvVarsInput(ctx, v)
-	return res, graphql.ErrorOnPath(ctx, err)
-}
-
 func (ec *executionContext) unmarshalNUpdateProjectInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐUpdateProjectInput(ctx context.Context, v any) (model.UpdateProjectInput, error) {
 	res, err := ec.unmarshalInputUpdateProjectInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -12176,6 +12249,37 @@ func (ec *executionContext) marshalNWorker2ᚖgithubᚗcomᚋtangxuscᚋblockᚑ
 		return graphql.Null
 	}
 	return ec._Worker(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNWorkerAgentRuntimeEnv2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.WorkerAgentRuntimeEnv) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWorkerAgentRuntimeEnv2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnv(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWorkerAgentRuntimeEnv2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnv(ctx context.Context, sel ast.SelectionSet, v *model.WorkerAgentRuntimeEnv) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WorkerAgentRuntimeEnv(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWorkerAgentRuntimeEnvInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInput(ctx context.Context, v any) (*model.WorkerAgentRuntimeEnvInput, error) {
+	res, err := ec.unmarshalInputWorkerAgentRuntimeEnvInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNWorkerProjectBindingMode2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerProjectBindingMode(ctx context.Context, v any) (model.WorkerProjectBindingMode, error) {
@@ -12630,6 +12734,24 @@ func (ec *executionContext) marshalOWorker2ᚖgithubᚗcomᚋtangxuscᚋblockᚑ
 		return graphql.Null
 	}
 	return ec._Worker(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOWorkerAgentRuntimeEnvInput2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInputᚄ(ctx context.Context, v any) ([]*model.WorkerAgentRuntimeEnvInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*model.WorkerAgentRuntimeEnvInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNWorkerAgentRuntimeEnvInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
 }
 
 func (ec *executionContext) unmarshalOWorkerFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerFilter(ctx context.Context, v any) (*model.WorkerFilter, error) {

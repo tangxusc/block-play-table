@@ -47,6 +47,8 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "", SQL: ""},
 		{Version: "001_init", SQL: migrations.SchemaSQL},
 		{Version: "002_drop_project_setup_commands", SQL: migrations.DropProjectSetupCommandsSQL},
+		{Version: "003_drop_task_target_branch", SQL: migrations.DropTaskBranchSQL},
+		{Version: "004_worker_agent_runtime_env", SQL: migrations.WorkerAgentRuntimeEnvSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -61,6 +63,20 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if hasSetupCommands {
 		t.Fatal("projects.setup_commands should be removed after versioned migrations")
 	}
+	hasTargetBranch, err := sqliteTableHasColumn(ctx, sqlStore, "tasks", "target_branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasTargetBranch {
+		t.Fatal("tasks.target_branch should be absent after versioned migrations")
+	}
+	hasWorkerAgentEnv, err := sqliteTableHasColumn(ctx, sqlStore, "worker_agent_env_vars", "agent_type")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWorkerAgentEnv {
+		t.Fatal("worker_agent_env_vars.agent_type should exist after versioned migrations")
+	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
 	if err != nil {
@@ -72,7 +88,6 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	settings := domain.NewSettings(now)
 	settings.UpdateWorkerHeartbeatTimeout("45s", now)
-	settings.UpdateAgentRuntimeEnvVars([]domain.AgentRuntimeEnvVar{{Key: "TOKEN", Value: "secret", Description: "api token", Enabled: true, Sensitive: true}}, now)
 	if err := sqlStore.SaveSettings(ctx, settings); err != nil {
 		t.Fatalf("SaveSettings returned error: %v", err)
 	}
@@ -80,7 +95,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedSettings.WorkerHeartbeat != "45s" || len(loadedSettings.AgentRuntimeEnvVars) != 1 || loadedSettings.AgentRuntimeEnvVars[0].Description != "api token" {
+	if loadedSettings.WorkerHeartbeat != "45s" {
 		t.Fatalf("loaded settings = %+v", loadedSettings)
 	}
 
@@ -88,7 +103,23 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := domain.NewWorker(domain.NewWorkerInput{ID: "worker-list", Name: "W", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", StartupCommand: "boot", ProjectBindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{project.ID}, Capabilities: map[string]string{"os": "test"}, Now: now})
+	worker, err := domain.NewWorker(domain.NewWorkerInput{
+		ID:                 "worker-list",
+		Name:               "W",
+		SupportedAgents:    []domain.AgentType{domain.AgentCodex},
+		WorkDir:            "/tmp",
+		StartupCommand:     "boot",
+		ProjectBindingMode: domain.WorkerSpecificProjects,
+		BoundProjectIDs:    []string{project.ID},
+		Capabilities:       map[string]string{"os": "test"},
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars: []domain.AgentRuntimeEnvVar{
+				{Key: "TOKEN", Value: "secret", Description: "api token", Enabled: true, Sensitive: true},
+			},
+		}},
+		Now: now,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +140,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if projects, err := sqlStore.Projects(ctx); err != nil || len(projects) != 1 || projects[0].ID != project.ID {
 		t.Fatalf("Projects = %+v, %v", projects, err)
 	}
-	if workers, err := sqlStore.Workers(ctx); err != nil || len(workers) != 1 || workers[0].StartupCommand != "boot" || workers[0].LastHeartbeatAt == nil {
+	if workers, err := sqlStore.Workers(ctx); err != nil || len(workers) != 1 || workers[0].StartupCommand != "boot" || workers[0].LastHeartbeatAt == nil || workers[0].EnabledRuntimeEnv(domain.AgentCodex)[0].Value != "secret" {
 		t.Fatalf("Workers = %+v, %v", workers, err)
 	}
 	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 {
@@ -141,6 +172,13 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if err := sqlStore.DeleteWorker(ctx, worker.ID); err != nil {
 		t.Fatalf("DeleteWorker returned error: %v", err)
+	}
+	var envRows int
+	if err := sqlStore.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM worker_agent_env_vars WHERE worker_id = `+sqlStore.bind(1), worker.ID).Scan(&envRows); err != nil {
+		t.Fatal(err)
+	}
+	if envRows != 0 {
+		t.Fatalf("worker env rows after delete = %d, want 0", envRows)
 	}
 	if _, err := sqlStore.Worker(ctx, worker.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted Worker err = %v, want not found", err)
@@ -225,7 +263,13 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 		ProjectBindingMode: domain.WorkerSpecificProjects,
 		BoundProjectIDs:    []string{projectID},
 		Capabilities:       map[string]string{"os": "test"},
-		Now:                now,
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars: []domain.AgentRuntimeEnvVar{
+				{Key: "TOKEN_" + suffix, Value: "secret", Enabled: true, Sensitive: true},
+			},
+		}},
+		Now: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -259,11 +303,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if err := sqlStore.AppendEvents(ctx, task.PullEvents()); err != nil {
 		t.Fatalf("AppendEvents returned error: %v", err)
 	}
-	settings := domain.NewSettings(now)
-	settings.UpdateAgentRuntimeEnvVars([]domain.AgentRuntimeEnvVar{{Key: "TOKEN_" + suffix, Value: "secret", Enabled: true, Sensitive: true}}, now)
-	if err := sqlStore.SaveSettings(ctx, settings); err != nil {
-		t.Fatalf("SaveSettings returned error: %v", err)
-	}
 	if ok, err := sqlStore.MarkMessageProcessed(ctx, messageID); err != nil || !ok {
 		t.Fatalf("first MarkMessageProcessed = %v, %v", ok, err)
 	}
@@ -289,6 +328,9 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	if loadedWorker.Status != domain.WorkerOnline || len(loadedWorker.BoundProjectIDs) != 1 || loadedWorker.BoundProjectIDs[0] != projectID {
 		t.Fatalf("loaded worker = %+v", loadedWorker)
+	}
+	if runtime := loadedWorker.EnabledRuntimeEnv(domain.AgentCodex); len(runtime) != 1 || runtime[0].Value != "secret" {
+		t.Fatalf("loaded worker runtime env = %+v", loadedWorker.AgentRuntimeEnv)
 	}
 	loadedProject, err := reopened.Project(ctx, projectID)
 	if err != nil {
@@ -325,13 +367,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	if ok, err := reopened.MarkMessageProcessed(ctx, messageID); err != nil || ok {
 		t.Fatalf("duplicate MarkMessageProcessed = %v, %v", ok, err)
-	}
-	loadedSettings, err := reopened.Settings(ctx)
-	if err != nil {
-		t.Fatalf("Settings returned error: %v", err)
-	}
-	if len(loadedSettings.AgentRuntimeEnvVars) == 0 {
-		t.Fatal("settings env vars were not persisted")
 	}
 }
 

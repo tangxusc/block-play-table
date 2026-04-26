@@ -99,6 +99,7 @@ type Worker {
   startupCommand: String
   projectBindingMode: WorkerProjectBindingMode!
   boundProjectIds: [ID!]!
+  agentRuntimeEnv: [WorkerAgentRuntimeEnv!]!
   currentTaskId: ID
   lastHeartbeatAt: Time
   version: Int!
@@ -109,11 +110,15 @@ type Worker {
 type Settings {
   id: ID!
   version: Int!
-  agentRuntimeEnvVars: [AgentRuntimeEnvVar!]!
   workerHeartbeatTimeout: String!
   securityPolicy: String!
   createdAt: Time!
   updatedAt: Time!
+}
+
+type WorkerAgentRuntimeEnv {
+  agentType: AgentType!
+  vars: [AgentRuntimeEnvVar!]!
 }
 
 type AgentRuntimeEnvVar {
@@ -242,6 +247,7 @@ input CreateWorkerInput {
   startupCommand: String
   projectBindingMode: WorkerProjectBindingMode
   boundProjectIds: [ID!]
+  agentRuntimeEnv: [WorkerAgentRuntimeEnvInput!]
   capabilities: [KeyValueInput!]
 }
 
@@ -253,6 +259,7 @@ input RegisterWorkerInput {
   startupCommand: String
   projectBindingMode: WorkerProjectBindingMode
   boundProjectIds: [ID!]
+  agentRuntimeEnv: [WorkerAgentRuntimeEnvInput!]
   capabilities: [KeyValueInput!]
 }
 
@@ -264,6 +271,7 @@ input UpdateWorkerInput {
   startupCommand: String
   projectBindingMode: WorkerProjectBindingMode!
   boundProjectIds: [ID!]
+  agentRuntimeEnv: [WorkerAgentRuntimeEnvInput!]
   capabilities: [KeyValueInput!]
 }
 
@@ -296,7 +304,8 @@ input AgentRuntimeEnvVarInput {
   sensitive: Boolean!
 }
 
-input UpdateAgentRuntimeEnvVarsInput {
+input WorkerAgentRuntimeEnvInput {
+  agentType: AgentType!
   vars: [AgentRuntimeEnvVarInput!]!
 }
 
@@ -343,7 +352,6 @@ type Mutation {
   updateProject(input: UpdateProjectInput!): Project!
   archiveProject(id: ID!): Project!
 
-  updateAgentRuntimeEnvVars(input: UpdateAgentRuntimeEnvVarsInput!): Settings!
   updateWorkerHeartbeatTimeout(timeout: String!): Settings!
 }
 

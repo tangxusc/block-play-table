@@ -396,14 +396,16 @@ func (s *Service) RetryTask(ctx context.Context, taskID string) (*domain.Task, e
 }
 
 type RegisterWorkerInput struct {
-	ID              string                          `json:"id"`
-	Name            string                          `json:"name"`
-	SupportedAgents []domain.AgentType              `json:"supportedAgents"`
-	WorkDir         string                          `json:"workDir"`
-	StartupCommand  string                          `json:"startupCommand"`
-	BindingMode     domain.WorkerProjectBindingMode `json:"projectBindingMode"`
-	BoundProjectIDs []string                        `json:"boundProjectIds"`
-	Capabilities    map[string]string               `json:"capabilities"`
+	ID                     string                          `json:"id"`
+	Name                   string                          `json:"name"`
+	SupportedAgents        []domain.AgentType              `json:"supportedAgents"`
+	WorkDir                string                          `json:"workDir"`
+	StartupCommand         string                          `json:"startupCommand"`
+	BindingMode            domain.WorkerProjectBindingMode `json:"projectBindingMode"`
+	BoundProjectIDs        []string                        `json:"boundProjectIds"`
+	AgentRuntimeEnv        []domain.WorkerAgentRuntimeEnv  `json:"agentRuntimeEnv"`
+	ReplaceAgentRuntimeEnv bool                            `json:"-"`
+	Capabilities           map[string]string               `json:"capabilities"`
 }
 
 func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput) (*domain.Worker, error) {
@@ -414,15 +416,17 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 	if existing, err := s.store.Worker(ctx, id); err == nil {
 		if input.Name != "" && input.WorkDir != "" && len(input.SupportedAgents) > 0 {
 			if err := existing.Update(domain.NewWorkerInput{
-				ID:                 existing.ID,
-				Name:               input.Name,
-				SupportedAgents:    input.SupportedAgents,
-				WorkDir:            input.WorkDir,
-				StartupCommand:     input.StartupCommand,
-				ProjectBindingMode: input.BindingMode,
-				BoundProjectIDs:    input.BoundProjectIDs,
-				Capabilities:       input.Capabilities,
-				Now:                s.clock(),
+				ID:                     existing.ID,
+				Name:                   input.Name,
+				SupportedAgents:        input.SupportedAgents,
+				WorkDir:                input.WorkDir,
+				StartupCommand:         input.StartupCommand,
+				ProjectBindingMode:     input.BindingMode,
+				BoundProjectIDs:        input.BoundProjectIDs,
+				AgentRuntimeEnv:        input.AgentRuntimeEnv,
+				ReplaceAgentRuntimeEnv: input.ReplaceAgentRuntimeEnv,
+				Capabilities:           input.Capabilities,
+				Now:                    s.clock(),
 			}); err != nil {
 				return nil, err
 			}
@@ -444,6 +448,7 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 		StartupCommand:     input.StartupCommand,
 		ProjectBindingMode: input.BindingMode,
 		BoundProjectIDs:    input.BoundProjectIDs,
+		AgentRuntimeEnv:    input.AgentRuntimeEnv,
 		Capabilities:       input.Capabilities,
 		Now:                s.clock(),
 	})
@@ -505,15 +510,17 @@ func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (
 		return nil, err
 	}
 	if err := worker.Update(domain.NewWorkerInput{
-		ID:                 worker.ID,
-		Name:               input.Name,
-		SupportedAgents:    input.SupportedAgents,
-		WorkDir:            input.WorkDir,
-		StartupCommand:     input.StartupCommand,
-		ProjectBindingMode: input.BindingMode,
-		BoundProjectIDs:    input.BoundProjectIDs,
-		Capabilities:       input.Capabilities,
-		Now:                s.clock(),
+		ID:                     worker.ID,
+		Name:                   input.Name,
+		SupportedAgents:        input.SupportedAgents,
+		WorkDir:                input.WorkDir,
+		StartupCommand:         input.StartupCommand,
+		ProjectBindingMode:     input.BindingMode,
+		BoundProjectIDs:        input.BoundProjectIDs,
+		AgentRuntimeEnv:        input.AgentRuntimeEnv,
+		ReplaceAgentRuntimeEnv: input.ReplaceAgentRuntimeEnv,
+		Capabilities:           input.Capabilities,
+		Now:                    s.clock(),
 	}); err != nil {
 		return nil, err
 	}
@@ -747,10 +754,6 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	if err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
-	settings, err := s.store.Settings(ctx)
-	if err != nil {
-		return nil, protocol.TaskStartPayload{}, err
-	}
 	if err := task.Start(now); err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
@@ -761,7 +764,7 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	if err := s.appendEvents(ctx, events); err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
-	return task, buildStartPayload(task, project, settings), nil
+	return task, buildStartPayload(task, project, worker), nil
 }
 
 func (s *Service) InterruptTask(ctx context.Context, taskID string) (*domain.Task, string, error) {
@@ -1039,19 +1042,6 @@ func (s *Service) Settings(ctx context.Context) (*domain.Settings, error) {
 	return s.store.Settings(ctx)
 }
 
-func (s *Service) UpdateAgentRuntimeEnvVars(ctx context.Context, vars []domain.AgentRuntimeEnvVar) (*domain.Settings, error) {
-	settings, err := s.store.Settings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	settings.UpdateAgentRuntimeEnvVars(vars, s.clock())
-	events := settings.PullEvents()
-	if err := s.store.SaveSettings(ctx, settings); err != nil {
-		return nil, err
-	}
-	return settings, s.appendEvents(ctx, events)
-}
-
 func (s *Service) UpdateWorkerHeartbeatTimeout(ctx context.Context, timeout string) (*domain.Settings, error) {
 	if timeout != "" {
 		parsed, err := time.ParseDuration(timeout)
@@ -1115,12 +1105,11 @@ func eventMatchesFilter(event domain.DomainEvent, filter domain.EventFilter) boo
 	return true
 }
 
-func buildStartPayload(task *domain.Task, project *domain.Project, settings *domain.Settings) protocol.TaskStartPayload {
-	env := make([]protocol.RuntimeEnvVar, 0, len(settings.EnabledRuntimeEnv()))
-	for _, item := range settings.AgentRuntimeEnvVars {
-		if item.Enabled {
-			env = append(env, protocol.RuntimeEnvVar{Key: item.Key, Value: item.Value, Sensitive: item.Sensitive})
-		}
+func buildStartPayload(task *domain.Task, project *domain.Project, worker *domain.Worker) protocol.TaskStartPayload {
+	runtime := worker.EnabledRuntimeEnv(task.AgentType)
+	env := make([]protocol.RuntimeEnvVar, 0, len(runtime))
+	for _, item := range runtime {
+		env = append(env, protocol.RuntimeEnvVar{Key: item.Key, Value: item.Value, Sensitive: item.Sensitive})
 	}
 	return protocol.TaskStartPayload{
 		Task: protocol.TaskPayload{

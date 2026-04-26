@@ -126,18 +126,39 @@ func TestServiceDesignCRUDFilteringAndSettings(t *testing.T) {
 	if _, err := service.UpdateWorkerHeartbeatTimeout(ctx, "bad"); err == nil {
 		t.Fatal("UpdateWorkerHeartbeatTimeout should reject invalid duration")
 	}
-	settings, err := service.UpdateAgentRuntimeEnvVars(ctx, []domain.AgentRuntimeEnvVar{{Key: "TOKEN", Value: "secret", Enabled: true, Sensitive: true}})
+	worker, err = service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:                     "worker-env-preserve",
+		Name:                   "Env",
+		SupportedAgents:        []domain.AgentType{domain.AgentCodex},
+		WorkDir:                "/tmp",
+		ReplaceAgentRuntimeEnv: true,
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars:      []domain.AgentRuntimeEnvVar{{Key: "TOKEN", Value: "secret", Enabled: true, Sensitive: true}},
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err = service.UpdateAgentRuntimeEnvVars(ctx, []domain.AgentRuntimeEnvVar{{Key: "TOKEN", Enabled: true, Sensitive: true}})
+	worker, err = service.UpdateWorker(ctx, RegisterWorkerInput{
+		ID:                     worker.ID,
+		Name:                   "Env",
+		SupportedAgents:        []domain.AgentType{domain.AgentCodex},
+		WorkDir:                "/tmp",
+		ReplaceAgentRuntimeEnv: true,
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars:      []domain.AgentRuntimeEnvVar{{Key: "TOKEN", Enabled: true, Sensitive: true}},
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.EnabledRuntimeEnv()["TOKEN"] != "secret" {
-		t.Fatalf("sensitive value was not preserved: %+v", settings.AgentRuntimeEnvVars)
+	if runtime := worker.EnabledRuntimeEnv(domain.AgentCodex); runtime[0].Value != "secret" {
+		t.Fatalf("sensitive value was not preserved: %+v", worker.AgentRuntimeEnv)
 	}
-	if settings, err = service.UpdateWorkerHeartbeatTimeout(ctx, "30s"); err != nil || settings.WorkerHeartbeat != "30s" {
+	settings, err := service.UpdateWorkerHeartbeatTimeout(ctx, "30s")
+	if err != nil || settings.WorkerHeartbeat != "30s" {
 		t.Fatalf("UpdateWorkerHeartbeatTimeout = %+v, %v", settings, err)
 	}
 }

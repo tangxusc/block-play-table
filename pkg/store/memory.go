@@ -158,7 +158,6 @@ func (s *MemoryStore) SaveSettings(ctx context.Context, settings *domain.Setting
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *settings
-	copy.AgentRuntimeEnvVars = append([]domain.AgentRuntimeEnvVar(nil), settings.AgentRuntimeEnvVars...)
 	s.settings = &copy
 	return nil
 }
@@ -167,7 +166,6 @@ func (s *MemoryStore) Settings(ctx context.Context) (*domain.Settings, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	copy := *s.settings
-	copy.AgentRuntimeEnvVars = append([]domain.AgentRuntimeEnvVar(nil), s.settings.AgentRuntimeEnvVars...)
 	return &copy, nil
 }
 
@@ -299,6 +297,7 @@ func cloneWorker(worker *domain.Worker) *domain.Worker {
 	copy := *worker
 	copy.SupportedAgents = append([]domain.AgentType(nil), worker.SupportedAgents...)
 	copy.BoundProjectIDs = append([]string(nil), worker.BoundProjectIDs...)
+	copy.AgentRuntimeEnv = cloneWorkerAgentRuntimeEnv(worker.AgentRuntimeEnv)
 	if worker.Capabilities != nil {
 		copy.Capabilities = map[string]string{}
 		for k, v := range worker.Capabilities {
@@ -306,6 +305,20 @@ func cloneWorker(worker *domain.Worker) *domain.Worker {
 		}
 	}
 	return &copy
+}
+
+func cloneWorkerAgentRuntimeEnv(in []domain.WorkerAgentRuntimeEnv) []domain.WorkerAgentRuntimeEnv {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.WorkerAgentRuntimeEnv, 0, len(in))
+	for _, group := range in {
+		out = append(out, domain.WorkerAgentRuntimeEnv{
+			AgentType: group.AgentType,
+			Vars:      append([]domain.AgentRuntimeEnvVar(nil), group.Vars...),
+		})
+	}
+	return out
 }
 
 func cloneProject(project *domain.Project) *domain.Project {

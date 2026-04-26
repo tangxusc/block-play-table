@@ -246,6 +246,10 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 			if err := json.Unmarshal(envelope.Payload, &input); err != nil {
 				return err
 			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(envelope.Payload, &raw); err == nil {
+				_, input.ReplaceAgentRuntimeEnv = raw["agentRuntimeEnv"]
+			}
 		}
 		if input.ID == "" {
 			input.ID = workerID

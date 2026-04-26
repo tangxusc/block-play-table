@@ -52,14 +52,17 @@ CREATE TABLE IF NOT EXISTS worker_project_bindings (
   PRIMARY KEY (worker_id, project_id)
 );
 
-CREATE TABLE IF NOT EXISTS system_agent_env_vars (
-  key TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS worker_agent_env_vars (
+  worker_id TEXT NOT NULL REFERENCES workers(id),
+  agent_type TEXT NOT NULL,
+  key TEXT NOT NULL,
   value TEXT NOT NULL,
   description TEXT,
   enabled BOOLEAN NOT NULL,
   sensitive BOOLEAN NOT NULL,
   created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (worker_id, agent_type, key)
 );
 
 CREATE TABLE IF NOT EXISTS system_settings (
@@ -119,6 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_worker_id ON tasks(worker_id);
 CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
 CREATE INDEX IF NOT EXISTS idx_worker_project_bindings_project_id ON worker_project_bindings(project_id);
+CREATE INDEX IF NOT EXISTS idx_worker_agent_env_vars_worker_agent ON worker_agent_env_vars(worker_id, agent_type);
 CREATE INDEX IF NOT EXISTS idx_domain_events_aggregate ON domain_events(aggregate_type, aggregate_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_domain_events_type ON domain_events(event_type, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_messages_status ON outbox_messages(status, created_at);

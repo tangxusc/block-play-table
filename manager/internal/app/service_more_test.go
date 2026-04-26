@@ -39,13 +39,6 @@ func TestServiceSettingsConversationFailureHeartbeatAndArchive(t *testing.T) {
 	if _, err := service.WorkerHeartbeat(ctx, "worker-1"); err != nil {
 		t.Fatalf("WorkerHeartbeat returned error: %v", err)
 	}
-	settings, err := service.UpdateAgentRuntimeEnvVars(ctx, []domain.AgentRuntimeEnvVar{{Key: "OPENAI_API_KEY", Value: "secret", Enabled: true, Sensitive: true}})
-	if err != nil {
-		t.Fatalf("UpdateAgentRuntimeEnvVars returned error: %v", err)
-	}
-	if settings.EnabledRuntimeEnv()["OPENAI_API_KEY"] != "secret" {
-		t.Fatalf("settings did not keep runtime value")
-	}
 	project, _ := service.CreateProject(ctx, CreateProjectInput{Name: "Archive", GitURL: "git://archive"})
 	if archived, err := service.ArchiveProject(ctx, project.ID); err != nil || !archived.Archived {
 		t.Fatalf("ArchiveProject = %+v, %v", archived, err)

@@ -22,7 +22,19 @@ async function graphQL(
   return body.data;
 }
 
-function connectWorkerEvents(workerId: string, taskId: string) {
+async function enableFlutterAccessibility(page) {
+  const button = page.getByRole("button", { name: "Enable accessibility" });
+  if (await button.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await button.evaluate((element: HTMLElement) => element.click());
+    await page.waitForTimeout(500);
+  }
+}
+
+function connectWorkerEvents(
+  workerId: string,
+  taskId: string,
+  expectedEnv: Record<string, string> = {},
+) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
   if (managerWorkerToken) {
@@ -60,6 +72,20 @@ function connectWorkerEvents(workerId: string, taskId: string) {
       if (envelope.type !== "TASK_START") {
         return;
       }
+      const runtimeEnv = envelope.payload?.agentRuntimeEnv || [];
+      for (const [key, value] of Object.entries(expectedEnv)) {
+        expect(
+          runtimeEnv.some(
+            (item: { key: string; value: string }) =>
+              item.key === key && item.value === value,
+          ),
+        ).toBeTruthy();
+      }
+      expect(
+        runtimeEnv.some(
+          (item: { key: string }) => item.key === "BPT_E2E_CLAUDE_ENV",
+        ),
+      ).toBeFalsy();
       send(`accepted-${taskId}`, "TASK_ACCEPTED");
       send(`started-${taskId}`, "TASK_STARTED", {
         taskId,
@@ -104,13 +130,15 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto("/");
   await expect(page).toHaveTitle("Block Play Table");
-  await expect(page.locator("flutter-view")).toBeVisible();
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
   await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
 
   const suffix = Date.now();
   const projectName = `E2E Project ${suffix}`;
   const taskTitle = `E2E Task ${suffix}`;
   const workerId = `worker-e2e-${suffix}`;
+  const workerName = `E2E Worker ${suffix}`;
 
   const createdProject = await graphQL(
     request,
@@ -133,14 +161,53 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     {
       input: {
         id: workerId,
-        name: "E2E Worker",
-        supportedAgents: ["codex"],
+        name: workerName,
+        supportedAgents: ["codex", "claude"],
         workDir: "/tmp/e2e-worker",
         projectBindingMode: "SPECIFIC_PROJECTS",
         boundProjectIds: [project.id],
       },
     },
   );
+
+  await page.reload();
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+  await page.getByText("Workers").click();
+  const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
+  await workerGroup.getByRole("button", { name: "Edit worker" }).click();
+  await expect(page.getByText("Runtime environment")).toBeVisible();
+  await page.getByRole("button", { name: "New env var" }).click();
+  await page.getByLabel("Key").fill("BPT_E2E_AGENT_ENV");
+  await page.getByLabel("Value").fill("codex-value");
+  await page.getByRole("button", { name: "Save" }).last().click();
+  await page.getByRole("button", { name: "Claude" }).last().click();
+  await page.getByRole("button", { name: "New env var" }).click();
+  await page.getByLabel("Key").fill("BPT_E2E_CLAUDE_ENV");
+  await page.getByLabel("Value").fill("claude-value");
+  await page.getByRole("button", { name: "Save" }).last().click();
+  await page.getByRole("button", { name: "Save" }).last().click();
+
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query Worker($id: ID!) { worker(id: $id) { agentRuntimeEnv { agentType vars { key valueMasked } } } }",
+        { id: workerId },
+      );
+      return Object.fromEntries(
+        data.worker.agentRuntimeEnv.map(
+          (group: { agentType: string; vars: Array<{ key: string; valueMasked: string }> }) => [
+            group.agentType,
+            group.vars,
+          ],
+        ),
+      );
+    })
+    .toEqual({
+      codex: [{ key: "BPT_E2E_AGENT_ENV", valueMasked: "********" }],
+      claude: [{ key: "BPT_E2E_CLAUDE_ENV", valueMasked: "********" }],
+    });
 
   const createdTask = await graphQL(
     request,
@@ -179,7 +246,9 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   );
   expect(task).toBeTruthy();
 
-  const workerSocket = connectWorkerEvents(workerId, task.id);
+  const workerSocket = connectWorkerEvents(workerId, task.id, {
+    BPT_E2E_AGENT_ENV: "codex-value",
+  });
   await workerSocket.ready;
   await graphQL(
     request,

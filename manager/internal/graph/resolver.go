@@ -110,6 +110,7 @@ func toModelWorker(worker *domain.Worker) *model.Worker {
 		StartupCommand:     optionalString(worker.StartupCommand),
 		ProjectBindingMode: model.WorkerProjectBindingMode(worker.ProjectBindingMode),
 		BoundProjectIds:    append([]string(nil), worker.BoundProjectIDs...),
+		AgentRuntimeEnv:    toModelWorkerAgentRuntimeEnv(worker.MaskedAgentRuntimeEnv()),
 		CurrentTaskID:      optionalString(worker.CurrentTaskID),
 		LastHeartbeatAt:    optionalTime(worker.LastHeartbeatAt),
 		Version:            worker.Version,
@@ -130,26 +131,35 @@ func toModelSettings(settings *domain.Settings) *model.Settings {
 	if settings == nil {
 		return nil
 	}
-	env := settings.MaskedEnvVars()
-	vars := make([]*model.AgentRuntimeEnvVar, 0, len(env))
-	for _, item := range env {
-		vars = append(vars, &model.AgentRuntimeEnvVar{
-			Key:         item.Key,
-			ValueMasked: item.ValueMasked,
-			Description: optionalString(item.Description),
-			Enabled:     item.Enabled,
-			Sensitive:   item.Sensitive,
-		})
-	}
 	return &model.Settings{
 		ID:                     settings.ID,
 		Version:                settings.Version,
-		AgentRuntimeEnvVars:    vars,
 		WorkerHeartbeatTimeout: settings.WorkerHeartbeat,
 		SecurityPolicy:         settings.SecurityPolicy,
 		CreatedAt:              settings.CreatedAt,
 		UpdatedAt:              settings.UpdatedAt,
 	}
+}
+
+func toModelWorkerAgentRuntimeEnv(env []domain.WorkerAgentRuntimeEnv) []*model.WorkerAgentRuntimeEnv {
+	out := make([]*model.WorkerAgentRuntimeEnv, 0, len(env))
+	for _, group := range env {
+		vars := make([]*model.AgentRuntimeEnvVar, 0, len(group.Vars))
+		for _, item := range group.Vars {
+			vars = append(vars, &model.AgentRuntimeEnvVar{
+				Key:         item.Key,
+				ValueMasked: item.ValueMasked,
+				Description: optionalString(item.Description),
+				Enabled:     item.Enabled,
+				Sensitive:   item.Sensitive,
+			})
+		}
+		out = append(out, &model.WorkerAgentRuntimeEnv{
+			AgentType: model.AgentType(group.AgentType),
+			Vars:      vars,
+		})
+	}
+	return out
 }
 
 func toModelTaskLog(log domain.TaskLog) *model.TaskLog {
@@ -223,6 +233,36 @@ func fromKeyValueInputs(values []*model.KeyValueInput) map[string]string {
 	return out
 }
 
+func fromWorkerAgentRuntimeEnvInputs(values []*model.WorkerAgentRuntimeEnvInput) []domain.WorkerAgentRuntimeEnv {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]domain.WorkerAgentRuntimeEnv, 0, len(values))
+	for _, group := range values {
+		if group == nil {
+			continue
+		}
+		vars := make([]domain.AgentRuntimeEnvVar, 0, len(group.Vars))
+		for _, item := range group.Vars {
+			if item == nil {
+				continue
+			}
+			vars = append(vars, domain.AgentRuntimeEnvVar{
+				Key:         item.Key,
+				Value:       valueOrEmpty(item.Value),
+				Description: valueOrEmpty(item.Description),
+				Enabled:     item.Enabled,
+				Sensitive:   item.Sensitive,
+			})
+		}
+		out = append(out, domain.WorkerAgentRuntimeEnv{
+			AgentType: domain.AgentType(group.AgentType),
+			Vars:      vars,
+		})
+	}
+	return out
+}
+
 func optionalString(value string) *string {
 	if value == "" {
 		return nil
@@ -257,20 +297,22 @@ func eventPayloadString(event domain.DomainEvent, key string) string {
 	return ""
 }
 
-func (r *Resolver) registerWorkerFromInput(ctx context.Context, id *string, name string, agents []model.AgentType, workDir string, startupCommand *string, bindingMode *model.WorkerProjectBindingMode, boundProjectIDs []string, capabilities []*model.KeyValueInput, connect bool) (*model.Worker, error) {
+func (r *Resolver) registerWorkerFromInput(ctx context.Context, id *string, name string, agents []model.AgentType, workDir string, startupCommand *string, bindingMode *model.WorkerProjectBindingMode, boundProjectIDs []string, agentRuntimeEnv []*model.WorkerAgentRuntimeEnvInput, capabilities []*model.KeyValueInput, connect bool) (*model.Worker, error) {
 	mode := domain.WorkerAllProjects
 	if bindingMode != nil {
 		mode = domain.WorkerProjectBindingMode(*bindingMode)
 	}
 	worker, err := r.Service.RegisterWorker(ctx, app.RegisterWorkerInput{
-		ID:              valueOrEmpty(id),
-		Name:            name,
-		SupportedAgents: domainAgents(agents),
-		WorkDir:         workDir,
-		StartupCommand:  valueOrEmpty(startupCommand),
-		BindingMode:     mode,
-		BoundProjectIDs: append([]string(nil), boundProjectIDs...),
-		Capabilities:    fromKeyValueInputs(capabilities),
+		ID:                     valueOrEmpty(id),
+		Name:                   name,
+		SupportedAgents:        domainAgents(agents),
+		WorkDir:                workDir,
+		StartupCommand:         valueOrEmpty(startupCommand),
+		BindingMode:            mode,
+		BoundProjectIDs:        append([]string(nil), boundProjectIDs...),
+		AgentRuntimeEnv:        fromWorkerAgentRuntimeEnvInputs(agentRuntimeEnv),
+		ReplaceAgentRuntimeEnv: true,
+		Capabilities:           fromKeyValueInputs(capabilities),
 	})
 	if err != nil {
 		return nil, err

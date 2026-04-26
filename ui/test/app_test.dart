@@ -5,6 +5,74 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('EnvVarItem.fromJson carries public values but not masked secrets', () {
+    final public = EnvVarItem.fromJson(const {
+      'key': 'ANTHROPIC_BASE_URL',
+      'valueMasked': 'https://api.autocode.space',
+      'description': null,
+      'enabled': true,
+      'sensitive': false,
+    });
+    final secret = EnvVarItem.fromJson(const {
+      'key': 'OPENAI_API_KEY',
+      'valueMasked': '********',
+      'description': null,
+      'enabled': true,
+      'sensitive': true,
+    });
+
+    expect(public.valueInput, 'https://api.autocode.space');
+    expect(secret.valueInput, isEmpty);
+  });
+
+  test('updateWorker sends public env values and preserves blank secrets',
+      () async {
+    final apiClient = RecordingApiClient();
+
+    await apiClient.updateWorker(
+      WorkerItem(
+        id: 'worker-1',
+        name: 'Local worker',
+        status: 'ONLINE',
+        supportedAgents: const ['codex'],
+        workDir: '/tmp/worker',
+        startupCommand: '',
+        projectBindingMode: 'ALL_PROJECTS',
+        boundProjectIds: const [],
+        agentRuntimeEnv: const [
+          WorkerAgentRuntimeEnvItem(
+            agentType: 'codex',
+            vars: [
+              EnvVarItem(
+                key: 'PUBLIC_EMPTY',
+                valueMasked: '',
+                description: '',
+                enabled: true,
+                sensitive: false,
+              ),
+              EnvVarItem(
+                key: 'SECRET',
+                valueMasked: '********',
+                description: '',
+                enabled: true,
+                sensitive: true,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final input = apiClient.lastVariables!['input'] as Map<String, dynamic>;
+    final agentEnv = input['agentRuntimeEnv'] as List<dynamic>;
+    final vars = (agentEnv[0] as Map<String, dynamic>)['vars'] as List<dynamic>;
+    final public = vars[0] as Map<String, dynamic>;
+    final secret = vars[1] as Map<String, dynamic>;
+
+    expect(public, containsPair('value', ''));
+    expect(secret.containsKey('value'), isFalse);
+  });
+
   testWidgets(
     'renders workspace navigation without Tasks and opens task dialog',
     (tester) async {
@@ -110,6 +178,7 @@ void main() {
     await tester.tap(find.byTooltip('Edit worker').first);
     await tester.pumpAndSettle();
     expect(find.text('Edit worker'), findsOneWidget);
+    expect(find.text('Runtime environment'), findsOneWidget);
   });
 
   testWidgets('board refreshes when GraphQL subscription emits an event', (
@@ -218,19 +287,112 @@ void main() {
     expect(find.text('COMPLETED'), findsWidgets);
     expect(find.textContaining('done from subscription'), findsOneWidget);
   });
+
+  testWidgets('settings no longer exposes agent runtime env controls', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Agent runtime environment'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'New env var'), findsNothing);
+  });
+
+  testWidgets('editing worker saves distinct runtime env per selected agent', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient(
+      worker: _defaultWorker.copyWith(
+        supportedAgents: const ['codex', 'claude'],
+        agentRuntimeEnv: const [
+          WorkerAgentRuntimeEnvItem(
+            agentType: 'codex',
+            vars: [
+              EnvVarItem(
+                key: 'CODEX_BASE_URL',
+                valueMasked: 'https://codex.example',
+                description: '',
+                enabled: true,
+                sensitive: false,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Workers').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit worker').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Runtime environment'), findsOneWidget);
+    expect(find.text('CODEX_BASE_URL'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New env var').last);
+    await tester.pumpAndSettle();
+    var dialogFields = find.descendant(
+      of: find.byType(AlertDialog).last,
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogFields.at(0), 'BPT_CODEX_ENV');
+    await tester.enterText(dialogFields.at(1), 'codex-value');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Claude').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'New env var').last);
+    await tester.pumpAndSettle();
+    dialogFields = find.descendant(
+      of: find.byType(AlertDialog).last,
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogFields.at(0), 'BPT_CLAUDE_ENV');
+    await tester.enterText(dialogFields.at(1), 'claude-value');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+    await tester.pumpAndSettle();
+
+    final saved = apiClient.savedWorker!;
+    final codexEnv = saved.agentRuntimeEnv.firstWhere(
+      (group) => group.agentType == 'codex',
+    );
+    final claudeEnv = saved.agentRuntimeEnv.firstWhere(
+      (group) => group.agentType == 'claude',
+    );
+    expect(codexEnv.vars.map((item) => item.key), contains('BPT_CODEX_ENV'));
+    expect(claudeEnv.vars.single.key, 'BPT_CLAUDE_ENV');
+    expect(claudeEnv.vars.single.valueInput, 'claude-value');
+  });
 }
 
 class FakeApiClient extends ApiClient {
-  FakeApiClient() : super('http://manager/graphql');
+  FakeApiClient({SettingsData? settings, WorkerItem? worker})
+      : _settings = settings ?? const SettingsData(),
+        _worker = worker ?? _defaultWorker,
+        super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
+  SettingsData _settings;
+  WorkerItem _worker;
   int boardFetches = 0;
   int detailFetches = 0;
   bool _completedDetail = false;
   String? createdTaskTitle;
   String? createdTaskWorkerId;
   String? createdTaskAgentType;
+  SettingsData? savedSettings;
+  WorkerItem? savedWorker;
 
   void emit(DomainEventItem event) => _events.add(event);
 
@@ -279,8 +441,19 @@ class FakeApiClient extends ApiClient {
   Future<List<DomainEventItem>> fetchEvents() async => const [];
 
   @override
-  Future<SettingsData> fetchSettings() async =>
-      SettingsData(agentRuntimeEnvVars: const []);
+  Future<SettingsData> fetchSettings() async => _settings;
+
+  @override
+  Future<void> updateSettings(SettingsData settings) async {
+    savedSettings = settings;
+    _settings = settings;
+  }
+
+  @override
+  Future<void> updateWorker(WorkerItem worker) async {
+    savedWorker = worker;
+    _worker = worker;
+  }
 
   @override
   Future<void> createTask({
@@ -341,6 +514,21 @@ class FakeApiClient extends ApiClient {
   }
 }
 
+class RecordingApiClient extends ApiClient {
+  RecordingApiClient() : super('http://manager/graphql');
+
+  Map<String, dynamic>? lastVariables;
+
+  @override
+  Future<Map<String, dynamic>> graphQL(
+    String query, {
+    Map<String, dynamic>? variables,
+  }) async {
+    lastVariables = variables;
+    return <String, dynamic>{};
+  }
+}
+
 final _project = ProjectItem(
   id: 'project-1',
   name: 'Platform',
@@ -350,7 +538,7 @@ final _project = ProjectItem(
   archived: false,
 );
 
-final _worker = WorkerItem(
+final _defaultWorker = WorkerItem(
   id: 'worker-1',
   name: 'Local worker',
   status: 'ONLINE',

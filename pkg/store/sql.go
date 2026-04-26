@@ -34,6 +34,11 @@ type Migration struct {
 	SQL     string
 }
 
+type migrationExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 func OpenSQLStore(ctx context.Context, driver, dsn string) (*SQLStore, error) {
 	driver = strings.ToLower(strings.TrimSpace(driver))
 	dsn = strings.TrimSpace(dsn)
@@ -84,7 +89,7 @@ func (s *SQLStore) Migrate(ctx context.Context, migration string) error {
 		if statement == "" {
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		if err := s.execMigrationStatement(ctx, s.db, statement); err != nil {
 			return fmt.Errorf("run migration statement %q: %w", statement, err)
 		}
 	}
@@ -116,7 +121,7 @@ func (s *SQLStore) MigrateVersioned(ctx context.Context, migrations []Migration)
 			if statement == "" {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
+			if err := s.execMigrationStatement(ctx, tx, statement); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("run migration %s statement %q: %w", migration.Version, statement, err)
 			}
@@ -130,6 +135,76 @@ func (s *SQLStore) MigrateVersioned(ctx context.Context, migrations []Migration)
 		}
 	}
 	return nil
+}
+
+func (s *SQLStore) execMigrationStatement(ctx context.Context, exec migrationExecutor, statement string) error {
+	if s.dialect == sqliteDialect {
+		handled, err := s.execSQLiteDropColumnIfExists(ctx, exec, statement)
+		if handled {
+			return err
+		}
+	}
+	_, err := exec.ExecContext(ctx, statement)
+	return err
+}
+
+func (s *SQLStore) execSQLiteDropColumnIfExists(ctx context.Context, exec migrationExecutor, statement string) (bool, error) {
+	fields := strings.Fields(statement)
+	if len(fields) != 8 ||
+		!strings.EqualFold(fields[0], "ALTER") ||
+		!strings.EqualFold(fields[1], "TABLE") ||
+		!strings.EqualFold(fields[3], "DROP") ||
+		!strings.EqualFold(fields[4], "COLUMN") ||
+		!strings.EqualFold(fields[5], "IF") ||
+		!strings.EqualFold(fields[6], "EXISTS") {
+		return false, nil
+	}
+	table := trimSQLIdentifier(fields[2])
+	column := trimSQLIdentifier(fields[7])
+	hasColumn, err := sqliteColumnExists(ctx, exec, table, column)
+	if err != nil {
+		return true, err
+	}
+	if !hasColumn {
+		return true, nil
+	}
+	_, err = exec.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", quoteSQLiteIdentifier(table), quoteSQLiteIdentifier(column)))
+	return true, err
+}
+
+func sqliteColumnExists(ctx context.Context, exec migrationExecutor, table, column string) (bool, error) {
+	rows, err := exec.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", quoteSQLiteIdentifier(table)))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid          int
+			name         string
+			columnType   string
+			notNull      int
+			defaultValue sql.NullString
+			pk           int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func trimSQLIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"`)
+	return strings.Trim(value, "`")
+}
+
+func quoteSQLiteIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
@@ -232,9 +307,19 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_project_bindings WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_agent_env_vars WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
+		return err
+	}
 	if worker.ProjectBindingMode == domain.WorkerSpecificProjects {
 		for _, projectID := range worker.BoundProjectIDs {
 			if _, err := tx.ExecContext(ctx, s.insertIgnoreSQL("worker_project_bindings", []string{"worker_id", "project_id", "created_at"}), worker.ID, projectID, worker.UpdatedAt); err != nil {
+				return err
+			}
+		}
+	}
+	for _, group := range worker.AgentRuntimeEnv {
+		for _, item := range group.Vars {
+			if _, err := tx.ExecContext(ctx, s.workerAgentEnvUpsertSQL(), worker.ID, group.AgentType, item.Key, item.Value, nullableString(item.Description), item.Enabled, item.Sensitive, worker.CreatedAt, worker.UpdatedAt); err != nil {
 				return err
 			}
 		}
@@ -251,6 +336,11 @@ func (s *SQLStore) Worker(ctx context.Context, id string) (*domain.Worker, error
 		}
 		return nil, err
 	}
+	env, err := s.workerAgentRuntimeEnv(ctx, worker.ID)
+	if err != nil {
+		return nil, err
+	}
+	worker.AgentRuntimeEnv = env
 	return worker, nil
 }
 
@@ -281,6 +371,11 @@ func (s *SQLStore) Workers(ctx context.Context) ([]*domain.Worker, error) {
 			return nil, err
 		}
 		worker.BoundProjectIDs = boundIDs
+		env, err := s.workerAgentRuntimeEnv(ctx, worker.ID)
+		if err != nil {
+			return nil, err
+		}
+		worker.AgentRuntimeEnv = env
 	}
 	return out, nil
 }
@@ -292,6 +387,9 @@ func (s *SQLStore) DeleteWorker(ctx context.Context, id string) error {
 	}
 	defer rollback(tx)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_project_bindings WHERE worker_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_agent_env_vars WHERE worker_id = `+s.bind(1), id); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM workers WHERE id = `+s.bind(1), id)
@@ -369,18 +467,6 @@ func (s *SQLStore) SaveSettings(ctx context.Context, settings *domain.Settings) 
 	), settings.ID, settings.WorkerHeartbeat, settings.SecurityPolicy, settings.Version, settings.CreatedAt, settings.UpdatedAt); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM system_agent_env_vars`); err != nil {
-		return err
-	}
-	for _, item := range settings.AgentRuntimeEnvVars {
-		if _, err := tx.ExecContext(ctx, s.upsertSQL(
-			"system_agent_env_vars",
-			[]string{"key", "value", "description", "enabled", "sensitive", "created_at", "updated_at"},
-			[]string{"value", "description", "enabled", "sensitive", "updated_at"},
-		), item.Key, item.Value, nullableString(item.Description), item.Enabled, item.Sensitive, settings.CreatedAt, settings.UpdatedAt); err != nil {
-			return err
-		}
-	}
 	return tx.Commit()
 }
 
@@ -390,21 +476,7 @@ func (s *SQLStore) Settings(ctx context.Context) (*domain.Settings, error) {
 	if err := row.Scan(&settings.ID, &settings.WorkerHeartbeat, &settings.SecurityPolicy, &settings.Version, &settings.CreatedAt, &settings.UpdatedAt); err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT key, value, description, enabled, sensitive FROM system_agent_env_vars ORDER BY key`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item domain.AgentRuntimeEnvVar
-		var description sql.NullString
-		if err := rows.Scan(&item.Key, &item.Value, &description, &item.Enabled, &item.Sensitive); err != nil {
-			return nil, err
-		}
-		item.Description = fromNullString(description)
-		settings.AgentRuntimeEnvVars = append(settings.AgentRuntimeEnvVars, item)
-	}
-	return settings, rows.Err()
+	return settings, nil
 }
 
 func (s *SQLStore) AppendTaskLog(ctx context.Context, log domain.TaskLog) error {
@@ -599,6 +671,33 @@ func (s *SQLStore) boundProjectIDs(ctx context.Context, workerID string) ([]stri
 	return ids, rows.Err()
 }
 
+func (s *SQLStore) workerAgentRuntimeEnv(ctx context.Context, workerID string) ([]domain.WorkerAgentRuntimeEnv, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_type, key, value, description, enabled, sensitive FROM worker_agent_env_vars WHERE worker_id = `+s.bind(1)+` ORDER BY agent_type, key`, workerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	groups := make([]domain.WorkerAgentRuntimeEnv, 0)
+	groupIndex := map[domain.AgentType]int{}
+	for rows.Next() {
+		var agent domain.AgentType
+		var item domain.AgentRuntimeEnvVar
+		var description sql.NullString
+		if err := rows.Scan(&agent, &item.Key, &item.Value, &description, &item.Enabled, &item.Sensitive); err != nil {
+			return nil, err
+		}
+		item.Description = fromNullString(description)
+		index, ok := groupIndex[agent]
+		if !ok {
+			index = len(groups)
+			groupIndex[agent] = index
+			groups = append(groups, domain.WorkerAgentRuntimeEnv{AgentType: agent})
+		}
+		groups[index].Vars = append(groups[index].Vars, item)
+	}
+	return groups, rows.Err()
+}
+
 func scanWorkerFields(scanner interface{ Scan(...any) error }) (*domain.Worker, error) {
 	var worker domain.Worker
 	var capabilities string
@@ -643,6 +742,12 @@ func (s *SQLStore) upsertSQL(table string, columns, updateColumns []string) stri
 		builder.WriteString(column)
 	}
 	return builder.String()
+}
+
+func (s *SQLStore) workerAgentEnvUpsertSQL() string {
+	return `INSERT INTO worker_agent_env_vars (worker_id, agent_type, key, value, description, enabled, sensitive, created_at, updated_at) VALUES (` +
+		s.bindList(1, 9) +
+		`) ON CONFLICT (worker_id, agent_type, key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, enabled = EXCLUDED.enabled, sensitive = EXCLUDED.sensitive, updated_at = EXCLUDED.updated_at`
 }
 
 func (s *SQLStore) insertIgnoreSQL(table string, columns []string) string {

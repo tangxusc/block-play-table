@@ -58,9 +58,27 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.UpdateAgentRuntimeEnvVars(ctx, []domain.AgentRuntimeEnvVar{
-		{Key: "TOKEN", Value: "secret", Enabled: true, Sensitive: true},
-		{Key: "DISABLED", Value: "hidden", Enabled: false, Sensitive: false},
+	if worker, err = service.UpdateWorker(ctx, RegisterWorkerInput{
+		ID:                     worker.ID,
+		Name:                   "W",
+		SupportedAgents:        []domain.AgentType{domain.AgentCodex},
+		WorkDir:                "/tmp",
+		ReplaceAgentRuntimeEnv: true,
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{
+			{
+				AgentType: domain.AgentCodex,
+				Vars: []domain.AgentRuntimeEnvVar{
+					{Key: "TOKEN", Value: "secret", Enabled: true, Sensitive: true},
+					{Key: "DISABLED", Value: "hidden", Enabled: false, Sensitive: false},
+				},
+			},
+			{
+				AgentType: domain.AgentClaude,
+				Vars: []domain.AgentRuntimeEnvVar{
+					{Key: "CLAUDE_ONLY", Value: "ignored", Enabled: true, Sensitive: false},
+				},
+			},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +140,37 @@ func TestServiceDuplicateRuntimeMessagesReturnExistingTask(t *testing.T) {
 	}
 	if len(messages) != 1 {
 		t.Fatalf("messages count = %d, want 1", len(messages))
+	}
+}
+
+func TestRegisterWorkerPreservesRuntimeEnvWhenPayloadOmitsEnv(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:                     "worker-preserve-env",
+		Name:                   "W",
+		SupportedAgents:        []domain.AgentType{domain.AgentCodex},
+		WorkDir:                "/tmp",
+		ReplaceAgentRuntimeEnv: true,
+		AgentRuntimeEnv: []domain.WorkerAgentRuntimeEnv{{
+			AgentType: domain.AgentCodex,
+			Vars:      []domain.AgentRuntimeEnvVar{{Key: "TOKEN", Value: "secret", Enabled: true, Sensitive: true}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              worker.ID,
+		Name:            "W reconnected",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/other",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime := again.EnabledRuntimeEnv(domain.AgentCodex); len(runtime) != 1 || runtime[0].Value != "secret" {
+		t.Fatalf("runtime env should be preserved on register without env: %+v", again.AgentRuntimeEnv)
 	}
 }
 

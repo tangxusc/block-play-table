@@ -114,6 +114,10 @@ class ApiClient {
         workers(filter: { includeDisabled: true }) {
           id name status supportedAgents workDir startupCommand projectBindingMode
           boundProjectIds currentTaskId lastHeartbeatAt
+          agentRuntimeEnv {
+            agentType
+            vars { key valueMasked description enabled sensitive }
+          }
         }
       }
       ''');
@@ -142,9 +146,6 @@ class ApiClient {
           id
           workerHeartbeatTimeout
           securityPolicy
-          agentRuntimeEnvVars {
-            key valueMasked description enabled sensitive
-          }
         }
       }
       ''');
@@ -316,13 +317,13 @@ class ApiClient {
       'postCommands': postCommands,
     };
     return graphQL(
-        r'''
+      r'''
         mutation CreateTask($input: CreateTaskInput!) {
           createTask(input: $input) { id }
         }
         ''',
-        variables: {'input': input},
-      ).then((_) {});
+      variables: {'input': input},
+    ).then((_) {});
   }
 
   Future<void> updateTask(TaskItem task) => graphQL(
@@ -356,13 +357,13 @@ class ApiClient {
       if ((agentType ?? '').isNotEmpty) 'agentType': agentType,
     };
     return graphQL(
-        r'''
+      r'''
         mutation AssignWorker($input: AssignWorkerInput!) {
           assignWorker(input: $input) { id }
         }
         ''',
-        variables: {'input': input},
-      ).then((_) {});
+      variables: {'input': input},
+    ).then((_) {});
   }
 
   Future<void> startTask(String taskId) => graphQL(
@@ -409,6 +410,7 @@ class ApiClient {
     String startupCommand = '',
     String projectBindingMode = 'ALL_PROJECTS',
     List<String> boundProjectIds = const [],
+    List<WorkerAgentRuntimeEnvItem> agentRuntimeEnv = const [],
   }) =>
       graphQL(
         r'''
@@ -425,6 +427,7 @@ class ApiClient {
             'startupCommand': startupCommand,
             'projectBindingMode': projectBindingMode,
             'boundProjectIds': boundProjectIds,
+            'agentRuntimeEnv': _agentRuntimeEnvInput(agentRuntimeEnv),
           },
         },
       ).then((_) {});
@@ -444,6 +447,7 @@ class ApiClient {
             'startupCommand': worker.startupCommand,
             'projectBindingMode': worker.projectBindingMode,
             'boundProjectIds': worker.boundProjectIds,
+            'agentRuntimeEnv': _agentRuntimeEnvInput(worker.agentRuntimeEnv),
           },
         },
       ).then((_) {});
@@ -477,25 +481,11 @@ class ApiClient {
 
   Future<void> updateSettings(SettingsData settings) => graphQL(
         r'''
-        mutation UpdateSettings($input: UpdateAgentRuntimeEnvVarsInput!, $timeout: String!) {
-          updateAgentRuntimeEnvVars(input: $input) { id }
+        mutation UpdateSettings($timeout: String!) {
           updateWorkerHeartbeatTimeout(timeout: $timeout) { id }
         }
         ''',
         variables: {
-          'input': {
-            'vars': settings.agentRuntimeEnvVars
-                .map(
-                  (item) => {
-                    'key': item.key,
-                    if (item.valueInput.isNotEmpty) 'value': item.valueInput,
-                    'description': item.description,
-                    'enabled': item.enabled,
-                    'sensitive': item.sensitive,
-                  },
-                )
-                .toList(),
-          },
           'timeout': settings.workerHeartbeatTimeout,
         },
       ).then((_) {});
@@ -529,4 +519,27 @@ class ApiClient {
         : '/subscriptions';
     return uri.replace(scheme: scheme, path: path).toString();
   }
+
+  static List<Map<String, dynamic>> _agentRuntimeEnvInput(
+    List<WorkerAgentRuntimeEnvItem> groups,
+  ) =>
+      groups
+          .map(
+            (group) => {
+              'agentType': group.agentType,
+              'vars': group.vars
+                  .map(
+                    (item) => {
+                      'key': item.key,
+                      if (!item.sensitive || item.valueInput.isNotEmpty)
+                        'value': item.valueInput,
+                      'description': item.description,
+                      'enabled': item.enabled,
+                      'sensitive': item.sensitive,
+                    },
+                  )
+                  .toList(),
+            },
+          )
+          .toList();
 }

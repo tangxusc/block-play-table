@@ -83,14 +83,15 @@ type CreateTaskInput struct {
 }
 
 type CreateWorkerInput struct {
-	ID                 *string                   `json:"id,omitempty"`
-	Name               string                    `json:"name"`
-	SupportedAgents    []AgentType               `json:"supportedAgents"`
-	WorkDir            string                    `json:"workDir"`
-	StartupCommand     *string                   `json:"startupCommand,omitempty"`
-	ProjectBindingMode *WorkerProjectBindingMode `json:"projectBindingMode,omitempty"`
-	BoundProjectIds    []string                  `json:"boundProjectIds,omitempty"`
-	Capabilities       []*KeyValueInput          `json:"capabilities,omitempty"`
+	ID                 *string                       `json:"id,omitempty"`
+	Name               string                        `json:"name"`
+	SupportedAgents    []AgentType                   `json:"supportedAgents"`
+	WorkDir            string                        `json:"workDir"`
+	StartupCommand     *string                       `json:"startupCommand,omitempty"`
+	ProjectBindingMode *WorkerProjectBindingMode     `json:"projectBindingMode,omitempty"`
+	BoundProjectIds    []string                      `json:"boundProjectIds,omitempty"`
+	AgentRuntimeEnv    []*WorkerAgentRuntimeEnvInput `json:"agentRuntimeEnv,omitempty"`
+	Capabilities       []*KeyValueInput              `json:"capabilities,omitempty"`
 }
 
 type DomainEvent struct {
@@ -157,24 +158,24 @@ type Query struct {
 }
 
 type RegisterWorkerInput struct {
-	ID                 *string                   `json:"id,omitempty"`
-	Name               string                    `json:"name"`
-	SupportedAgents    []AgentType               `json:"supportedAgents"`
-	WorkDir            string                    `json:"workDir"`
-	StartupCommand     *string                   `json:"startupCommand,omitempty"`
-	ProjectBindingMode *WorkerProjectBindingMode `json:"projectBindingMode,omitempty"`
-	BoundProjectIds    []string                  `json:"boundProjectIds,omitempty"`
-	Capabilities       []*KeyValueInput          `json:"capabilities,omitempty"`
+	ID                 *string                       `json:"id,omitempty"`
+	Name               string                        `json:"name"`
+	SupportedAgents    []AgentType                   `json:"supportedAgents"`
+	WorkDir            string                        `json:"workDir"`
+	StartupCommand     *string                       `json:"startupCommand,omitempty"`
+	ProjectBindingMode *WorkerProjectBindingMode     `json:"projectBindingMode,omitempty"`
+	BoundProjectIds    []string                      `json:"boundProjectIds,omitempty"`
+	AgentRuntimeEnv    []*WorkerAgentRuntimeEnvInput `json:"agentRuntimeEnv,omitempty"`
+	Capabilities       []*KeyValueInput              `json:"capabilities,omitempty"`
 }
 
 type Settings struct {
-	ID                     string                `json:"id"`
-	Version                int                   `json:"version"`
-	AgentRuntimeEnvVars    []*AgentRuntimeEnvVar `json:"agentRuntimeEnvVars"`
-	WorkerHeartbeatTimeout string                `json:"workerHeartbeatTimeout"`
-	SecurityPolicy         string                `json:"securityPolicy"`
-	CreatedAt              time.Time             `json:"createdAt"`
-	UpdatedAt              time.Time             `json:"updatedAt"`
+	ID                     string    `json:"id"`
+	Version                int       `json:"version"`
+	WorkerHeartbeatTimeout string    `json:"workerHeartbeatTimeout"`
+	SecurityPolicy         string    `json:"securityPolicy"`
+	CreatedAt              time.Time `json:"createdAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
 
 type StartTaskInput struct {
@@ -223,10 +224,6 @@ type TaskLog struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-type UpdateAgentRuntimeEnvVarsInput struct {
-	Vars []*AgentRuntimeEnvVarInput `json:"vars"`
-}
-
 type UpdateProjectInput struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
@@ -247,14 +244,15 @@ type UpdateTaskInput struct {
 }
 
 type UpdateWorkerInput struct {
-	ID                 string                   `json:"id"`
-	Name               string                   `json:"name"`
-	SupportedAgents    []AgentType              `json:"supportedAgents"`
-	WorkDir            string                   `json:"workDir"`
-	StartupCommand     *string                  `json:"startupCommand,omitempty"`
-	ProjectBindingMode WorkerProjectBindingMode `json:"projectBindingMode"`
-	BoundProjectIds    []string                 `json:"boundProjectIds,omitempty"`
-	Capabilities       []*KeyValueInput         `json:"capabilities,omitempty"`
+	ID                 string                        `json:"id"`
+	Name               string                        `json:"name"`
+	SupportedAgents    []AgentType                   `json:"supportedAgents"`
+	WorkDir            string                        `json:"workDir"`
+	StartupCommand     *string                       `json:"startupCommand,omitempty"`
+	ProjectBindingMode WorkerProjectBindingMode      `json:"projectBindingMode"`
+	BoundProjectIds    []string                      `json:"boundProjectIds,omitempty"`
+	AgentRuntimeEnv    []*WorkerAgentRuntimeEnvInput `json:"agentRuntimeEnv,omitempty"`
+	Capabilities       []*KeyValueInput              `json:"capabilities,omitempty"`
 }
 
 type UpdateWorkerProjectBindingsInput struct {
@@ -273,11 +271,22 @@ type Worker struct {
 	StartupCommand     *string                  `json:"startupCommand,omitempty"`
 	ProjectBindingMode WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIds    []string                 `json:"boundProjectIds"`
+	AgentRuntimeEnv    []*WorkerAgentRuntimeEnv `json:"agentRuntimeEnv"`
 	CurrentTaskID      *string                  `json:"currentTaskId,omitempty"`
 	LastHeartbeatAt    *time.Time               `json:"lastHeartbeatAt,omitempty"`
 	Version            int                      `json:"version"`
 	CreatedAt          time.Time                `json:"createdAt"`
 	UpdatedAt          time.Time                `json:"updatedAt"`
+}
+
+type WorkerAgentRuntimeEnv struct {
+	AgentType AgentType             `json:"agentType"`
+	Vars      []*AgentRuntimeEnvVar `json:"vars"`
+}
+
+type WorkerAgentRuntimeEnvInput struct {
+	AgentType AgentType                  `json:"agentType"`
+	Vars      []*AgentRuntimeEnvVarInput `json:"vars"`
 }
 
 type WorkerFilter struct {

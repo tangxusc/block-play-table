@@ -133,25 +133,11 @@ func TestProjectUpdateArchiveAndValidation(t *testing.T) {
 	}
 }
 
-func TestSettingsUpdatesPreserveSensitiveValuesAndEmitEvents(t *testing.T) {
+func TestSettingsUpdatesHeartbeatAndEmitEvents(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	settings := NewSettings(now)
 	if settings.ID != "settings" || settings.WorkerHeartbeat != "90s" || settings.SecurityPolicy != "TRUSTED" {
 		t.Fatalf("default settings = %+v", settings)
-	}
-	settings.UpdateAgentRuntimeEnvVars([]AgentRuntimeEnvVar{
-		{Key: "TOKEN", Value: "secret", Description: "api token", Enabled: true, Sensitive: true},
-		{Key: "LOG_LEVEL", Value: "debug", Enabled: true},
-	}, now.Add(time.Minute))
-	settings.UpdateAgentRuntimeEnvVars([]AgentRuntimeEnvVar{
-		{Key: "TOKEN", Description: "api token", Enabled: true, Sensitive: true},
-		{Key: "LOG_LEVEL", Enabled: true},
-	}, now.Add(2*time.Minute))
-	if settings.AgentRuntimeEnvVars[0].Value != "secret" {
-		t.Fatalf("sensitive value was not preserved: %+v", settings.AgentRuntimeEnvVars)
-	}
-	if settings.AgentRuntimeEnvVars[1].Value != "" {
-		t.Fatalf("non-sensitive empty value should remain empty: %+v", settings.AgentRuntimeEnvVars)
 	}
 	settings.UpdateWorkerHeartbeatTimeout("", now.Add(3*time.Minute))
 	if settings.WorkerHeartbeat != "90s" {
@@ -161,8 +147,8 @@ func TestSettingsUpdatesPreserveSensitiveValuesAndEmitEvents(t *testing.T) {
 	if settings.WorkerHeartbeat != "45s" {
 		t.Fatalf("heartbeat = %q, want 45s", settings.WorkerHeartbeat)
 	}
-	if events := settings.PullEvents(); len(events) != 4 {
-		t.Fatalf("settings events = %d, want 4", len(events))
+	if events := settings.PullEvents(); len(events) != 2 {
+		t.Fatalf("settings events = %d, want 2", len(events))
 	}
 }
 

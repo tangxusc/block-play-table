@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,7 @@ type Worker struct {
 	StartupCommand     string                   `json:"startupCommand,omitempty"`
 	ProjectBindingMode WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIDs    []string                 `json:"boundProjectIds"`
+	AgentRuntimeEnv    []WorkerAgentRuntimeEnv  `json:"agentRuntimeEnv"`
 	CurrentTaskID      string                   `json:"currentTaskId,omitempty"`
 	LastHeartbeatAt    *time.Time               `json:"lastHeartbeatAt,omitempty"`
 	Version            int                      `json:"version"`
@@ -42,16 +44,23 @@ type Worker struct {
 	pendingEvents []DomainEvent
 }
 
+type WorkerAgentRuntimeEnv struct {
+	AgentType AgentType            `json:"agentType"`
+	Vars      []AgentRuntimeEnvVar `json:"vars"`
+}
+
 type NewWorkerInput struct {
-	ID                 string
-	Name               string
-	SupportedAgents    []AgentType
-	WorkDir            string
-	StartupCommand     string
-	ProjectBindingMode WorkerProjectBindingMode
-	BoundProjectIDs    []string
-	Capabilities       map[string]string
-	Now                time.Time
+	ID                     string
+	Name                   string
+	SupportedAgents        []AgentType
+	WorkDir                string
+	StartupCommand         string
+	ProjectBindingMode     WorkerProjectBindingMode
+	BoundProjectIDs        []string
+	AgentRuntimeEnv        []WorkerAgentRuntimeEnv
+	ReplaceAgentRuntimeEnv bool
+	Capabilities           map[string]string
+	Now                    time.Time
 }
 
 func NewWorker(input NewWorkerInput) (*Worker, error) {
@@ -85,6 +94,7 @@ func NewWorker(input NewWorkerInput) (*Worker, error) {
 		StartupCommand:     input.StartupCommand,
 		ProjectBindingMode: input.ProjectBindingMode,
 		BoundProjectIDs:    append([]string(nil), input.BoundProjectIDs...),
+		AgentRuntimeEnv:    normalizeAgentRuntimeEnv(input.AgentRuntimeEnv, nil, input.SupportedAgents),
 		Version:            1,
 		CreatedAt:          input.Now,
 		UpdatedAt:          input.Now,
@@ -155,8 +165,45 @@ func (w *Worker) Update(input NewWorkerInput) error {
 	} else {
 		w.BoundProjectIDs = append([]string(nil), input.BoundProjectIDs...)
 	}
+	if input.ReplaceAgentRuntimeEnv {
+		w.AgentRuntimeEnv = normalizeAgentRuntimeEnv(input.AgentRuntimeEnv, w.AgentRuntimeEnv, input.SupportedAgents)
+	} else {
+		w.AgentRuntimeEnv = normalizeAgentRuntimeEnv(w.AgentRuntimeEnv, nil, input.SupportedAgents)
+	}
 	w.touch(input.Now)
 	w.addEvent("WorkerUpdated", map[string]any{"name": w.Name}, input.Now)
+	return nil
+}
+
+func (w Worker) MaskedAgentRuntimeEnv() []WorkerAgentRuntimeEnv {
+	out := cloneAgentRuntimeEnv(w.AgentRuntimeEnv)
+	for groupIndex := range out {
+		for varIndex := range out[groupIndex].Vars {
+			item := &out[groupIndex].Vars[varIndex]
+			if item.Sensitive {
+				item.ValueMasked = "********"
+			} else {
+				item.ValueMasked = item.Value
+			}
+			item.Value = ""
+		}
+	}
+	return out
+}
+
+func (w Worker) EnabledRuntimeEnv(agent AgentType) []AgentRuntimeEnvVar {
+	for _, group := range w.AgentRuntimeEnv {
+		if group.AgentType != agent {
+			continue
+		}
+		out := make([]AgentRuntimeEnvVar, 0, len(group.Vars))
+		for _, item := range group.Vars {
+			if item.Enabled {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
 	return nil
 }
 
@@ -232,6 +279,85 @@ func cloneMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+func normalizeAgentRuntimeEnv(input, existing []WorkerAgentRuntimeEnv, supportedAgents []AgentType) []WorkerAgentRuntimeEnv {
+	supported := make(map[AgentType]struct{}, len(supportedAgents))
+	for _, agent := range supportedAgents {
+		if agent.Valid() {
+			supported[agent] = struct{}{}
+		}
+	}
+	existingVars := make(map[AgentType]map[string]AgentRuntimeEnvVar)
+	for _, group := range existing {
+		if _, ok := existingVars[group.AgentType]; !ok {
+			existingVars[group.AgentType] = map[string]AgentRuntimeEnvVar{}
+		}
+		for _, item := range group.Vars {
+			existingVars[group.AgentType][item.Key] = item
+		}
+	}
+	inputVars := make(map[AgentType][]AgentRuntimeEnvVar)
+	for _, group := range input {
+		if !group.AgentType.Valid() {
+			continue
+		}
+		if len(supported) > 0 {
+			if _, ok := supported[group.AgentType]; !ok {
+				continue
+			}
+		}
+		seen := map[string]int{}
+		vars := inputVars[group.AgentType]
+		for _, item := range group.Vars {
+			if strings.TrimSpace(item.Key) == "" {
+				continue
+			}
+			if item.Value == "" && item.Sensitive {
+				if prior, ok := existingVars[group.AgentType][item.Key]; ok && prior.Sensitive {
+					item.Value = prior.Value
+				}
+			}
+			if index, ok := seen[item.Key]; ok {
+				vars[index] = item
+				continue
+			}
+			seen[item.Key] = len(vars)
+			vars = append(vars, item)
+		}
+		inputVars[group.AgentType] = vars
+	}
+	out := make([]WorkerAgentRuntimeEnv, 0, len(inputVars))
+	for _, agent := range supportedAgents {
+		vars := inputVars[agent]
+		if len(vars) == 0 {
+			continue
+		}
+		out = append(out, WorkerAgentRuntimeEnv{AgentType: agent, Vars: append([]AgentRuntimeEnvVar(nil), vars...)})
+	}
+	if len(supportedAgents) == 0 {
+		for agent, vars := range inputVars {
+			if len(vars) > 0 {
+				out = append(out, WorkerAgentRuntimeEnv{AgentType: agent, Vars: append([]AgentRuntimeEnvVar(nil), vars...)})
+			}
+		}
+	}
+	return out
+}
+
+func cloneAgentRuntimeEnv(in []WorkerAgentRuntimeEnv) []WorkerAgentRuntimeEnv {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]WorkerAgentRuntimeEnv, 0, len(in))
+	for _, group := range in {
+		copied := WorkerAgentRuntimeEnv{
+			AgentType: group.AgentType,
+			Vars:      append([]AgentRuntimeEnvVar(nil), group.Vars...),
+		}
+		out = append(out, copied)
 	}
 	return out
 }

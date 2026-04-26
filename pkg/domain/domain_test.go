@@ -89,28 +89,77 @@ func TestWorkerCanAcceptTaskHonorsStatusAgentProjectAndOccupancy(t *testing.T) {
 	}
 }
 
-func TestAgentRuntimeEnvVarsMaskSensitiveValues(t *testing.T) {
-	settings := Settings{
-		AgentRuntimeEnvVars: []AgentRuntimeEnvVar{
-			{Key: "OPENAI_API_KEY", Value: "sk-secret", Enabled: true, Sensitive: true},
-			{Key: "LOG_LEVEL", Value: "debug", Enabled: true, Sensitive: false},
-			{Key: "DISABLED", Value: "hidden", Enabled: false, Sensitive: true},
+func TestWorkerAgentRuntimeEnvMasksFiltersAndPreservesSensitiveValues(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	worker, err := NewWorker(NewWorkerInput{
+		ID:              "worker-env",
+		Name:            "env worker",
+		SupportedAgents: []AgentType{AgentCodex, AgentClaude},
+		WorkDir:         "/tmp/work",
+		AgentRuntimeEnv: []WorkerAgentRuntimeEnv{
+			{
+				AgentType: AgentCodex,
+				Vars: []AgentRuntimeEnvVar{
+					{Key: "OPENAI_API_KEY", Value: "sk-secret", Enabled: true, Sensitive: true},
+					{Key: "LOG_LEVEL", Value: "debug", Enabled: true, Sensitive: false},
+					{Key: "DISABLED", Value: "hidden", Enabled: false, Sensitive: true},
+				},
+			},
+			{
+				AgentType: AgentClaude,
+				Vars: []AgentRuntimeEnvVar{
+					{Key: "ANTHROPIC_BASE_URL", Value: "https://claude.example", Enabled: true, Sensitive: false},
+				},
+			},
 		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker returned error: %v", err)
 	}
 
-	masked := settings.MaskedEnvVars()
-	if masked[0].ValueMasked != "********" {
-		t.Fatalf("sensitive value masked as %q", masked[0].ValueMasked)
+	masked := worker.MaskedAgentRuntimeEnv()
+	if masked[0].Vars[0].ValueMasked != "********" || masked[0].Vars[0].Value != "" {
+		t.Fatalf("sensitive value should be masked and cleared: %+v", masked[0].Vars[0])
 	}
-	if masked[1].ValueMasked != "debug" {
-		t.Fatalf("plain value masked as %q", masked[1].ValueMasked)
+	if masked[0].Vars[1].ValueMasked != "debug" || masked[0].Vars[1].Value != "" {
+		t.Fatalf("public value should be visible but clear raw value: %+v", masked[0].Vars[1])
 	}
 
-	runtime := settings.EnabledRuntimeEnv()
+	runtime := worker.EnabledRuntimeEnv(AgentCodex)
 	if len(runtime) != 2 {
-		t.Fatalf("enabled runtime env count = %d, want 2", len(runtime))
+		t.Fatalf("enabled codex runtime env count = %d, want 2", len(runtime))
 	}
-	if runtime["OPENAI_API_KEY"] != "sk-secret" {
-		t.Fatalf("runtime env should contain real sensitive value")
+	if runtime[0].Key != "OPENAI_API_KEY" || runtime[0].Value != "sk-secret" || !runtime[0].Sensitive {
+		t.Fatalf("runtime env should contain real sensitive value: %+v", runtime)
+	}
+	if claudeRuntime := worker.EnabledRuntimeEnv(AgentClaude); len(claudeRuntime) != 1 || claudeRuntime[0].Key != "ANTHROPIC_BASE_URL" {
+		t.Fatalf("claude runtime env = %+v", claudeRuntime)
+	}
+
+	if err := worker.Update(NewWorkerInput{
+		Name:                   "env worker updated",
+		SupportedAgents:        []AgentType{AgentCodex, AgentClaude},
+		WorkDir:                "/tmp/work",
+		ReplaceAgentRuntimeEnv: true,
+		AgentRuntimeEnv: []WorkerAgentRuntimeEnv{
+			{
+				AgentType: AgentCodex,
+				Vars: []AgentRuntimeEnvVar{
+					{Key: "OPENAI_API_KEY", Enabled: true, Sensitive: true},
+					{Key: "LOG_LEVEL", Enabled: true, Sensitive: false},
+				},
+			},
+		},
+		Now: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	runtime = worker.EnabledRuntimeEnv(AgentCodex)
+	if runtime[0].Value != "sk-secret" {
+		t.Fatalf("sensitive blank value should preserve old secret: %+v", runtime)
+	}
+	if runtime[1].Value != "" {
+		t.Fatalf("public blank value should remain blank: %+v", runtime)
 	}
 }
