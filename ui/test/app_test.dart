@@ -102,6 +102,56 @@ void main() {
     },
   );
 
+  testWidgets('kanban columns expand to fill wide screens', (tester) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient();
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+
+    final pendingRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-pending')));
+    final runningRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-running')));
+    final completeRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-complete')));
+
+    expect(pendingRect.width, greaterThan(260));
+    expect(runningRect.width, closeTo(pendingRect.width, 0.5));
+    expect(completeRect.width, closeTo(pendingRect.width, 0.5));
+    expect(runningRect.left - pendingRect.right, closeTo(12, 0.5));
+    expect(completeRect.left - runningRect.right, closeTo(12, 0.5));
+    expect(completeRect.right, closeTo(surfaceSize.width - 16, 1));
+  });
+
+  testWidgets('kanban keeps minimum column width on narrow screens', (
+    tester,
+  ) async {
+    const surfaceSize = Size(820, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient();
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+
+    final pendingRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-pending')));
+    final runningRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-running')));
+    final completeRect =
+        tester.getRect(find.byKey(const ValueKey('kanban-column-complete')));
+
+    expect(pendingRect.width, closeTo(260, 0.5));
+    expect(runningRect.width, closeTo(260, 0.5));
+    expect(completeRect.width, closeTo(260, 0.5));
+    expect(completeRect.right, greaterThan(surfaceSize.width));
+  });
+
   testWidgets('create task can save without worker or agent', (tester) async {
     final apiClient = FakeApiClient();
     await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
@@ -422,6 +472,13 @@ void main() {
     expect(claudeEnv.vars.single.key, 'BPT_CLAUDE_ENV');
     expect(claudeEnv.vars.single.valueInput, 'claude-value');
   });
+}
+
+void _setSurfaceSize(WidgetTester tester, Size size) {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }
 
 class FakeApiClient extends ApiClient {

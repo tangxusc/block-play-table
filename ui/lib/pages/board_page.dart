@@ -239,61 +239,107 @@ class _KanbanView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: columns.map((column) {
-          return SizedBox(
-            width: 260,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerLowest,
-                  border: Border.all(color: Theme.of(context).dividerColor),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              column.title,
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                          ),
-                          StatusPill(value: column.tasks.length.toString()),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      if (column.tasks.isEmpty)
-                        Text(
-                          'No tasks',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ...column.tasks.map(
-                        (task) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: _TaskCard(
-                            task: task,
-                            onTap: () => onTaskSelected(task),
-                            onEdit: () => onTaskEdit(task),
-                          ),
-                        ),
-                      ),
-                    ],
+    const pagePadding = 16.0;
+    const columnGap = 12.0;
+    const minColumnWidth = 260.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columnCount = columns.length;
+        final totalGap = columnGap * (columnCount - 1);
+        final viewportWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
+        final availableRowWidth = viewportWidth - (pagePadding * 2);
+        final expandedColumnWidth =
+            (availableRowWidth - totalGap) / columnCount;
+        final columnWidth = expandedColumnWidth < minColumnWidth
+            ? minColumnWidth
+            : expandedColumnWidth;
+        final rowWidth = (columnWidth * columnCount) + totalGap;
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.all(pagePadding),
+          child: SizedBox(
+            width: rowWidth,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var index = 0; index < columns.length; index++) ...[
+                  SizedBox(
+                    key: ValueKey('kanban-column-${columns[index].id}'),
+                    width: columnWidth,
+                    child: _KanbanColumn(
+                      column: columns[index],
+                      onTaskSelected: onTaskSelected,
+                      onTaskEdit: onTaskEdit,
+                    ),
                   ),
+                  if (index < columns.length - 1)
+                    const SizedBox(width: columnGap),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _KanbanColumn extends StatelessWidget {
+  const _KanbanColumn({
+    required this.column,
+    required this.onTaskSelected,
+    required this.onTaskEdit,
+  });
+
+  final BoardColumnData column;
+  final ValueChanged<TaskItem> onTaskSelected;
+  final ValueChanged<TaskItem> onTaskEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    column.title,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                StatusPill(value: column.tasks.length.toString()),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (column.tasks.isEmpty)
+              Text(
+                'No tasks',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ...column.tasks.map(
+              (task) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _TaskCard(
+                  task: task,
+                  onTap: () => onTaskSelected(task),
+                  onEdit: () => onTaskEdit(task),
                 ),
               ),
             ),
-          );
-        }).toList(),
+          ],
+        ),
       ),
     );
   }
