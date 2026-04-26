@@ -96,6 +96,8 @@ Readiness is exposed at `GET /readyz` and checks the configured store.
 
 ## Tests
 
+Full end-to-end test strategy, coverage matrix, release gates, and troubleshooting notes are documented in [`docs/e2e-testing.md`](docs/e2e-testing.md).
+
 ```bash
 make test-go
 make coverage
@@ -119,12 +121,12 @@ npm run e2e
 
 ## Real Agent E2E
 
-The Worker expects:
+Real Agent E2E is a release gate and must cover both Codex and Claude. The Worker expects:
 
 - Codex: `codex exec`
 - Claude: `claude -p`
 
-The helper script checks both CLIs and starts Manager/Worker in trusted mode:
+The helper script checks both CLIs and starts Manager/Worker in trusted mode. After it starts, create and verify one fixed `agentType=codex` task and one fixed `agentType=claude` task through UI, GraphQL, or an automated API flow. See [`docs/e2e-testing.md`](docs/e2e-testing.md) for the full acceptance criteria.
 
 ```bash
 GO_BIN=/Users/tangxu/sdk/go1.16rc1/bin/go \
