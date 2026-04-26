@@ -152,6 +152,35 @@ void main() {
     expect(completeRect.right, greaterThan(surfaceSize.width));
   });
 
+  testWidgets('kanban columns scroll vertically when task cards overflow', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final overflowTasks = List.generate(
+      18,
+      (index) => _taskWith(
+        id: 'overflow-task-$index',
+        title: 'Overflow task $index',
+      ),
+    );
+    final apiClient = FakeApiClient(tasks: overflowTasks);
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Scrollbar), findsWidgets);
+    expect(find.text('Overflow task 0'), findsOneWidget);
+    expect(find.text('Overflow task 17'), findsNothing);
+
+    await tester.drag(find.text('Overflow task 0'), const Offset(0, -1200));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Overflow task 17'), findsOneWidget);
+  });
+
   testWidgets('create task can save without worker or agent', (tester) async {
     final apiClient = FakeApiClient();
     await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
@@ -482,15 +511,21 @@ void _setSurfaceSize(WidgetTester tester, Size size) {
 }
 
 class FakeApiClient extends ApiClient {
-  FakeApiClient({SettingsData? settings, WorkerItem? worker})
+  FakeApiClient({
+    SettingsData? settings,
+    WorkerItem? worker,
+    List<TaskItem>? tasks,
+  })
       : _settings = settings ?? const SettingsData(),
         _worker = worker ?? _defaultWorker,
+        _tasks = tasks ?? [_task],
         super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
   SettingsData _settings;
   WorkerItem _worker;
+  final List<TaskItem> _tasks;
   int boardFetches = 0;
   int detailFetches = 0;
   bool _completedDetail = false;
@@ -517,23 +552,25 @@ class FakeApiClient extends ApiClient {
       id: 'default',
       name: 'Default Board',
       type: view,
-      tasks: [_task],
+      tasks: _tasks,
       columns: [
         BoardColumnData(
           id: 'CREATED',
           title: 'Pending',
           status: 'CREATED',
-          tasks: [_task],
+          tasks: _tasks,
         ),
       ],
-      calendarItems: [
-        BoardCalendarItemData(
-          id: _task.id!,
-          task: _task,
-          date: _task.createdAt,
-          status: _task.status,
-        ),
-      ],
+      calendarItems: _tasks
+          .map(
+            (task) => BoardCalendarItemData(
+              id: task.id!,
+              task: task,
+              date: task.createdAt,
+              status: task.status,
+            ),
+          )
+          .toList(),
       projects: [_project],
       workers: [_worker],
     );
@@ -683,6 +720,28 @@ final _task = TaskItem(
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:00Z',
 );
+
+TaskItem _taskWith({
+  required String id,
+  required String title,
+}) =>
+    TaskItem(
+      id: id,
+      title: title,
+      description: _task.description,
+      status: _task.status,
+      projectId: _task.projectId,
+      agentType: _task.agentType,
+      baseBranch: _task.baseBranch,
+      preCommands: _task.preCommands,
+      postCommands: _task.postCommands,
+      createdAt: _task.createdAt,
+      updatedAt: _task.updatedAt,
+      workerId: _task.workerId,
+      worktreePath: _task.worktreePath,
+      agentSessionId: _task.agentSessionId,
+      result: _task.result,
+    );
 
 final _completedTask = TaskItem(
   id: 'task-1',

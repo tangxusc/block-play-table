@@ -226,7 +226,7 @@ class _BoardContent extends StatelessWidget {
   }
 }
 
-class _KanbanView extends StatelessWidget {
+class _KanbanView extends StatefulWidget {
   const _KanbanView({
     required this.columns,
     required this.onTaskSelected,
@@ -238,6 +238,19 @@ class _KanbanView extends StatelessWidget {
   final ValueChanged<TaskItem> onTaskEdit;
 
   @override
+  State<_KanbanView> createState() => _KanbanViewState();
+}
+
+class _KanbanViewState extends State<_KanbanView> {
+  final ScrollController _horizontalController = ScrollController();
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     const pagePadding = 16.0;
     const columnGap = 12.0;
@@ -245,40 +258,54 @@ class _KanbanView extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columnCount = columns.length;
+        final columnCount = widget.columns.length;
         final totalGap = columnGap * (columnCount - 1);
         final viewportWidth =
             constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
+        final viewportHeight =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 0.0;
         final availableRowWidth = viewportWidth - (pagePadding * 2);
+        final availableRowHeight = viewportHeight - (pagePadding * 2);
         final expandedColumnWidth =
             (availableRowWidth - totalGap) / columnCount;
         final columnWidth = expandedColumnWidth < minColumnWidth
             ? minColumnWidth
             : expandedColumnWidth;
         final rowWidth = (columnWidth * columnCount) + totalGap;
+        final rowHeight = availableRowHeight > 0 ? availableRowHeight : 0.0;
 
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.all(pagePadding),
-          child: SizedBox(
-            width: rowWidth,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (var index = 0; index < columns.length; index++) ...[
-                  SizedBox(
-                    key: ValueKey('kanban-column-${columns[index].id}'),
-                    width: columnWidth,
-                    child: _KanbanColumn(
-                      column: columns[index],
-                      onTaskSelected: onTaskSelected,
-                      onTaskEdit: onTaskEdit,
+        return Scrollbar(
+          controller: _horizontalController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _horizontalController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.all(pagePadding),
+            child: SizedBox(
+              width: rowWidth,
+              height: rowHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var index = 0;
+                      index < widget.columns.length;
+                      index++) ...[
+                    SizedBox(
+                      key: ValueKey(
+                        'kanban-column-${widget.columns[index].id}',
+                      ),
+                      width: columnWidth,
+                      child: _KanbanColumn(
+                        column: widget.columns[index],
+                        onTaskSelected: widget.onTaskSelected,
+                        onTaskEdit: widget.onTaskEdit,
+                      ),
                     ),
-                  ),
-                  if (index < columns.length - 1)
-                    const SizedBox(width: columnGap),
+                    if (index < widget.columns.length - 1)
+                      const SizedBox(width: columnGap),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         );
@@ -287,7 +314,7 @@ class _KanbanView extends StatelessWidget {
   }
 }
 
-class _KanbanColumn extends StatelessWidget {
+class _KanbanColumn extends StatefulWidget {
   const _KanbanColumn({
     required this.column,
     required this.onTaskSelected,
@@ -297,6 +324,19 @@ class _KanbanColumn extends StatelessWidget {
   final BoardColumnData column;
   final ValueChanged<TaskItem> onTaskSelected;
   final ValueChanged<TaskItem> onTaskEdit;
+
+  @override
+  State<_KanbanColumn> createState() => _KanbanColumnState();
+}
+
+class _KanbanColumnState extends State<_KanbanColumn> {
+  final ScrollController _verticalController = ScrollController();
+
+  @override
+  void dispose() {
+    _verticalController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -315,29 +355,44 @@ class _KanbanColumn extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    column.title,
+                    widget.column.title,
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-                StatusPill(value: column.tasks.length.toString()),
+                StatusPill(value: widget.column.tasks.length.toString()),
               ],
             ),
             const SizedBox(height: 10),
-            if (column.tasks.isEmpty)
-              Text(
-                'No tasks',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ...column.tasks.map(
-              (task) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _TaskCard(
-                  task: task,
-                  onTap: () => onTaskSelected(task),
-                  onEdit: () => onTaskEdit(task),
+            if (widget.column.tasks.isEmpty)
+              Expanded(
+                child: Text(
+                  'No tasks',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              )
+            else
+              Expanded(
+                child: Scrollbar(
+                  controller: _verticalController,
+                  thumbVisibility: true,
+                  child: ListView.separated(
+                    controller: _verticalController,
+                    primary: false,
+                    padding: const EdgeInsets.only(right: 10),
+                    itemBuilder: (context, index) {
+                      final task = widget.column.tasks[index];
+                      return _TaskCard(
+                        task: task,
+                        onTap: () => widget.onTaskSelected(task),
+                        onEdit: () => widget.onTaskEdit(task),
+                      );
+                    },
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(height: 8),
+                    itemCount: widget.column.tasks.length,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
