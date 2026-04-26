@@ -62,6 +62,20 @@ async function openWorkerEditor(page, workerName: string) {
   await workerGroup.getByRole("button", { name: "Edit worker" }).click();
 }
 
+async function addWorkerEnvVar(page, key: string, value: string) {
+  await page.getByRole("button", { name: "New env var" }).click();
+  await expect(page.getByText("Create env var")).toBeVisible();
+  const keyInput = page.getByLabel("Key");
+  await keyInput.fill(key);
+  await expect(keyInput).toHaveValue(key);
+  const valueInput = page.getByLabel("Value");
+  await valueInput.fill(value);
+  await expect(valueInput).toHaveValue(value);
+  await page.getByLabel("Description").click();
+  await page.getByRole("button", { name: "Save" }).last().click();
+  await expect(page.getByText("Create env var")).toBeHidden();
+}
+
 function connectWorkerEvents(
   workerId: string,
   taskId: string,
@@ -299,15 +313,9 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await enableFlutterAccessibility(page);
   await openWorkerEditor(page, workerName);
   await expect(page.getByText("Runtime environment")).toBeVisible();
-  await page.getByRole("button", { name: "New env var" }).click();
-  await page.getByLabel("Key").fill("BPT_E2E_AGENT_ENV");
-  await page.getByLabel("Value").fill("codex-value");
-  await page.getByRole("button", { name: "Save" }).last().click();
+  await addWorkerEnvVar(page, "BPT_E2E_AGENT_ENV", "codex-value");
   await page.getByRole("button", { name: "Claude" }).last().click();
-  await page.getByRole("button", { name: "New env var" }).click();
-  await page.getByLabel("Key").fill("BPT_E2E_CLAUDE_ENV");
-  await page.getByLabel("Value").fill("claude-value");
-  await page.getByRole("button", { name: "Save" }).last().click();
+  await addWorkerEnvVar(page, "BPT_E2E_CLAUDE_ENV", "claude-value");
   await page.getByRole("button", { name: "Save" }).last().click();
 
   await expect
