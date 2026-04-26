@@ -46,12 +46,20 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	versioned := []Migration{
 		{Version: "", SQL: ""},
 		{Version: "001_init", SQL: migrations.SchemaSQL},
+		{Version: "002_drop_project_setup_commands", SQL: migrations.DropProjectSetupCommandsSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("second MigrateVersioned returned error: %v", err)
+	}
+	hasSetupCommands, err := sqliteTableHasColumn(ctx, sqlStore, "projects", "setup_commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasSetupCommands {
+		t.Fatal("projects.setup_commands should be removed after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -76,7 +84,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		t.Fatalf("loaded settings = %+v", loadedSettings)
 	}
 
-	project, err := domain.NewProject(domain.NewProjectInput{ID: "project-list", Name: "P", GitURL: "git://repo", SetupCommands: []string{"make setup"}, Now: now})
+	project, err := domain.NewProject(domain.NewProjectInput{ID: "project-list", Name: "P", GitURL: "git://repo", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +209,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 		GitURL:             "file:///tmp/repo",
 		DefaultBranch:      "main",
 		WorktreeNamePrefix: "sql",
-		SetupCommands:      []string{"git status"},
 		Now:                now,
 	})
 	if err != nil {
@@ -288,7 +295,7 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if err != nil {
 		t.Fatalf("Project returned error: %v", err)
 	}
-	if loadedProject.WorktreeNamePrefix != "sql" || len(loadedProject.SetupCommands) != 1 {
+	if loadedProject.WorktreeNamePrefix != "sql" {
 		t.Fatalf("loaded project = %+v", loadedProject)
 	}
 	if logs, err := reopened.TaskLogs(ctx, taskID); err != nil || len(logs) != 1 || logs[0].Content != "hello" {
@@ -327,4 +334,27 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if len(loadedSettings.AgentRuntimeEnvVars) == 0 {
 		t.Fatal("settings env vars were not persisted")
 	}
+}
+
+func sqliteTableHasColumn(ctx context.Context, sqlStore *SQLStore, table, column string) (bool, error) {
+	rows, err := sqlStore.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

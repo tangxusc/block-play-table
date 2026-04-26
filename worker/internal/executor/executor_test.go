@@ -11,7 +11,7 @@ import (
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 )
 
-func TestExecutorRunsSetupCommandsAgentAndPostCommands(t *testing.T) {
+func TestExecutorRunsPreCommandsAgentAndPostCommands(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -32,7 +32,6 @@ func TestExecutorRunsSetupCommandsAgentAndPostCommands(t *testing.T) {
 			GitURL:             repo,
 			DefaultBranch:      "main",
 			WorktreeNamePrefix: "block-play-table",
-			SetupCommands:      []string{"printf setup > setup.txt"},
 		},
 		AgentRuntimeEnv: []protocol.RuntimeEnvVar{{Key: "BPT_TEST_ENV", Value: "present"}},
 	}
@@ -70,7 +69,7 @@ func TestExecutorRunsSetupCommandsAgentAndPostCommands(t *testing.T) {
 		t.Fatalf("last event type = %s", events[len(events)-1].Type)
 	}
 	worktree := events[0].Content
-	for _, name := range []string{"setup.txt", "pre.txt", "post.txt"} {
+	for _, name := range []string{"pre.txt", "post.txt"} {
 		if _, err := os.Stat(filepath.Join(worktree, name)); err != nil {
 			t.Fatalf("%s was not created in worktree %s: %v", name, worktree, err)
 		}

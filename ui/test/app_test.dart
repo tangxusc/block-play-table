@@ -43,11 +43,13 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'New project'));
     await tester.pumpAndSettle();
     expect(find.text('Create project'), findsOneWidget);
+    expect(find.text('Setup commands'), findsNothing);
     await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Edit project').first);
     await tester.pumpAndSettle();
     expect(find.text('Edit project'), findsOneWidget);
+    expect(find.text('Setup commands'), findsNothing);
     await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
     await tester.pumpAndSettle();
 
@@ -279,7 +281,6 @@ final _project = ProjectItem(
   gitUrl: 'git@example.com:platform.git',
   defaultBranch: 'main',
   worktreeNamePrefix: 'platform',
-  setupCommands: const ['make setup'],
   archived: false,
 );
 

@@ -19,7 +19,6 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 		GitURL:             "file:///tmp/repo",
 		DefaultBranch:      "main",
 		WorktreeNamePrefix: "block-play-table",
-		SetupCommands:      []string{"git status"},
 		Now:                now,
 	})
 	if err != nil {

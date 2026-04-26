@@ -8,7 +8,6 @@ type Project struct {
 	GitURL             string    `json:"gitUrl"`
 	DefaultBranch      string    `json:"defaultBranch"`
 	WorktreeNamePrefix string    `json:"worktreeNamePrefix"`
-	SetupCommands      []string  `json:"setupCommands"`
 	Archived           bool      `json:"archived"`
 	Version            int       `json:"version"`
 	CreatedAt          time.Time `json:"createdAt"`
@@ -23,7 +22,6 @@ type NewProjectInput struct {
 	GitURL             string
 	DefaultBranch      string
 	WorktreeNamePrefix string
-	SetupCommands      []string
 	Now                time.Time
 }
 
@@ -49,7 +47,6 @@ func NewProject(input NewProjectInput) (*Project, error) {
 		GitURL:             input.GitURL,
 		DefaultBranch:      input.DefaultBranch,
 		WorktreeNamePrefix: input.WorktreeNamePrefix,
-		SetupCommands:      append([]string(nil), input.SetupCommands...),
 		Version:            1,
 		CreatedAt:          input.Now,
 		UpdatedAt:          input.Now,
@@ -58,7 +55,7 @@ func NewProject(input NewProjectInput) (*Project, error) {
 	return project, nil
 }
 
-func (p *Project) Update(name, gitURL, defaultBranch, prefix string, setupCommands []string, now time.Time) error {
+func (p *Project) Update(name, gitURL, defaultBranch, prefix string, now time.Time) error {
 	if err := requireNonBlank("project name", name); err != nil {
 		return err
 	}
@@ -75,7 +72,6 @@ func (p *Project) Update(name, gitURL, defaultBranch, prefix string, setupComman
 	}
 	p.DefaultBranch = defaultBranch
 	p.WorktreeNamePrefix = prefix
-	p.SetupCommands = append([]string(nil), setupCommands...)
 	p.touch(now)
 	p.addEvent("ProjectUpdated", map[string]any{"name": p.Name}, now)
 	return nil

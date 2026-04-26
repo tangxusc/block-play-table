@@ -310,21 +310,16 @@ func (s *SQLStore) DeleteWorker(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) SaveProject(ctx context.Context, project *domain.Project) error {
-	setupCommands, err := encodeJSON(project.SetupCommands)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ExecContext(ctx, s.upsertSQL(
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
 		"projects",
-		[]string{"id", "name", "git_url", "default_branch", "worktree_name_prefix", "setup_commands", "archived", "version", "created_at", "updated_at"},
-		[]string{"name", "git_url", "default_branch", "worktree_name_prefix", "setup_commands", "archived", "version", "created_at", "updated_at"},
+		[]string{"id", "name", "git_url", "default_branch", "worktree_name_prefix", "archived", "version", "created_at", "updated_at"},
+		[]string{"name", "git_url", "default_branch", "worktree_name_prefix", "archived", "version", "created_at", "updated_at"},
 	),
 		project.ID,
 		project.Name,
 		project.GitURL,
 		project.DefaultBranch,
 		project.WorktreeNamePrefix,
-		setupCommands,
 		project.Archived,
 		project.Version,
 		project.CreatedAt,
@@ -334,7 +329,7 @@ func (s *SQLStore) SaveProject(ctx context.Context, project *domain.Project) err
 }
 
 func (s *SQLStore) Project(ctx context.Context, id string) (*domain.Project, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, git_url, default_branch, worktree_name_prefix, setup_commands, archived, version, created_at, updated_at FROM projects WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, git_url, default_branch, worktree_name_prefix, archived, version, created_at, updated_at FROM projects WHERE id = `+s.bind(1), id)
 	project, err := scanProject(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -346,7 +341,7 @@ func (s *SQLStore) Project(ctx context.Context, id string) (*domain.Project, err
 }
 
 func (s *SQLStore) Projects(ctx context.Context) ([]*domain.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, git_url, default_branch, worktree_name_prefix, setup_commands, archived, version, created_at, updated_at FROM projects ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, git_url, default_branch, worktree_name_prefix, archived, version, created_at, updated_at FROM projects ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -694,11 +689,7 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 
 func scanProject(scanner interface{ Scan(...any) error }) (*domain.Project, error) {
 	var project domain.Project
-	var setupCommands string
-	if err := scanner.Scan(&project.ID, &project.Name, &project.GitURL, &project.DefaultBranch, &project.WorktreeNamePrefix, &setupCommands, &project.Archived, &project.Version, &project.CreatedAt, &project.UpdatedAt); err != nil {
-		return nil, err
-	}
-	if err := decodeJSON(setupCommands, &project.SetupCommands); err != nil {
+	if err := scanner.Scan(&project.ID, &project.Name, &project.GitURL, &project.DefaultBranch, &project.WorktreeNamePrefix, &project.Archived, &project.Version, &project.CreatedAt, &project.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &project, nil

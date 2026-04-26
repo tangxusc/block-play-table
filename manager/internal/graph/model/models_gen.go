@@ -64,11 +64,10 @@ type ConversationMessage struct {
 }
 
 type CreateProjectInput struct {
-	Name               string   `json:"name"`
-	GitURL             string   `json:"gitUrl"`
-	DefaultBranch      *string  `json:"defaultBranch,omitempty"`
-	WorktreeNamePrefix *string  `json:"worktreeNamePrefix,omitempty"`
-	SetupCommands      []string `json:"setupCommands,omitempty"`
+	Name               string  `json:"name"`
+	GitURL             string  `json:"gitUrl"`
+	DefaultBranch      *string `json:"defaultBranch,omitempty"`
+	WorktreeNamePrefix *string `json:"worktreeNamePrefix,omitempty"`
 }
 
 type CreateTaskInput struct {
@@ -143,7 +142,6 @@ type Project struct {
 	GitURL             string    `json:"gitUrl"`
 	DefaultBranch      string    `json:"defaultBranch"`
 	WorktreeNamePrefix string    `json:"worktreeNamePrefix"`
-	SetupCommands      []string  `json:"setupCommands"`
 	Archived           bool      `json:"archived"`
 	Version            int       `json:"version"`
 	CreatedAt          time.Time `json:"createdAt"`
@@ -230,12 +228,11 @@ type UpdateAgentRuntimeEnvVarsInput struct {
 }
 
 type UpdateProjectInput struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	GitURL             string   `json:"gitUrl"`
-	DefaultBranch      string   `json:"defaultBranch"`
-	WorktreeNamePrefix string   `json:"worktreeNamePrefix"`
-	SetupCommands      []string `json:"setupCommands,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	GitURL             string `json:"gitUrl"`
+	DefaultBranch      string `json:"defaultBranch"`
+	WorktreeNamePrefix string `json:"worktreeNamePrefix"`
 }
 
 type UpdateTaskInput struct {

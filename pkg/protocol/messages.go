@@ -55,11 +55,10 @@ type TaskPayload struct {
 }
 
 type ProjectPayload struct {
-	ID                 string   `json:"id"`
-	GitURL             string   `json:"gitUrl"`
-	DefaultBranch      string   `json:"defaultBranch"`
-	WorktreeNamePrefix string   `json:"worktreeNamePrefix"`
-	SetupCommands      []string `json:"setupCommands"`
+	ID                 string `json:"id"`
+	GitURL             string `json:"gitUrl"`
+	DefaultBranch      string `json:"defaultBranch"`
+	WorktreeNamePrefix string `json:"worktreeNamePrefix"`
 }
 
 type RuntimeEnvVar struct {

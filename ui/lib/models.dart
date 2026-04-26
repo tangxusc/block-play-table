@@ -242,7 +242,6 @@ class ProjectItem {
     required this.gitUrl,
     required this.defaultBranch,
     required this.worktreeNamePrefix,
-    required this.setupCommands,
     required this.archived,
   });
 
@@ -252,7 +251,6 @@ class ProjectItem {
     gitUrl: json['gitUrl'] as String? ?? '',
     defaultBranch: json['defaultBranch'] as String? ?? 'main',
     worktreeNamePrefix: json['worktreeNamePrefix'] as String? ?? '',
-    setupCommands: stringList(json['setupCommands']),
     archived: json['archived'] as bool? ?? false,
   );
 
@@ -261,7 +259,6 @@ class ProjectItem {
   final String gitUrl;
   final String defaultBranch;
   final String worktreeNamePrefix;
-  final List<String> setupCommands;
   final bool archived;
 }
 

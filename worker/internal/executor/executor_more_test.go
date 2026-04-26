@@ -31,11 +31,11 @@ func TestExecutorReportsFailureForUnsupportedAgentAndFailingCommand(t *testing.T
 		}),
 	})
 	err := exec.Execute(context.Background(), protocol.TaskStartPayload{
-		Task:    protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentCodex},
-		Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p", SetupCommands: []string{"exit 7"}},
+		Task:    protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentCodex, PreCommands: []string{"exit 7"}},
+		Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
 	})
 	if err == nil {
-		t.Fatal("failing setup command should fail")
+		t.Fatal("failing pre command should fail")
 	}
 	if events[len(events)-1].Type != protocol.MessageTaskFailed {
 		t.Fatalf("last event = %s, want failed", events[len(events)-1].Type)

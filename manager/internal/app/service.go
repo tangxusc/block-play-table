@@ -78,20 +78,18 @@ func (s *Service) SubscribeDomainEvents(ctx context.Context, filter domain.Event
 }
 
 type CreateProjectInput struct {
-	Name               string   `json:"name"`
-	GitURL             string   `json:"gitUrl"`
-	DefaultBranch      string   `json:"defaultBranch"`
-	WorktreeNamePrefix string   `json:"worktreeNamePrefix"`
-	SetupCommands      []string `json:"setupCommands"`
+	Name               string `json:"name"`
+	GitURL             string `json:"gitUrl"`
+	DefaultBranch      string `json:"defaultBranch"`
+	WorktreeNamePrefix string `json:"worktreeNamePrefix"`
 }
 
 type UpdateProjectInput struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	GitURL             string   `json:"gitUrl"`
-	DefaultBranch      string   `json:"defaultBranch"`
-	WorktreeNamePrefix string   `json:"worktreeNamePrefix"`
-	SetupCommands      []string `json:"setupCommands"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	GitURL             string `json:"gitUrl"`
+	DefaultBranch      string `json:"defaultBranch"`
+	WorktreeNamePrefix string `json:"worktreeNamePrefix"`
 }
 
 func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (*domain.Project, error) {
@@ -102,7 +100,6 @@ func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (
 		GitURL:             input.GitURL,
 		DefaultBranch:      input.DefaultBranch,
 		WorktreeNamePrefix: input.WorktreeNamePrefix,
-		SetupCommands:      input.SetupCommands,
 		Now:                now,
 	})
 	if err != nil {
@@ -146,7 +143,7 @@ func (s *Service) UpdateProject(ctx context.Context, input UpdateProjectInput) (
 	if err != nil {
 		return nil, err
 	}
-	if err := project.Update(input.Name, input.GitURL, input.DefaultBranch, input.WorktreeNamePrefix, input.SetupCommands, s.clock()); err != nil {
+	if err := project.Update(input.Name, input.GitURL, input.DefaultBranch, input.WorktreeNamePrefix, s.clock()); err != nil {
 		return nil, err
 	}
 	events := project.PullEvents()
@@ -1105,7 +1102,6 @@ func buildStartPayload(task *domain.Task, project *domain.Project, settings *dom
 			GitURL:             project.GitURL,
 			DefaultBranch:      project.DefaultBranch,
 			WorktreeNamePrefix: project.WorktreeNamePrefix,
-			SetupCommands:      append([]string(nil), project.SetupCommands...),
 		},
 		AgentRuntimeEnv: env,
 	}

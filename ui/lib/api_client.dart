@@ -99,7 +99,7 @@ class ApiClient {
     final data = await graphQL(r'''
       query Projects {
         projects(filter: { includeArchived: true }) {
-          id name gitUrl defaultBranch worktreeNamePrefix setupCommands archived
+          id name gitUrl defaultBranch worktreeNamePrefix archived
         }
       }
       ''');
@@ -252,7 +252,6 @@ class ApiClient {
     required String gitUrl,
     required String prefix,
     String defaultBranch = 'main',
-    List<String> setupCommands = const [],
   }) =>
       graphQL(
         r'''
@@ -266,7 +265,6 @@ class ApiClient {
             'gitUrl': gitUrl,
             'defaultBranch': defaultBranch,
             'worktreeNamePrefix': prefix,
-            'setupCommands': setupCommands,
           },
         },
       ).then((_) {});
@@ -284,7 +282,6 @@ class ApiClient {
             'gitUrl': project.gitUrl,
             'defaultBranch': project.defaultBranch,
             'worktreeNamePrefix': project.worktreeNamePrefix,
-            'setupCommands': project.setupCommands,
           },
         },
       ).then((_) {});

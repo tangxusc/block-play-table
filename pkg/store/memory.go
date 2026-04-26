@@ -310,7 +310,6 @@ func cloneWorker(worker *domain.Worker) *domain.Worker {
 
 func cloneProject(project *domain.Project) *domain.Project {
 	copy := *project
-	copy.SetupCommands = append([]string(nil), project.SetupCommands...)
 	return &copy
 }
 

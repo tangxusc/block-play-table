@@ -133,12 +133,6 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		return err
 	}
 
-	for _, command := range payload.Project.SetupCommands {
-		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command, redact); err != nil {
-			e.reportExecutionError(ctx, payload.Task.ID, err)
-			return err
-		}
-	}
 	for _, command := range payload.Task.PreCommands {
 		if err := e.runShell(ctx, payload.Task.ID, worktree, env, command, redact); err != nil {
 			e.reportExecutionError(ctx, payload.Task.ID, err)

@@ -177,7 +177,6 @@ func (r *mutationResolver) CreateProject(ctx context.Context, input model.Create
 		GitURL:             input.GitURL,
 		DefaultBranch:      valueOrEmpty(input.DefaultBranch),
 		WorktreeNamePrefix: valueOrEmpty(input.WorktreeNamePrefix),
-		SetupCommands:      append([]string(nil), input.SetupCommands...),
 	})
 	return toModelProject(project), err
 }
@@ -190,7 +189,6 @@ func (r *mutationResolver) UpdateProject(ctx context.Context, input model.Update
 		GitURL:             input.GitURL,
 		DefaultBranch:      input.DefaultBranch,
 		WorktreeNamePrefix: input.WorktreeNamePrefix,
-		SetupCommands:      append([]string(nil), input.SetupCommands...),
 	})
 	return toModelProject(project), err
 }

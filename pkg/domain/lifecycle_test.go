@@ -121,7 +121,7 @@ func TestProjectUpdateArchiveAndValidation(t *testing.T) {
 	if project.DefaultBranch != "main" || project.WorktreeNamePrefix != "project-1" {
 		t.Fatalf("defaults not applied: %+v", project)
 	}
-	if err := project.Update("P2", "git://repo2", "develop", "prefix", []string{"make"}, now); err != nil {
+	if err := project.Update("P2", "git://repo2", "develop", "prefix", now); err != nil {
 		t.Fatal(err)
 	}
 	project.Archive(now)
@@ -279,10 +279,10 @@ func TestProjectRestoreEventsAndValidationBranches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := project.Update("", "git://repo", "", "", nil, now); err == nil {
+	if err := project.Update("", "git://repo", "", "", now); err == nil {
 		t.Fatal("blank project name update should fail")
 	}
-	if err := project.Update("P", "", "", "", nil, now); err == nil {
+	if err := project.Update("P", "", "", "", now); err == nil {
 		t.Fatal("blank git url update should fail")
 	}
 	project.RestoreEvents([]DomainEvent{{EventID: "evt-project"}})

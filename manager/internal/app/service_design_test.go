@@ -22,11 +22,11 @@ func TestServiceDesignCRUDFilteringAndSettings(t *testing.T) {
 	if loaded, err := service.Project(ctx, project.ID); err != nil || loaded.ID != project.ID {
 		t.Fatalf("Project = %+v, %v", loaded, err)
 	}
-	project, err = service.UpdateProject(ctx, UpdateProjectInput{ID: project.ID, Name: "P2", GitURL: "git://repo2", DefaultBranch: "develop", WorktreeNamePrefix: "p2", SetupCommands: []string{"make setup"}})
+	project, err = service.UpdateProject(ctx, UpdateProjectInput{ID: project.ID, Name: "P2", GitURL: "git://repo2", DefaultBranch: "develop", WorktreeNamePrefix: "p2"})
 	if err != nil {
 		t.Fatalf("UpdateProject returned error: %v", err)
 	}
-	if project.DefaultBranch != "develop" || len(project.SetupCommands) != 1 {
+	if project.DefaultBranch != "develop" || project.WorktreeNamePrefix != "p2" {
 		t.Fatalf("updated project = %+v", project)
 	}
 

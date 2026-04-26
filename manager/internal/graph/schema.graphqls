@@ -84,7 +84,6 @@ type Project {
   gitUrl: String!
   defaultBranch: String!
   worktreeNamePrefix: String!
-  setupCommands: [String!]!
   archived: Boolean!
   version: Int!
   createdAt: Time!
@@ -280,7 +279,6 @@ input CreateProjectInput {
   gitUrl: String!
   defaultBranch: String
   worktreeNamePrefix: String
-  setupCommands: [String!]
 }
 
 input UpdateProjectInput {
@@ -289,7 +287,6 @@ input UpdateProjectInput {
   gitUrl: String!
   defaultBranch: String!
   worktreeNamePrefix: String!
-  setupCommands: [String!]
 }
 
 input AgentRuntimeEnvVarInput {

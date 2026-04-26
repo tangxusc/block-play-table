@@ -132,7 +132,6 @@ type ComplexityRoot struct {
 		GitURL             func(childComplexity int) int
 		ID                 func(childComplexity int) int
 		Name               func(childComplexity int) int
-		SetupCommands      func(childComplexity int) int
 		UpdatedAt          func(childComplexity int) int
 		Version            func(childComplexity int) int
 		WorktreeNamePrefix func(childComplexity int) int
@@ -782,12 +781,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Project.Name(childComplexity), true
-	case "Project.setupCommands":
-		if e.ComplexityRoot.Project.SetupCommands == nil {
-			break
-		}
-
-		return e.ComplexityRoot.Project.SetupCommands(childComplexity), true
 	case "Project.updatedAt":
 		if e.ComplexityRoot.Project.UpdatedAt == nil {
 			break
@@ -4149,8 +4142,6 @@ func (ec *executionContext) fieldContext_Mutation_createProject(ctx context.Cont
 				return ec.fieldContext_Project_defaultBranch(ctx, field)
 			case "worktreeNamePrefix":
 				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
-			case "setupCommands":
-				return ec.fieldContext_Project_setupCommands(ctx, field)
 			case "archived":
 				return ec.fieldContext_Project_archived(ctx, field)
 			case "version":
@@ -4212,8 +4203,6 @@ func (ec *executionContext) fieldContext_Mutation_updateProject(ctx context.Cont
 				return ec.fieldContext_Project_defaultBranch(ctx, field)
 			case "worktreeNamePrefix":
 				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
-			case "setupCommands":
-				return ec.fieldContext_Project_setupCommands(ctx, field)
 			case "archived":
 				return ec.fieldContext_Project_archived(ctx, field)
 			case "version":
@@ -4275,8 +4264,6 @@ func (ec *executionContext) fieldContext_Mutation_archiveProject(ctx context.Con
 				return ec.fieldContext_Project_defaultBranch(ctx, field)
 			case "worktreeNamePrefix":
 				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
-			case "setupCommands":
-				return ec.fieldContext_Project_setupCommands(ctx, field)
 			case "archived":
 				return ec.fieldContext_Project_archived(ctx, field)
 			case "version":
@@ -4715,35 +4702,6 @@ func (ec *executionContext) _Project_worktreeNamePrefix(ctx context.Context, fie
 }
 
 func (ec *executionContext) fieldContext_Project_worktreeNamePrefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Project",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Project_setupCommands(ctx context.Context, field graphql.CollectedField, obj *model.Project) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Project_setupCommands,
-		func(ctx context.Context) (any, error) {
-			return obj.SetupCommands, nil
-		},
-		nil,
-		ec.marshalNString2ᚕstringᚄ,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Project_setupCommands(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Project",
 		Field:      field,
@@ -5246,8 +5204,6 @@ func (ec *executionContext) fieldContext_Query_project(ctx context.Context, fiel
 				return ec.fieldContext_Project_defaultBranch(ctx, field)
 			case "worktreeNamePrefix":
 				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
-			case "setupCommands":
-				return ec.fieldContext_Project_setupCommands(ctx, field)
 			case "archived":
 				return ec.fieldContext_Project_archived(ctx, field)
 			case "version":
@@ -5309,8 +5265,6 @@ func (ec *executionContext) fieldContext_Query_projects(ctx context.Context, fie
 				return ec.fieldContext_Project_defaultBranch(ctx, field)
 			case "worktreeNamePrefix":
 				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
-			case "setupCommands":
-				return ec.fieldContext_Project_setupCommands(ctx, field)
 			case "archived":
 				return ec.fieldContext_Project_archived(ctx, field)
 			case "version":
@@ -8999,7 +8953,7 @@ func (ec *executionContext) unmarshalInputCreateProjectInput(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "gitUrl", "defaultBranch", "worktreeNamePrefix", "setupCommands"}
+	fieldsInOrder := [...]string{"name", "gitUrl", "defaultBranch", "worktreeNamePrefix"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9034,13 +8988,6 @@ func (ec *executionContext) unmarshalInputCreateProjectInput(ctx context.Context
 				return it, err
 			}
 			it.WorktreeNamePrefix = data
-		case "setupCommands":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("setupCommands"))
-			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.SetupCommands = data
 		}
 	}
 	return it, nil
@@ -9560,7 +9507,7 @@ func (ec *executionContext) unmarshalInputUpdateProjectInput(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "gitUrl", "defaultBranch", "worktreeNamePrefix", "setupCommands"}
+	fieldsInOrder := [...]string{"id", "name", "gitUrl", "defaultBranch", "worktreeNamePrefix"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9602,13 +9549,6 @@ func (ec *executionContext) unmarshalInputUpdateProjectInput(ctx context.Context
 				return it, err
 			}
 			it.WorktreeNamePrefix = data
-		case "setupCommands":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("setupCommands"))
-			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.SetupCommands = data
 		}
 	}
 	return it, nil
@@ -10555,11 +10495,6 @@ func (ec *executionContext) _Project(ctx context.Context, sel ast.SelectionSet, 
 			}
 		case "worktreeNamePrefix":
 			out.Values[i] = ec._Project_worktreeNamePrefix(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
-		case "setupCommands":
-			out.Values[i] = ec._Project_setupCommands(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

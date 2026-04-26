@@ -15,7 +15,7 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
-	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo", SetupCommands: []string{"make setup"}})
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	if len(payload.AgentRuntimeEnv) != 1 || payload.AgentRuntimeEnv[0].Key != "TOKEN" || payload.AgentRuntimeEnv[0].Value != "secret" {
 		t.Fatalf("runtime env = %+v", payload.AgentRuntimeEnv)
 	}
-	if len(payload.Project.SetupCommands) != 1 || len(payload.Task.PreCommands) != 1 || len(payload.Task.PostCommands) != 1 {
+	if len(payload.Task.PreCommands) != 1 || len(payload.Task.PostCommands) != 1 {
 		t.Fatalf("payload commands = %+v %+v", payload.Project, payload.Task)
 	}
 }

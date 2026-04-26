@@ -599,7 +599,6 @@ Project
 - gitUrl
 - defaultBranch
 - worktreeNamePrefix
-- setupCommands
 - archived
 - createdAt
 - updatedAt
@@ -611,8 +610,7 @@ Project
 2. `UpdateGitUrl`
 3. `UpdateDefaultBranch`
 4. `UpdateWorktreeNamePrefix`
-5. `ConfigureSetupCommands`
-6. `ArchiveProject`
+5. `ArchiveProject`
 
 ### 5.5 Settings 聚合
 
@@ -922,7 +920,6 @@ type Project {
   gitUrl: String!
   defaultBranch: String!
   worktreeNamePrefix: String!
-  setupCommands: [String!]!
   archived: Boolean!
   createdAt: Time!
   updatedAt: Time!
@@ -1064,8 +1061,7 @@ Worker -> Manager
     "id": "project_001",
     "gitUrl": "git@github.com:example/block-play-table.git",
     "defaultBranch": "main",
-    "worktreeNamePrefix": "block-play-table",
-    "setupCommands": ["git status"]
+    "worktreeNamePrefix": "block-play-table"
   },
   "agentRuntimeEnv": [
     {
@@ -1161,7 +1157,6 @@ PostgreSQL Implementation
 | `git_url` | string | Git 仓库地址 |
 | `default_branch` | string | 默认分支 |
 | `worktree_name_prefix` | string | Git Worktree 名称前缀 |
-| `setup_commands` | json | 初始化命令 |
 | `archived` | boolean | 是否归档 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
@@ -1550,8 +1545,6 @@ project:
   git_url: "git@github.com:example/block-play-table.git"
   default_branch: "main"
   worktree_name_prefix: "block-play-table"
-  setup_commands:
-    - "git status"
 ```
 
 ### 14.3 Worker 配置
@@ -1569,10 +1562,6 @@ worker:
   supported_agents:
     - "codex"
     - "claude"
-
-commands:
-  default_setup:
-    - "git status"
 ```
 
 ## 15. 推荐开发里程碑

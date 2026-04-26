@@ -184,9 +184,6 @@ Future<bool?> showProjectFormDialog(
   final prefix = TextEditingController(
     text: project?.worktreeNamePrefix ?? 'block-play-table',
   );
-  final setupCommands = TextEditingController(
-    text: project?.setupCommands.join('\n') ?? '',
-  );
   return showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -228,13 +225,6 @@ Future<bool?> showProjectFormDialog(
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: setupCommands,
-                decoration: const InputDecoration(labelText: 'Setup commands'),
-                minLines: 2,
-                maxLines: 5,
-              ),
             ],
           ),
         ),
@@ -257,7 +247,6 @@ Future<bool?> showProjectFormDialog(
                 defaultBranch: defaultBranch.text.trim().isEmpty
                     ? 'main'
                     : defaultBranch.text.trim(),
-                setupCommands: stringList(setupCommands.text),
               );
             } else {
               await apiClient.updateProject(
@@ -269,7 +258,6 @@ Future<bool?> showProjectFormDialog(
                       ? 'main'
                       : defaultBranch.text.trim(),
                   worktreeNamePrefix: prefix.text.trim(),
-                  setupCommands: stringList(setupCommands.text),
                   archived: project.archived,
                 ),
               );

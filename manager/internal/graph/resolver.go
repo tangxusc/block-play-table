@@ -73,7 +73,6 @@ func toModelProject(project *domain.Project) *model.Project {
 		GitURL:             project.GitURL,
 		DefaultBranch:      project.DefaultBranch,
 		WorktreeNamePrefix: project.WorktreeNamePrefix,
-		SetupCommands:      append([]string(nil), project.SetupCommands...),
 		Archived:           project.Archived,
 		Version:            project.Version,
 		CreatedAt:          project.CreatedAt,
