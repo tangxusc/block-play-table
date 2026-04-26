@@ -285,7 +285,28 @@ void main() {
 
     expect(apiClient.detailFetches, greaterThan(1));
     expect(find.text('COMPLETED'), findsWidgets);
+    expect(find.text('Logs'), findsOneWidget);
+    expect(find.text('Conversation'), findsOneWidget);
+    expect(find.text('Domain events'), findsOneWidget);
+    final tabLabels = tester
+        .widgetList<Tab>(find.byType(Tab))
+        .map((tab) => tab.text)
+        .toList();
+    expect(tabLabels, ['Conversation', 'Logs', 'Domain events']);
+    expect(
+        find.textContaining('conversation from subscription'), findsOneWidget);
+    expect(find.textContaining('done from subscription'), findsNothing);
+    expect(find.textContaining('TaskCompleted v2: {}'), findsNothing);
+
+    await tester.tap(find.text('Logs'));
+    await tester.pumpAndSettle();
+
     expect(find.textContaining('done from subscription'), findsOneWidget);
+
+    await tester.tap(find.text('Domain events'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('TaskCompleted v2: {}'), findsOneWidget);
   });
 
   testWidgets('settings no longer exposes agent runtime env controls', (
@@ -490,7 +511,14 @@ class FakeApiClient extends ApiClient {
               TaskLogItem(stream: 'stdout', content: 'done from subscription'),
             ]
           : const [],
-      conversations: const [],
+      conversations: _completedDetail
+          ? const [
+              ConversationItem(
+                role: 'assistant',
+                content: 'conversation from subscription',
+              ),
+            ]
+          : const [],
       events: _completedDetail
           ? const [
               DomainEventItem(

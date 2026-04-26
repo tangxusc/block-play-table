@@ -352,7 +352,8 @@ class _TaskCard extends StatelessWidget {
                 runSpacing: 6,
                 children: [
                   StatusPill(value: task.status),
-                  if (task.agentType.isNotEmpty) StatusPill(value: task.agentType),
+                  if (task.agentType.isNotEmpty)
+                    StatusPill(value: task.agentType),
                 ],
               ),
               if ((task.workerId ?? '').isNotEmpty) ...[
@@ -1017,7 +1018,9 @@ class _TaskDetailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final task = detail.task;
-    return SingleChildScrollView(
+    return DefaultTabController(
+      initialIndex: 0,
+      length: 3,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1036,31 +1039,42 @@ class _TaskDetailBody extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          _RuntimeList(
-            title: 'Logs',
-            icon: Icons.article_outlined,
-            children: detail.logs
-                .map((item) => '[${item.stream}] ${item.content}')
-                .toList(),
+          const TabBar(
+            tabs: [
+              Tab(
+                icon: Icon(Icons.chat_bubble_outline),
+                text: 'Conversation',
+              ),
+              Tab(icon: Icon(Icons.article_outlined), text: 'Logs'),
+              Tab(
+                icon: Icon(Icons.event_note_outlined),
+                text: 'Domain events',
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          _RuntimeList(
-            title: 'Conversation',
-            icon: Icons.chat_bubble_outline,
-            children: detail.conversations
-                .map((item) => '${item.role}: ${item.content}')
-                .toList(),
-          ),
-          const SizedBox(height: 12),
-          _RuntimeList(
-            title: 'Domain events',
-            icon: Icons.event_note_outlined,
-            children: detail.events
-                .map(
-                  (item) =>
-                      '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
-                )
-                .toList(),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _RuntimeTab(
+                  children: detail.conversations
+                      .map((item) => '${item.role}: ${item.content}')
+                      .toList(),
+                ),
+                _RuntimeTab(
+                  children: detail.logs
+                      .map((item) => '[${item.stream}] ${item.content}')
+                      .toList(),
+                ),
+                _RuntimeTab(
+                  children: detail.events
+                      .map(
+                        (item) =>
+                            '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
+                      )
+                      .toList(),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1068,15 +1082,23 @@ class _TaskDetailBody extends StatelessWidget {
   }
 }
 
-class _RuntimeList extends StatelessWidget {
-  const _RuntimeList({
-    required this.title,
-    required this.icon,
-    required this.children,
-  });
+class _RuntimeTab extends StatelessWidget {
+  const _RuntimeTab({required this.children});
 
-  final String title;
-  final IconData icon;
+  final List<String> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 12),
+      child: _RuntimeList(children: children),
+    );
+  }
+}
+
+class _RuntimeList extends StatelessWidget {
+  const _RuntimeList({required this.children});
+
   final List<String> children;
 
   @override
@@ -1091,14 +1113,6 @@ class _RuntimeList extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 18),
-                const SizedBox(width: 8),
-                Text(title, style: Theme.of(context).textTheme.titleSmall),
-              ],
-            ),
-            const SizedBox(height: 8),
             if (children.isEmpty)
               Text('No entries', style: Theme.of(context).textTheme.bodySmall),
             ...children.map(
