@@ -65,7 +65,6 @@ TaskItem _task(String id, String status) => TaskItem(
       projectId: 'project-1',
       agentType: 'codex',
       baseBranch: 'main',
-      targetBranch: 'task/$id',
       preCommands: const [],
       postCommands: const [],
       createdAt: '2026-04-25T00:00:00Z',

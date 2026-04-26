@@ -61,7 +61,7 @@ class ApiClient {
               title
               status
               tasks {
-                id title description status projectId agentType baseBranch targetBranch
+                id title description status projectId agentType baseBranch
                 workerId worktreePath preCommands postCommands result createdAt updatedAt
               }
             }
@@ -70,12 +70,12 @@ class ApiClient {
               date
               status
               task {
-                id title description status projectId agentType baseBranch targetBranch
+                id title description status projectId agentType baseBranch
                 workerId worktreePath preCommands postCommands result createdAt updatedAt
               }
             }
             tasks {
-              id title description status projectId agentType baseBranch targetBranch
+              id title description status projectId agentType baseBranch
               workerId worktreePath preCommands postCommands result createdAt updatedAt
             }
           }
@@ -159,7 +159,7 @@ class ApiClient {
         r'''
         query Task($id: ID!) {
           task(id: $id) {
-            id title description status projectId agentType baseBranch targetBranch
+            id title description status projectId agentType baseBranch
             workerId worktreePath preCommands postCommands result createdAt updatedAt
           }
         }
@@ -299,31 +299,31 @@ class ApiClient {
     required String title,
     String description = '',
     required String projectId,
-    required String agentType,
+    String? workerId,
+    String? agentType,
     String baseBranch = 'main',
-    String targetBranch = '',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
-  }) =>
-      graphQL(
+  }) {
+    final input = {
+      'title': title,
+      'description': description,
+      'projectId': projectId,
+      if ((workerId ?? '').isNotEmpty) 'workerId': workerId,
+      if ((agentType ?? '').isNotEmpty) 'agentType': agentType,
+      'baseBranch': baseBranch,
+      'preCommands': preCommands,
+      'postCommands': postCommands,
+    };
+    return graphQL(
         r'''
         mutation CreateTask($input: CreateTaskInput!) {
           createTask(input: $input) { id }
         }
         ''',
-        variables: {
-          'input': {
-            'title': title,
-            'description': description,
-            'projectId': projectId,
-            'agentType': agentType,
-            'baseBranch': baseBranch,
-            'targetBranch': targetBranch.isEmpty ? 'task/$title' : targetBranch,
-            'preCommands': preCommands,
-            'postCommands': postCommands,
-          },
-        },
+        variables: {'input': input},
       ).then((_) {});
+  }
 
   Future<void> updateTask(TaskItem task) => graphQL(
         r'''
@@ -337,25 +337,33 @@ class ApiClient {
             'title': task.title,
             'description': task.description,
             'projectId': task.projectId,
-            'agentType': task.agentType,
+            'agentType': task.agentType.isEmpty ? null : task.agentType,
             'baseBranch': task.baseBranch,
-            'targetBranch': task.targetBranch,
             'preCommands': task.preCommands,
             'postCommands': task.postCommands,
           },
         },
       ).then((_) {});
 
-  Future<void> assignWorker(String taskId, String workerId) => graphQL(
+  Future<void> assignWorker(
+    String taskId,
+    String workerId, {
+    String? agentType,
+  }) {
+    final input = {
+      'taskId': taskId,
+      'workerId': workerId,
+      if ((agentType ?? '').isNotEmpty) 'agentType': agentType,
+    };
+    return graphQL(
         r'''
         mutation AssignWorker($input: AssignWorkerInput!) {
           assignWorker(input: $input) { id }
         }
         ''',
-        variables: {
-          'input': {'taskId': taskId, 'workerId': workerId},
-        },
+        variables: {'input': input},
       ).then((_) {});
+  }
 
   Future<void> startTask(String taskId) => graphQL(
         r'''

@@ -28,8 +28,55 @@ void main() {
 
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('Create task'), findsOneWidget);
+      expect(find.text('Target branch'), findsNothing);
+      expect(find.text('Codex'), findsNothing);
+      expect(find.text('Unassigned'), findsOneWidget);
     },
   );
+
+  testWidgets('create task can save without worker or agent', (tester) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Agentless task');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.createdTaskTitle, 'Agentless task');
+    expect(apiClient.createdTaskWorkerId, isNull);
+    expect(apiClient.createdTaskAgentType, isNull);
+  });
+
+  testWidgets('selecting worker enables supported agent selection on create', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Worker task');
+    await tester.pump();
+    await tester.tap(find.text('Unassigned').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local worker').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Codex'), findsOneWidget);
+    expect(find.text('Claude'), findsNothing);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.createdTaskTitle, 'Worker task');
+    expect(apiClient.createdTaskWorkerId, 'worker-1');
+    expect(apiClient.createdTaskAgentType, 'codex');
+  });
 
   testWidgets('projects and workers create and edit through dialogs', (
     tester,
@@ -181,6 +228,9 @@ class FakeApiClient extends ApiClient {
   int boardFetches = 0;
   int detailFetches = 0;
   bool _completedDetail = false;
+  String? createdTaskTitle;
+  String? createdTaskWorkerId;
+  String? createdTaskAgentType;
 
   void emit(DomainEventItem event) => _events.add(event);
 
@@ -231,6 +281,22 @@ class FakeApiClient extends ApiClient {
   @override
   Future<SettingsData> fetchSettings() async =>
       SettingsData(agentRuntimeEnvVars: const []);
+
+  @override
+  Future<void> createTask({
+    required String title,
+    String description = '',
+    required String projectId,
+    String? workerId,
+    String? agentType,
+    String baseBranch = 'main',
+    List<String> preCommands = const [],
+    List<String> postCommands = const [],
+  }) async {
+    createdTaskTitle = title;
+    createdTaskWorkerId = workerId;
+    createdTaskAgentType = agentType;
+  }
 
   @override
   Stream<DomainEventItem> subscribeDomainEvents({
@@ -303,7 +369,6 @@ final _task = TaskItem(
   projectId: _project.id,
   agentType: 'codex',
   baseBranch: 'main',
-  targetBranch: 'task/refresh-board',
   preCommands: const [],
   postCommands: const [],
   createdAt: '2026-04-25T00:00:00Z',
@@ -318,7 +383,6 @@ final _completedTask = TaskItem(
   projectId: _project.id,
   agentType: 'codex',
   baseBranch: 'main',
-  targetBranch: 'task/refresh-board',
   preCommands: const [],
   postCommands: const [],
   result: 'done',

@@ -38,12 +38,11 @@ func TestServiceCreatesAssignsStartsAndCompletesTask(t *testing.T) {
 		t.Fatalf("WorkerConnected returned error: %v", err)
 	}
 	task, err := service.CreateTask(ctx, CreateTaskInput{
-		Title:        "Implement",
-		Description:  "Do it",
-		ProjectID:    project.ID,
-		AgentType:    domain.AgentCodex,
-		BaseBranch:   "main",
-		TargetBranch: "task/implement",
+		Title:       "Implement",
+		Description: "Do it",
+		ProjectID:   project.ID,
+		AgentType:   domain.AgentCodex,
+		BaseBranch:  "main",
 	})
 	if err != nil {
 		t.Fatalf("CreateTask returned error: %v", err)
@@ -147,6 +146,194 @@ func TestServiceStartTaskAutoAssignsAvailableWorker(t *testing.T) {
 	}
 }
 
+func TestServiceCreatesUnassignedTaskWithoutAgent(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{
+		Name:               "Block Play Table",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "block-play-table",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:     "Agentless",
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+	if task.Status != domain.TaskCreated {
+		t.Fatalf("status = %s, want CREATED", task.Status)
+	}
+	if task.AgentType != "" {
+		t.Fatalf("agent type = %q, want empty", task.AgentType)
+	}
+}
+
+func TestServiceCreateTaskWithWorkerAssignsImmediately(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{
+		Name:               "Block Play Table",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "block-play-table",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-create",
+		Name:            "creator",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/worker",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatalf("RegisterWorker returned error: %v", err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatalf("WorkerConnected returned error: %v", err)
+	}
+
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:      "Assigned on create",
+		ProjectID:  project.ID,
+		WorkerID:   worker.ID,
+		AgentType:  domain.AgentCodex,
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+	if task.Status != domain.TaskAssigned || task.WorkerID != worker.ID {
+		t.Fatalf("task assignment = status %s worker %q, want ASSIGNED %q", task.Status, task.WorkerID, worker.ID)
+	}
+	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
+	if err != nil {
+		t.Fatalf("Worker returned error: %v", err)
+	}
+	if loadedWorker.CurrentTaskID != task.ID {
+		t.Fatalf("worker current task = %q, want %q", loadedWorker.CurrentTaskID, task.ID)
+	}
+}
+
+func TestServiceCreateTaskWithWorkerRequiresAgent(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{
+		Name:               "Block Play Table",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "block-play-table",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-create",
+		Name:            "creator",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/worker",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatalf("RegisterWorker returned error: %v", err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatalf("WorkerConnected returned error: %v", err)
+	}
+
+	if _, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:     "Missing agent",
+		ProjectID: project.ID,
+		WorkerID:  worker.ID,
+	}); err == nil {
+		t.Fatal("CreateTask with worker but no agent should fail")
+	}
+}
+
+func TestServiceAssignsAgentlessTaskWithAgent(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{
+		Name:               "Block Play Table",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "block-play-table",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-agentless",
+		Name:            "agentless",
+		SupportedAgents: []domain.AgentType{domain.AgentClaude},
+		WorkDir:         "/tmp/worker",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatalf("RegisterWorker returned error: %v", err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatalf("WorkerConnected returned error: %v", err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:     "Agentless",
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+
+	assigned, err := service.AssignWorker(ctx, task.ID, worker.ID, domain.AgentClaude)
+	if err != nil {
+		t.Fatalf("AssignWorker returned error: %v", err)
+	}
+	if assigned.Status != domain.TaskAssigned || assigned.AgentType != domain.AgentClaude {
+		t.Fatalf("assigned task = status %s agent %q, want ASSIGNED claude", assigned.Status, assigned.AgentType)
+	}
+}
+
+func TestServiceRejectsAgentlessTaskStart(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{
+		Name:               "Block Play Table",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "block-play-table",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:     "Agentless",
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+
+	if _, _, err := service.StartTask(ctx, task.ID); err == nil {
+		t.Fatal("StartTask should reject agentless task")
+	}
+}
+
 func TestServiceInterruptsTaskAndReleasesWorkerWhenWorkerConfirms(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
@@ -216,7 +403,7 @@ func seedRunningTask(t *testing.T, ctx context.Context, service *Service) *domai
 	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main", TargetBranch: "task/t"})
+	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main"})
 	if err != nil {
 		t.Fatal(err)
 	}

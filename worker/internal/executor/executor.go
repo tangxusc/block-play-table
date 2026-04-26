@@ -205,10 +205,7 @@ func (e *Executor) prepareWorktree(ctx context.Context, payload protocol.TaskSta
 		if err := e.ensureRepositoryCache(ctx, payload.Project.GitURL, cacheDir); err != nil {
 			return "", err
 		}
-		branch := payload.Task.TargetBranch
-		if branch == "" {
-			branch = "task/" + payload.Task.ID
-		}
+		branch := "task/" + payload.Task.ID
 		base := payload.Task.BaseBranch
 		if base == "" {
 			base = payload.Project.DefaultBranch

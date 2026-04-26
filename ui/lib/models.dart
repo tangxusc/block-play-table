@@ -114,7 +114,6 @@ class TaskItem {
     required this.projectId,
     required this.agentType,
     required this.baseBranch,
-    required this.targetBranch,
     required this.preCommands,
     required this.postCommands,
     required this.createdAt,
@@ -132,7 +131,6 @@ class TaskItem {
     projectId: json['projectId'] as String? ?? '',
     agentType: json['agentType'] as String? ?? '',
     baseBranch: json['baseBranch'] as String? ?? 'main',
-    targetBranch: json['targetBranch'] as String? ?? '',
     preCommands: stringList(json['preCommands']),
     postCommands: stringList(json['postCommands']),
     createdAt: json['createdAt'] as String? ?? '',
@@ -149,7 +147,6 @@ class TaskItem {
   final String projectId;
   final String agentType;
   final String baseBranch;
-  final String targetBranch;
   final List<String> preCommands;
   final List<String> postCommands;
   final String createdAt;

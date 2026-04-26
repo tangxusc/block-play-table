@@ -143,8 +143,8 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	}
 	_, err = s.db.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "target_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "target_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
 	),
 		task.ID,
 		task.Title,
@@ -154,7 +154,6 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		nullableString(task.WorkerID),
 		task.AgentType,
 		task.BaseBranch,
-		task.TargetBranch,
 		nullableString(task.WorktreePath),
 		preCommands,
 		postCommands,
@@ -167,7 +166,7 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, target_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -179,7 +178,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, target_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -672,7 +671,7 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var result sql.NullString
 	var preCommands string
 	var postCommands string
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &task.TargetBranch, &worktreePath, &preCommands, &postCommands, &result, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &worktreePath, &preCommands, &postCommands, &result, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)

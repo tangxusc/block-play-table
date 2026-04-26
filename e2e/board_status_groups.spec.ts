@@ -139,7 +139,6 @@ test("board kanban groups task statuses into three visual columns", async ({
         projectId: project.id,
         agentType: "codex",
         baseBranch: "main",
-        targetBranch: `task/board-groups-pending-${suffix}`,
       },
     },
   );
@@ -152,9 +151,9 @@ test("board kanban groups task statuses into three visual columns", async ({
       input: {
         title: `Board Groups Running ${suffix}`,
         projectId: project.id,
+        workerId,
         agentType: "codex",
         baseBranch: "main",
-        targetBranch: `task/board-groups-running-${suffix}`,
       },
     },
   );
@@ -168,7 +167,6 @@ test("board kanban groups task statuses into three visual columns", async ({
         projectId: project.id,
         agentType: "codex",
         baseBranch: "main",
-        targetBranch: `task/board-groups-complete-${suffix}`,
       },
     },
   );

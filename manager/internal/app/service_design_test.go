@@ -62,7 +62,7 @@ func TestServiceDesignCRUDFilteringAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := service.UpdateTask(ctx, UpdateTaskInput{ID: task.ID, Title: "T2", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "develop", TargetBranch: "task/t2", PreCommands: []string{"make pre"}})
+	updated, err := service.UpdateTask(ctx, UpdateTaskInput{ID: task.ID, Title: "T2", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "develop", PreCommands: []string{"make pre"}})
 	if err != nil {
 		t.Fatalf("UpdateTask returned error: %v", err)
 	}

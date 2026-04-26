@@ -33,7 +33,7 @@ func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
 	}
 
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status } }`, map[string]any{
-		"input": map[string]any{"title": "Implement", "projectId": projectID, "agentType": "codex", "baseBranch": "main", "targetBranch": "task/implement"},
+		"input": map[string]any{"title": "Implement", "projectId": projectID, "agentType": "codex", "baseBranch": "main"},
 	})
 	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
 	assigned := postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { status workerId } }`, map[string]any{
@@ -46,6 +46,47 @@ func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
 	tasks := postGraphQL(t, server.URL, `query { tasks { nodes { id title status } totalCount } }`, nil)
 	if got := int(tasks["data"].(map[string]any)["tasks"].(map[string]any)["totalCount"].(float64)); got != 1 {
 		t.Fatalf("tasks count = %d, want 1", got)
+	}
+}
+
+func TestServerGraphQLCreatesAgentlessAndWorkerAssignedTasks(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "Block Play Table", "gitUrl": "file:///tmp/repo", "defaultBranch": "main", "worktreeNamePrefix": "bpt"},
+	})
+	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
+	postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }`, map[string]any{
+		"input": map[string]any{"id": "worker-1", "name": "local", "supportedAgents": []any{"codex"}, "workDir": "/tmp/worker", "projectBindingMode": "ALL_PROJECTS"},
+	})
+
+	agentless := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status agentType workerId } }`, map[string]any{
+		"input": map[string]any{"title": "Agentless", "projectId": projectID},
+	})
+	agentlessTask := agentless["data"].(map[string]any)["createTask"].(map[string]any)
+	if got := agentlessTask["status"]; got != string(domain.TaskCreated) {
+		t.Fatalf("agentless status = %v, want CREATED", got)
+	}
+	if got := agentlessTask["agentType"]; got != nil {
+		t.Fatalf("agentless agentType = %v, want nil", got)
+	}
+
+	assigned := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status agentType workerId } }`, map[string]any{
+		"input": map[string]any{"title": "Assigned", "projectId": projectID, "workerId": "worker-1", "agentType": "codex"},
+	})
+	assignedTask := assigned["data"].(map[string]any)["createTask"].(map[string]any)
+	if got := assignedTask["status"]; got != string(domain.TaskAssigned) {
+		t.Fatalf("assigned status = %v, want ASSIGNED", got)
+	}
+	if got := assignedTask["agentType"]; got != "codex" {
+		t.Fatalf("assigned agentType = %v, want codex", got)
+	}
+	if got := assignedTask["workerId"]; got != "worker-1" {
+		t.Fatalf("assigned workerId = %v, want worker-1", got)
 	}
 }
 

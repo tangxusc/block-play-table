@@ -207,7 +207,7 @@ func TestPrepareWorktreeClonesGitRepository(t *testing.T) {
 
 	exec := NewExecutor(Config{WorkDir: filepath.Join(root, "worker")})
 	worktree, err := exec.prepareWorktree(context.Background(), protocol.TaskStartPayload{
-		Task:    protocol.TaskPayload{ID: "task-1", TargetBranch: "task/t"},
+		Task:    protocol.TaskPayload{ID: "task-1"},
 		Project: protocol.ProjectPayload{GitURL: repo, DefaultBranch: "main", WorktreeNamePrefix: "p"},
 	})
 	if err != nil {
@@ -217,7 +217,9 @@ func TestPrepareWorktreeClonesGitRepository(t *testing.T) {
 		t.Fatalf("cloned README missing: %v", err)
 	}
 	runGit(t, worktree, "rev-parse", "--is-inside-work-tree")
-	runGit(t, worktree, "branch", "--show-current")
+	if branch := gitOutput(t, worktree, "branch", "--show-current"); branch != "task/task-1" {
+		t.Fatalf("worktree branch = %q, want task/task-1", branch)
+	}
 }
 
 func TestResolveGitRefAndRepositoryCacheErrors(t *testing.T) {
@@ -293,4 +295,15 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v: %s", args, err, out)
 	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }

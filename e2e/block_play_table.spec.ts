@@ -149,13 +149,13 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
       input: {
         title: taskTitle,
         projectId: project.id,
+        workerId,
         agentType: "codex",
         baseBranch: "main",
-        targetBranch: `task/${suffix}`,
       },
     },
   );
-  expect(createdTask.createTask.status).toBe("CREATED");
+  expect(createdTask.createTask.status).toBe("ASSIGNED");
 
   await expect
     .poll(async () => {
@@ -165,7 +165,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
       );
       return data.tasks.nodes.some(
         (task: { title: string; status: string }) =>
-          task.title === taskTitle && task.status === "CREATED",
+          task.title === taskTitle && task.status === "ASSIGNED",
       );
     })
     .toBeTruthy();
