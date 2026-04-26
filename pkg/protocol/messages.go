@@ -10,6 +10,7 @@ type MessageType string
 
 const (
 	MessageTaskStart          MessageType = "TASK_START"
+	MessageTaskContinue       MessageType = "TASK_CONTINUE"
 	MessageTaskInterrupt      MessageType = "TASK_INTERRUPT"
 	MessageTaskCancel         MessageType = "TASK_CANCEL"
 	MessageWorkerConfigUpdate MessageType = "WORKER_CONFIG_UPDATE"
@@ -43,6 +44,16 @@ type TaskStartPayload struct {
 	Settings        map[string]string `json:"settings,omitempty"`
 }
 
+type TaskContinuePayload struct {
+	Task            TaskPayload       `json:"task"`
+	Project         ProjectPayload    `json:"project"`
+	Message         string            `json:"message"`
+	AgentSessionID  string            `json:"agentSessionId"`
+	WorktreePath    string            `json:"worktreePath"`
+	AgentRuntimeEnv []RuntimeEnvVar   `json:"agentRuntimeEnv"`
+	Settings        map[string]string `json:"settings,omitempty"`
+}
+
 type TaskPayload struct {
 	ID           string           `json:"id"`
 	Title        string           `json:"title"`
@@ -67,13 +78,14 @@ type RuntimeEnvVar struct {
 }
 
 type WorkerEvent struct {
-	MessageID string            `json:"messageId"`
-	Type      MessageType       `json:"type"`
-	WorkerID  string            `json:"workerId,omitempty"`
-	TaskID    string            `json:"taskId,omitempty"`
-	Stream    string            `json:"stream,omitempty"`
-	Content   string            `json:"content,omitempty"`
-	Result    string            `json:"result,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-	CreatedAt time.Time         `json:"createdAt"`
+	MessageID      string            `json:"messageId"`
+	Type           MessageType       `json:"type"`
+	WorkerID       string            `json:"workerId,omitempty"`
+	TaskID         string            `json:"taskId,omitempty"`
+	Stream         string            `json:"stream,omitempty"`
+	Content        string            `json:"content,omitempty"`
+	Result         string            `json:"result,omitempty"`
+	AgentSessionID string            `json:"agentSessionId,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	CreatedAt      time.Time         `json:"createdAt"`
 }

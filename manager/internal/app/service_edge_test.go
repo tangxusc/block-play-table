@@ -97,6 +97,62 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	}
 }
 
+func TestServiceContinueTaskValidatesBeforeAppendingUserMessage(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedCompletedTaskWithSession(t, ctx, service)
+	task.AgentSessionID = ""
+	if err := service.Store().SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ContinueTask missing session err = %v, want conflict", err)
+	}
+	messages, err := service.Store().TaskConversations(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("messages = %+v, want none after rejected continuation", messages)
+	}
+	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "   "}); err == nil {
+		t.Fatal("ContinueTask should reject blank messages")
+	}
+}
+
+func TestServiceContinueTaskRequiresOriginalWorkerOnlineAndIdle(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedCompletedTaskWithSession(t, ctx, service)
+	worker, err := service.Store().Worker(ctx, task.WorkerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.MarkOffline(time.Date(2026, 4, 25, 10, 1, 0, 0, time.UTC))
+	if err := service.Store().SaveWorker(ctx, worker); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ContinueTask offline worker err = %v, want conflict", err)
+	}
+
+	worker.Connect(time.Date(2026, 4, 25, 10, 2, 0, 0, time.UTC))
+	if err := worker.AssignTask("other-task", time.Date(2026, 4, 25, 10, 2, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().SaveWorker(ctx, worker); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ContinueTask busy worker err = %v, want conflict", err)
+	}
+}
+
 func TestServiceDuplicateRuntimeMessagesReturnExistingTask(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())

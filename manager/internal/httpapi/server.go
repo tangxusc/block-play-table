@@ -287,11 +287,15 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 		if err := json.Unmarshal(envelope.Payload, &event); err != nil {
 			return err
 		}
-		role := event.Metadata["role"]
+		metadata := cloneMetadata(event.Metadata)
+		if event.AgentSessionID != "" {
+			metadata["agentSessionId"] = event.AgentSessionID
+		}
+		role := metadata["role"]
 		if role == "" {
 			role = "assistant"
 		}
-		_, err := g.service.ApplyWorkerConversationWithMetadata(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), role, event.Content, event.Metadata)
+		_, err := g.service.ApplyWorkerConversationWithMetadata(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), role, event.Content, metadata)
 		return err
 	case protocol.MessageTaskWaitingInput:
 		var event protocol.WorkerEvent
@@ -305,12 +309,12 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 		if result == "" {
 			result = event.Content
 		}
-		_, err := g.service.ApplyWorkerTaskResult(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), result)
+		_, err := g.service.ApplyWorkerTaskResult(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), result, event.AgentSessionID)
 		return err
 	case protocol.MessageTaskCompleted:
 		var event protocol.WorkerEvent
 		_ = json.Unmarshal(envelope.Payload, &event)
-		_, err := g.service.ApplyWorkerTaskCompleted(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Result)
+		_, err := g.service.ApplyWorkerTaskCompleted(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Result, event.AgentSessionID)
 		return err
 	case protocol.MessageTaskFailed:
 		var event protocol.WorkerEvent
@@ -342,6 +346,17 @@ func (g *WorkerGateway) SendTaskStart(workerID, taskID string, payload protocol.
 	return g.send(workerID, protocol.Envelope{
 		MessageID: "msg_" + uuid.NewString(),
 		Type:      protocol.MessageTaskStart,
+		WorkerID:  workerID,
+		TaskID:    taskID,
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	})
+}
+
+func (g *WorkerGateway) SendTaskContinue(workerID, taskID string, payload protocol.TaskContinuePayload) error {
+	return g.send(workerID, protocol.Envelope{
+		MessageID: "msg_" + uuid.NewString(),
+		Type:      protocol.MessageTaskContinue,
 		WorkerID:  workerID,
 		TaskID:    taskID,
 		Timestamp: time.Now().UTC(),
@@ -383,4 +398,12 @@ func (g *WorkerGateway) send(workerID string, envelope protocol.Envelope) error 
 		return fmt.Errorf("worker %s is not connected", workerID)
 	}
 	return conn.writeJSON(envelope)
+}
+
+func cloneMetadata(metadata map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range metadata {
+		out[key] = value
+	}
+	return out
 }

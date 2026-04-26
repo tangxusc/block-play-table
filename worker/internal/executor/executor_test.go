@@ -123,6 +123,72 @@ func TestExecutorInterruptStopsLongRunningAgent(t *testing.T) {
 	}
 }
 
+func TestExecutorContinuesExistingAgentSessionWithoutCommandsOrWorktree(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "existing-worktree")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := &recordingContinuationAgent{t: t}
+	var events []protocol.WorkerEvent
+	exec := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  root,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentCodex: agent,
+		},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+	})
+
+	err := exec.Continue(context.Background(), protocol.TaskContinuePayload{
+		Task:           protocol.TaskPayload{ID: "task-continue", Title: "T", AgentType: domain.AgentCodex, PreCommands: []string{"printf pre > pre.txt"}, PostCommands: []string{"printf post > post.txt"}},
+		Message:        "follow up",
+		AgentSessionID: "session-1",
+		WorktreePath:   worktree,
+	})
+	if err != nil {
+		t.Fatalf("Continue returned error: %v", err)
+	}
+	if !agent.continued {
+		t.Fatal("agent Continue was not called")
+	}
+	for _, name := range []string{"pre.txt", "post.txt"} {
+		if _, err := os.Stat(filepath.Join(worktree, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should not be created during continuation: %v", name, err)
+		}
+	}
+	if len(events) < 2 || events[0].Type != protocol.MessageTaskStarted || events[0].Content != worktree {
+		t.Fatalf("events should start existing worktree, got %+v", events)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.MessageTaskCompleted || last.Result != "continued result" || last.AgentSessionID != "session-1" {
+		t.Fatalf("last event = %+v", last)
+	}
+}
+
+type recordingContinuationAgent struct {
+	t         *testing.T
+	continued bool
+}
+
+func (a *recordingContinuationAgent) Run(context.Context, AgentInput, func(AgentEvent)) error {
+	a.t.Fatal("Run should not be called for continuation")
+	return nil
+}
+
+func (a *recordingContinuationAgent) Continue(ctx context.Context, input AgentContinuationInput, emit func(AgentEvent)) error {
+	a.continued = true
+	if input.AgentSessionID != "session-1" || input.Message != "follow up" || input.WorktreeDir == "" {
+		a.t.Fatalf("continuation input = %+v", input)
+	}
+	emit(AgentEvent{Type: AgentEventConversation, Content: "continued reply", AgentSessionID: input.AgentSessionID})
+	emit(AgentEvent{Type: AgentEventCompleted, Content: "continued result", AgentSessionID: input.AgentSessionID})
+	return nil
+}
+
 func TestExecutorInterruptStopsCommandAgentProcessTree(t *testing.T) {
 	root := t.TempDir()
 	agentPath := filepath.Join(root, "fake-agent")

@@ -21,21 +21,22 @@ const (
 )
 
 type Task struct {
-	ID           string     `json:"id"`
-	Title        string     `json:"title"`
-	Description  string     `json:"description"`
-	Status       TaskStatus `json:"status"`
-	ProjectID    string     `json:"projectId"`
-	WorkerID     string     `json:"workerId,omitempty"`
-	AgentType    AgentType  `json:"agentType"`
-	BaseBranch   string     `json:"baseBranch"`
-	WorktreePath string     `json:"worktreePath,omitempty"`
-	PreCommands  []string   `json:"preCommands"`
-	PostCommands []string   `json:"postCommands"`
-	Result       string     `json:"result,omitempty"`
-	Version      int        `json:"version"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID             string     `json:"id"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	Status         TaskStatus `json:"status"`
+	ProjectID      string     `json:"projectId"`
+	WorkerID       string     `json:"workerId,omitempty"`
+	AgentType      AgentType  `json:"agentType"`
+	BaseBranch     string     `json:"baseBranch"`
+	WorktreePath   string     `json:"worktreePath,omitempty"`
+	AgentSessionID string     `json:"agentSessionId,omitempty"`
+	PreCommands    []string   `json:"preCommands"`
+	PostCommands   []string   `json:"postCommands"`
+	Result         string     `json:"result,omitempty"`
+	Version        int        `json:"version"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 
 	pendingEvents []DomainEvent
 }
@@ -156,6 +157,7 @@ func (t *Task) Retry(now time.Time) error {
 		t.Status = TaskCreated
 		t.WorkerID = ""
 		t.WorktreePath = ""
+		t.AgentSessionID = ""
 		t.Result = ""
 		t.touch(now)
 		t.addEvent("TaskRetried", nil, now)
@@ -163,6 +165,24 @@ func (t *Task) Retry(now time.Time) error {
 	default:
 		return fmt.Errorf("%w: retry from %s", ErrInvalidTransition, t.Status)
 	}
+}
+
+func (t *Task) Continue(now time.Time) error {
+	if t.Status != TaskCompleted {
+		return fmt.Errorf("%w: continue from %s", ErrInvalidTransition, t.Status)
+	}
+	if t.WorkerID == "" {
+		return fmt.Errorf("%w: continue task %s without worker", ErrConflict, t.ID)
+	}
+	if t.WorktreePath == "" {
+		return fmt.Errorf("%w: continue task %s without worktree", ErrConflict, t.ID)
+	}
+	if t.AgentSessionID == "" {
+		return fmt.Errorf("%w: continue task %s without agent session", ErrConflict, t.ID)
+	}
+	t.Result = ""
+	t.transition(TaskStarting, now, "TaskContinueRequested", map[string]any{"workerId": t.WorkerID, "agentSessionId": t.AgentSessionID})
+	return nil
 }
 
 func (t *Task) MarkRunning(worktreePath string, now time.Time) error {
@@ -189,6 +209,15 @@ func (t *Task) AppendConversation(role, content string, now time.Time) error {
 	}
 	t.touch(now)
 	t.addEvent("TaskConversationAppended", map[string]any{"role": role, "content": content}, now)
+	return nil
+}
+
+func (t *Task) AppendUserConversation(content string, now time.Time) error {
+	if t.Status != TaskCompleted {
+		return fmt.Errorf("%w: append user conversation from %s", ErrInvalidTransition, t.Status)
+	}
+	t.touch(now)
+	t.addEvent("TaskConversationAppended", map[string]any{"role": "user", "content": content}, now)
 	return nil
 }
 
@@ -224,14 +253,15 @@ func (t *Task) MarkInterrupted(now time.Time) error {
 	return nil
 }
 
-func (t *Task) Complete(result string, now time.Time) error {
+func (t *Task) Complete(result string, now time.Time, agentSessionIDs ...string) error {
 	if t.Status != TaskRunning && t.Status != TaskStarting && t.Status != TaskWaitingInput {
 		return fmt.Errorf("%w: complete from %s", ErrInvalidTransition, t.Status)
 	}
+	t.setAgentSessionID(agentSessionIDs...)
 	if result != "" {
 		t.Result = result
 	}
-	t.transition(TaskCompleted, now, "TaskCompleted", map[string]any{"result": t.Result})
+	t.transition(TaskCompleted, now, "TaskCompleted", map[string]any{"result": t.Result, "agentSessionId": t.AgentSessionID})
 	return nil
 }
 
@@ -244,14 +274,23 @@ func (t *Task) Fail(reason string, now time.Time) error {
 	return nil
 }
 
-func (t *Task) RecordResult(result string, now time.Time) error {
+func (t *Task) RecordResult(result string, now time.Time, agentSessionIDs ...string) error {
 	if !t.canReceiveRuntimeEvent() {
 		return fmt.Errorf("%w: record result from %s", ErrInvalidTransition, t.Status)
 	}
+	t.setAgentSessionID(agentSessionIDs...)
 	t.Result = result
 	t.touch(now)
-	t.addEvent("TaskResultReported", map[string]any{"result": result}, now)
+	t.addEvent("TaskResultReported", map[string]any{"result": result, "agentSessionId": t.AgentSessionID}, now)
 	return nil
+}
+
+func (t *Task) RememberAgentSession(agentSessionID string, now time.Time) {
+	if agentSessionID == "" || t.AgentSessionID == agentSessionID {
+		return
+	}
+	t.AgentSessionID = agentSessionID
+	t.touch(now)
 }
 
 func (t *Task) Archive(now time.Time) error {
@@ -276,6 +315,15 @@ func (t *Task) RestoreEvents(events []DomainEvent) {
 
 func (t *Task) canReceiveRuntimeEvent() bool {
 	return t.Status == TaskStarting || t.Status == TaskRunning || t.Status == TaskWaitingInput || t.Status == TaskInterrupting
+}
+
+func (t *Task) setAgentSessionID(agentSessionIDs ...string) {
+	for _, agentSessionID := range agentSessionIDs {
+		if agentSessionID != "" {
+			t.AgentSessionID = agentSessionID
+			return
+		}
+	}
 }
 
 func (t *Task) transition(status TaskStatus, now time.Time, eventType string, payload any) {

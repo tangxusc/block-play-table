@@ -49,6 +49,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "002_drop_project_setup_commands", SQL: migrations.DropProjectSetupCommandsSQL},
 		{Version: "003_drop_task_target_branch", SQL: migrations.DropTaskBranchSQL},
 		{Version: "004_worker_agent_runtime_env", SQL: migrations.WorkerAgentRuntimeEnvSQL},
+		{Version: "005_task_agent_session", SQL: migrations.TaskAgentSessionSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -76,6 +77,13 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if !hasWorkerAgentEnv {
 		t.Fatal("worker_agent_env_vars.agent_type should exist after versioned migrations")
+	}
+	hasTaskAgentSession, err := sqliteTableHasColumn(ctx, sqlStore, "tasks", "agent_session_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTaskAgentSession {
+		t.Fatal("tasks.agent_session_id should exist after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -128,6 +136,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	task.AgentSessionID = "session-list"
 	if err := sqlStore.SaveProject(ctx, project); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +152,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if workers, err := sqlStore.Workers(ctx); err != nil || len(workers) != 1 || workers[0].StartupCommand != "boot" || workers[0].LastHeartbeatAt == nil || workers[0].EnabledRuntimeEnv(domain.AgentCodex)[0].Value != "secret" {
 		t.Fatalf("Workers = %+v, %v", workers, err)
 	}
-	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 {
+	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 || tasks[0].AgentSessionID != "session-list" {
 		t.Fatalf("Tasks = %+v, %v", tasks, err)
 	}
 	if err := sqlStore.AppendEvents(ctx, nil); err != nil {
@@ -291,6 +300,7 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if err != nil {
 		t.Fatal(err)
 	}
+	task.AgentSessionID = "session-sql"
 	if err := sqlStore.SaveTask(ctx, task); err != nil {
 		t.Fatalf("SaveTask returned error: %v", err)
 	}
@@ -319,7 +329,7 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if err != nil {
 		t.Fatalf("Task returned error: %v", err)
 	}
-	if loadedTask.Title != "SQL Task" || len(loadedTask.PreCommands) != 1 || loadedTask.PreCommands[0] != "make pre" {
+	if loadedTask.Title != "SQL Task" || len(loadedTask.PreCommands) != 1 || loadedTask.PreCommands[0] != "make pre" || loadedTask.AgentSessionID != "session-sql" {
 		t.Fatalf("loaded task = %+v", loadedTask)
 	}
 	loadedWorker, err := reopened.Worker(ctx, workerID)

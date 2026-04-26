@@ -364,6 +364,90 @@ func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
 	}
 }
 
+func TestGraphQLContinueTaskSendsTaskContinueToOriginalWorker(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "P", "gitUrl": "git://repo", "defaultBranch": "main", "worktreeNamePrefix": "p"},
+	})
+	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
+	postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }`, map[string]any{
+		"input": map[string]any{"id": "worker-continue", "name": "W", "supportedAgents": []any{"codex"}, "workDir": "/tmp/worker", "projectBindingMode": "ALL_PROJECTS"},
+	})
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-continue", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"title": "T", "projectId": projectID, "workerId": "worker-continue", "agentType": "codex"},
+	})
+	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
+	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var start rawEnvelope
+	if err := conn.ReadJSON(&start); err != nil {
+		t.Fatal(err)
+	}
+	if start.Type != protocol.MessageTaskStart {
+		t.Fatalf("start envelope = %+v", start)
+	}
+	sendWS(t, conn, protocol.Envelope{MessageID: "started-continue", Type: protocol.MessageTaskStarted, WorkerID: "worker-continue", TaskID: taskID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
+	sendWS(t, conn, protocol.Envelope{MessageID: "completed-continue", Type: protocol.MessageTaskCompleted, WorkerID: "worker-continue", TaskID: taskID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Result: "first result", AgentSessionID: "session-1"}})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		loaded, err := service.Task(context.Background(), taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Status == domain.TaskCompleted && loaded.AgentSessionID == "session-1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task after completion = %+v", loaded)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	continued := postGraphQL(t, server.URL, `mutation ContinueTask($input: ContinueTaskInput!) { continueTask(input: $input) { id status agentSessionId result } }`, map[string]any{
+		"input": map[string]any{"taskId": taskID, "message": "follow up"},
+	})
+	continuedTask := continued["data"].(map[string]any)["continueTask"].(map[string]any)
+	if continuedTask["status"] != string(domain.TaskStarting) || continuedTask["agentSessionId"] != "session-1" || continuedTask["result"] != nil {
+		t.Fatalf("continued task = %#v", continuedTask)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var continuation rawEnvelope
+	if err := conn.ReadJSON(&continuation); err != nil {
+		t.Fatal(err)
+	}
+	if continuation.Type != protocol.MessageTaskContinue || continuation.TaskID != taskID {
+		t.Fatalf("continue envelope = %+v", continuation)
+	}
+	var payload protocol.TaskContinuePayload
+	if err := json.Unmarshal(continuation.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.AgentSessionID != "session-1" || payload.Message != "follow up" || payload.WorktreePath != "/tmp/worktree" {
+		t.Fatalf("continue payload = %+v", payload)
+	}
+	messages := postGraphQL(t, server.URL, `query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { role content } }`, map[string]any{"taskId": taskID})
+	taskMessages := messages["data"].(map[string]any)["taskConversations"].([]any)
+	if len(taskMessages) != 1 || taskMessages[0].(map[string]any)["role"] != "user" {
+		t.Fatalf("task conversations = %#v", taskMessages)
+	}
+}
+
 func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore())
 	server := httptest.NewServer(NewServer(service, WithWorkerToken("secret")).Handler())

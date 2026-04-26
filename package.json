@@ -6,6 +6,7 @@
     "e2e:real-agents": "bash scripts/real_agent_e2e.sh"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "^1.49.0",
+    "ws": "^8.20.0"
   }
 }

@@ -143,6 +143,10 @@ func (s *SQLStore) execMigrationStatement(ctx context.Context, exec migrationExe
 		if handled {
 			return err
 		}
+		handled, err = s.execSQLiteAddColumnIfNotExists(ctx, exec, statement)
+		if handled {
+			return err
+		}
 	}
 	_, err := exec.ExecContext(ctx, statement)
 	return err
@@ -169,6 +173,36 @@ func (s *SQLStore) execSQLiteDropColumnIfExists(ctx context.Context, exec migrat
 		return true, nil
 	}
 	_, err = exec.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", quoteSQLiteIdentifier(table), quoteSQLiteIdentifier(column)))
+	return true, err
+}
+
+func (s *SQLStore) execSQLiteAddColumnIfNotExists(ctx context.Context, exec migrationExecutor, statement string) (bool, error) {
+	fields := strings.Fields(statement)
+	if len(fields) < 9 ||
+		!strings.EqualFold(fields[0], "ALTER") ||
+		!strings.EqualFold(fields[1], "TABLE") ||
+		!strings.EqualFold(fields[3], "ADD") ||
+		!strings.EqualFold(fields[4], "COLUMN") ||
+		!strings.EqualFold(fields[5], "IF") ||
+		!strings.EqualFold(fields[6], "NOT") ||
+		!strings.EqualFold(fields[7], "EXISTS") {
+		return false, nil
+	}
+	table := trimSQLIdentifier(fields[2])
+	column := trimSQLIdentifier(fields[8])
+	hasColumn, err := sqliteColumnExists(ctx, exec, table, column)
+	if err != nil {
+		return true, err
+	}
+	if hasColumn {
+		return true, nil
+	}
+	rest := strings.Join(fields[9:], " ")
+	sql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", quoteSQLiteIdentifier(table), quoteSQLiteIdentifier(column))
+	if rest != "" {
+		sql += " " + rest
+	}
+	_, err = exec.ExecContext(ctx, sql)
 	return true, err
 }
 
@@ -218,8 +252,8 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	}
 	_, err = s.db.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
 	),
 		task.ID,
 		task.Title,
@@ -230,6 +264,7 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		task.AgentType,
 		task.BaseBranch,
 		nullableString(task.WorktreePath),
+		nullableString(task.AgentSessionID),
 		preCommands,
 		postCommands,
 		nullableString(task.Result),
@@ -241,7 +276,7 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -253,7 +288,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -773,14 +808,16 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var task domain.Task
 	var workerID sql.NullString
 	var worktreePath sql.NullString
+	var agentSessionID sql.NullString
 	var result sql.NullString
 	var preCommands string
 	var postCommands string
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &worktreePath, &preCommands, &postCommands, &result, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)
 	task.WorktreePath = fromNullString(worktreePath)
+	task.AgentSessionID = fromNullString(agentSessionID)
 	task.Result = fromNullString(result)
 	if err := decodeJSON(preCommands, &task.PreCommands); err != nil {
 		return nil, err

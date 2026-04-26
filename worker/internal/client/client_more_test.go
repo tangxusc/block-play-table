@@ -166,6 +166,91 @@ func TestReadLoopHandlesPingTaskStartAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestReadLoopHandlesTaskContinue(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	serverConn := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	remote := <-serverConn
+	defer remote.Close()
+
+	client := New(Config{WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()})
+	client.conn = conn
+	client.executor = executor.NewExecutor(executor.Config{
+		WorkerID: "worker-1",
+		WorkDir:  t.TempDir(),
+		Agents: map[domain.AgentType]executor.Agent{
+			domain.AgentCodex: &clientContinuationAgent{},
+		},
+		Reporter: executor.ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			return client.SendWorkerEvent(ctx, event)
+		}),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.readLoop(ctx) }()
+
+	payload := protocol.TaskContinuePayload{
+		Task:           protocol.TaskPayload{ID: "task-continue", Title: "T", AgentType: domain.AgentCodex},
+		Message:        "follow up",
+		AgentSessionID: "session-1",
+		WorktreePath:   t.TempDir(),
+	}
+	writeRawEnvelope(t, remote, rawEnvelope{MessageID: "continue-1", Type: protocol.MessageTaskContinue, TaskID: "task-continue", Payload: mustRawJSON(t, payload)})
+	seen := map[protocol.MessageType]bool{}
+	deadline := time.Now().Add(2 * time.Second)
+	for !seen[protocol.MessageTaskAccepted] || !seen[protocol.MessageTaskStarted] || !seen[protocol.MessageTaskConversation] || !seen[protocol.MessageTaskCompleted] {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for continuation envelopes, seen=%v", seen)
+		}
+		envelope := readEnvelope(t, remote)
+		seen[envelope.Type] = true
+		if envelope.Type == protocol.MessageTaskCompleted {
+			var event protocol.WorkerEvent
+			raw, _ := json.Marshal(envelope.Payload)
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.AgentSessionID != "session-1" {
+				t.Fatalf("completed event = %+v", event)
+			}
+		}
+	}
+	cancel()
+	_ = remote.Close()
+	select {
+	case <-errCh:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not exit")
+	}
+}
+
+type clientContinuationAgent struct{}
+
+func (a *clientContinuationAgent) Run(context.Context, executor.AgentInput, func(executor.AgentEvent)) error {
+	return nil
+}
+
+func (a *clientContinuationAgent) Continue(ctx context.Context, input executor.AgentContinuationInput, emit func(executor.AgentEvent)) error {
+	emit(executor.AgentEvent{Type: executor.AgentEventConversation, Content: "continued", AgentSessionID: input.AgentSessionID})
+	emit(executor.AgentEvent{Type: executor.AgentEventCompleted, Content: "done", AgentSessionID: input.AgentSessionID})
+	return nil
+}
+
 func writeRawEnvelope(t *testing.T, conn *websocket.Conn, envelope rawEnvelope) {
 	t.Helper()
 	if err := conn.WriteJSON(envelope); err != nil {

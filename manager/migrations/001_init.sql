@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   agent_type TEXT NOT NULL,
   base_branch TEXT NOT NULL,
   worktree_path TEXT,
+  agent_session_id TEXT,
   pre_commands TEXT NOT NULL DEFAULT '[]',
   post_commands TEXT NOT NULL DEFAULT '[]',
   result TEXT,

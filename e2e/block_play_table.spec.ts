@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
+import WebSocket from "ws";
 
 const managerGraphQL =
   process.env.BPT_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
 const managerWorkerWs =
   process.env.BPT_MANAGER_WS_URL ||
   managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
-const managerWorkerToken = process.env.BPT_MANAGER_WS_TOKEN || "";
+const managerWorkerToken =
+  process.env.BPT_MANAGER_WS_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
 
 async function graphQL(
   request,
@@ -28,6 +30,36 @@ async function enableFlutterAccessibility(page) {
     await button.evaluate((element: HTMLElement) => element.click());
     await page.waitForTimeout(500);
   }
+}
+
+async function openTaskFromList(page, taskTitle: string) {
+  await page.getByRole("button", { name: "List" }).click();
+  await page.mouse.move(700, 520);
+  const taskRow = page.getByRole("button", { name: new RegExp(taskTitle) });
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await taskRow.isVisible().catch(() => false)) {
+      break;
+    }
+    await page.mouse.wheel(0, 900);
+    await page.waitForTimeout(150);
+  }
+  await expect(taskRow).toBeVisible();
+  await taskRow.click();
+}
+
+async function openWorkerEditor(page, workerName: string) {
+  await page.getByText("Workers").click();
+  await page.mouse.move(700, 520);
+  const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await workerGroup.isVisible().catch(() => false)) {
+      break;
+    }
+    await page.mouse.wheel(0, 900);
+    await page.waitForTimeout(150);
+  }
+  await expect(workerGroup).toBeVisible();
+  await workerGroup.getByRole("button", { name: "Edit worker" }).click();
 }
 
 function connectWorkerEvents(
@@ -123,6 +155,98 @@ function connectWorkerEvents(
   return { ready, done };
 }
 
+function connectWorkerForContinuation(workerId: string, taskId: string) {
+  const url = new URL(managerWorkerWs);
+  url.searchParams.set("worker_id", workerId);
+  if (managerWorkerToken) {
+    url.searchParams.set("token", managerWorkerToken);
+  }
+  const ws = new WebSocket(url.toString());
+  const now = () => new Date().toISOString();
+  const send = (
+    messageId: string,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ) => {
+    ws.send(
+      JSON.stringify({
+        messageId,
+        type,
+        workerId,
+        taskId,
+        timestamp: now(),
+        payload,
+      }),
+    );
+  };
+  const ready = new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(), { once: true });
+    ws.addEventListener("error", () => reject(new Error("worker websocket failed")), { once: true });
+  });
+  const firstDone = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timed out waiting for TASK_START")), 5000);
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_START") {
+        return;
+      }
+      send(`accepted-first-${taskId}`, "TASK_ACCEPTED");
+      send(`started-first-${taskId}`, "TASK_STARTED", {
+        taskId,
+        content: "/tmp/e2e-continuation-worktree",
+      });
+      send(`conversation-first-${taskId}`, "TASK_CONVERSATION", {
+        taskId,
+        content: "first agent response",
+        agentSessionId: "session-1",
+        metadata: { role: "assistant" },
+      });
+      send(`completed-first-${taskId}`, "TASK_COMPLETED", {
+        taskId,
+        result: "first result",
+        agentSessionId: "session-1",
+      });
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  const continued = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timed out waiting for TASK_CONTINUE")), 15000);
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_CONTINUE") {
+        return;
+      }
+      expect(envelope.payload.agentSessionId).toBe("session-1");
+      expect(envelope.payload.message).toBe("follow up from ui");
+      expect(envelope.payload.worktreePath).toBe("/tmp/e2e-continuation-worktree");
+      send(`accepted-continue-${taskId}`, "TASK_ACCEPTED");
+      send(`started-continue-${taskId}`, "TASK_STARTED", {
+        taskId,
+        content: "/tmp/e2e-continuation-worktree",
+        agentSessionId: "session-1",
+      });
+      send(`conversation-continue-${taskId}`, "TASK_CONVERSATION", {
+        taskId,
+        content: "second agent response",
+        agentSessionId: "session-1",
+        metadata: { role: "assistant" },
+      });
+      send(`completed-continue-${taskId}`, "TASK_COMPLETED", {
+        taskId,
+        result: "second result",
+        agentSessionId: "session-1",
+      });
+      clearTimeout(timeout);
+      setTimeout(() => {
+        ws.close();
+        resolve();
+      }, 250);
+    });
+  });
+  return { ready, firstDone, continued, close: () => ws.close() };
+}
+
 test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   page,
   request,
@@ -173,9 +297,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await page.reload();
   await page.waitForTimeout(1500);
   await enableFlutterAccessibility(page);
-  await page.getByText("Workers").click();
-  const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
-  await workerGroup.getByRole("button", { name: "Edit worker" }).click();
+  await openWorkerEditor(page, workerName);
   await expect(page.getByText("Runtime environment")).toBeVisible();
   await page.getByRole("button", { name: "New env var" }).click();
   await page.getByLabel("Key").fill("BPT_E2E_AGENT_ENV");
@@ -310,4 +432,130 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await page.waitForTimeout(1500);
   await page.mouse.click(40, 96);
   await expect(page.locator("flutter-view")).toBeVisible();
+});
+
+test("task detail continues a completed task with the same agent session", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+
+  const suffix = Date.now();
+  const projectName = `E2E Continue Project ${suffix}`;
+  const taskTitle = `E2E Continue Task ${suffix}`;
+  const workerId = `worker-e2e-continue-${suffix}`;
+
+  const createdProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+    {
+      input: {
+        name: projectName,
+        gitUrl: "e2e-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "e2e-continue",
+      },
+    },
+  );
+  const project = createdProject.createProject;
+
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: workerId,
+        name: `E2E Continue Worker ${suffix}`,
+        supportedAgents: ["codex"],
+        workDir: "/tmp/e2e-continuation-worker",
+        projectBindingMode: "ALL_PROJECTS",
+      },
+    },
+  );
+
+  const createdTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+    {
+      input: {
+        title: taskTitle,
+        projectId: project.id,
+        workerId,
+        agentType: "codex",
+        baseBranch: "main",
+      },
+    },
+  );
+  const taskId = createdTask.createTask.id;
+
+  const workerSocket = connectWorkerForContinuation(workerId, taskId);
+  await workerSocket.ready;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId },
+  );
+  await workerSocket.firstDone;
+
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query Task($id: ID!) { task(id: $id) { status result agentSessionId } }",
+        { id: taskId },
+      );
+      return data.task;
+    })
+    .toMatchObject({
+      status: "COMPLETED",
+      result: "first result",
+      agentSessionId: "session-1",
+    });
+
+  await page.reload();
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+  await openTaskFromList(page, taskTitle);
+  await expect(page.getByRole("tab", { name: "Conversation" })).toBeVisible();
+  await page.getByLabel("Continue conversation").click();
+  await page.waitForTimeout(100);
+  await page.keyboard.type("follow up from ui");
+  await page.getByRole("button", { name: /Send continuation/ }).click();
+
+  await workerSocket.continued;
+  await expect
+    .poll(async () => {
+      const [taskData, conversationData] = await Promise.all([
+        graphQL(
+          request,
+          "query Task($id: ID!) { task(id: $id) { status result agentSessionId } }",
+          { id: taskId },
+        ),
+        graphQL(
+          request,
+          "query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { role content } }",
+          { taskId },
+        ),
+      ]);
+      return {
+        task: taskData.task,
+        messages: conversationData.taskConversations,
+      };
+    })
+    .toMatchObject({
+      task: {
+        status: "COMPLETED",
+        result: "second result",
+        agentSessionId: "session-1",
+      },
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", content: "first agent response" }),
+        expect.objectContaining({ role: "user", content: "follow up from ui" }),
+        expect.objectContaining({ role: "assistant", content: "second agent response" }),
+      ]),
+    });
 });

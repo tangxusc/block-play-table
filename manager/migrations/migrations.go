@@ -14,6 +14,9 @@ var DropTaskBranchSQL string
 //go:embed 004_worker_agent_runtime_env.sql
 var WorkerAgentRuntimeEnvSQL string
 
+//go:embed 005_task_agent_session.sql
+var TaskAgentSessionSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -24,4 +27,5 @@ var All = []Migration{
 	{Version: "002_drop_project_setup_commands", SQL: DropProjectSetupCommandsSQL},
 	{Version: "003_drop_task_target_branch", SQL: DropTaskBranchSQL},
 	{Version: "004_worker_agent_runtime_env", SQL: WorkerAgentRuntimeEnvSQL},
+	{Version: "005_task_agent_session", SQL: TaskAgentSessionSQL},
 }

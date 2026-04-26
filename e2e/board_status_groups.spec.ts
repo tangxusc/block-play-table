@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
+import WebSocket from "ws";
 
 const managerGraphQL =
   process.env.BPT_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
 const managerWorkerWs =
   process.env.BPT_MANAGER_WS_URL ||
   managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
-const managerWorkerToken = process.env.BPT_MANAGER_WS_TOKEN || "";
+const managerWorkerToken =
+  process.env.BPT_MANAGER_WS_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
 
 async function graphQL(
   request,

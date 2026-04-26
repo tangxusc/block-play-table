@@ -35,6 +35,7 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTask returned error: %v", err)
 	}
+	task.AgentSessionID = "session-memory"
 
 	if err := s.SaveProject(ctx, project); err != nil {
 		t.Fatalf("SaveProject returned error: %v", err)
@@ -56,8 +57,8 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Task returned error: %v", err)
 	}
-	if loaded.Title != "Task" {
-		t.Fatalf("loaded task title = %q", loaded.Title)
+	if loaded.Title != "Task" || loaded.AgentSessionID != "session-memory" {
+		t.Fatalf("loaded task = %+v", loaded)
 	}
 	logs, err := s.TaskLogs(ctx, task.ID)
 	if err != nil || len(logs) != 1 {

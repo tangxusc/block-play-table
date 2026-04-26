@@ -840,7 +840,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
             }
             return Stack(
               children: [
-                _TaskDetailBody(detail: detail!),
+                _TaskDetailBody(detail: detail!, onContinue: _continueTask),
                 if (snapshot.connectionState != ConnectionState.done)
                   const Positioned(
                     left: 0,
@@ -906,6 +906,11 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     if (mounted) {
       Navigator.of(context).pop(true);
     }
+  }
+
+  Future<void> _continueTask(String message) async {
+    await widget.apiClient.continueTask(widget.task.id!, message);
+    _reload();
   }
 
   Future<void> _assign() async {
@@ -1011,9 +1016,10 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
 }
 
 class _TaskDetailBody extends StatelessWidget {
-  const _TaskDetailBody({required this.detail});
+  const _TaskDetailBody({required this.detail, required this.onContinue});
 
   final TaskDetailData detail;
+  final Future<void> Function(String message) onContinue;
 
   @override
   Widget build(BuildContext context) {
@@ -1034,8 +1040,6 @@ class _TaskDetailBody extends StatelessWidget {
               DetailText(icon: Icons.folder_copy, text: task.projectId),
               if ((task.workerId ?? '').isNotEmpty)
                 DetailText(icon: Icons.memory, text: task.workerId!),
-              if ((task.result ?? '').isNotEmpty)
-                DetailText(icon: Icons.flag, text: task.result!),
             ],
           ),
           const SizedBox(height: 16),
@@ -1056,6 +1060,10 @@ class _TaskDetailBody extends StatelessWidget {
             child: TabBarView(
               children: [
                 _RuntimeTab(
+                  footer: _ContinuationComposer(
+                    task: task,
+                    onContinue: onContinue,
+                  ),
                   children: detail.conversations
                       .map((item) => '${item.role}: ${item.content}')
                       .toList(),
@@ -1083,15 +1091,97 @@ class _TaskDetailBody extends StatelessWidget {
 }
 
 class _RuntimeTab extends StatelessWidget {
-  const _RuntimeTab({required this.children});
+  const _RuntimeTab({required this.children, this.footer});
 
   final List<String> children;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.only(top: 12),
-      child: _RuntimeList(children: children),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _RuntimeList(children: children),
+          if (footer != null) ...[const SizedBox(height: 12), footer!],
+        ],
+      ),
+    );
+  }
+}
+
+class _ContinuationComposer extends StatefulWidget {
+  const _ContinuationComposer({required this.task, required this.onContinue});
+
+  final TaskItem task;
+  final Future<void> Function(String message) onContinue;
+
+  @override
+  State<_ContinuationComposer> createState() => _ContinuationComposerState();
+}
+
+class _ContinuationComposerState extends State<_ContinuationComposer> {
+  final TextEditingController _controller = TextEditingController();
+  bool _sending = false;
+
+  bool get _canContinue =>
+      widget.task.status == 'COMPLETED' &&
+      (widget.task.agentSessionId ?? '').isNotEmpty;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final message = _controller.text.trim();
+    if (!_canContinue || message.isEmpty || _sending) {
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await widget.onContinue(message);
+      _controller.clear();
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            enabled: _canContinue && !_sending,
+            minLines: 1,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Continue conversation',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _send(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton.filled(
+          tooltip: 'Send continuation',
+          onPressed: _canContinue && !_sending ? _send : null,
+          icon: _sending
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send),
+        ),
+      ],
     );
   }
 }

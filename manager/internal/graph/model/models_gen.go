@@ -55,6 +55,11 @@ type BoardColumn struct {
 	Tasks  []*Task    `json:"tasks"`
 }
 
+type ContinueTaskInput struct {
+	TaskID  string `json:"taskId"`
+	Message string `json:"message"`
+}
+
 type ConversationMessage struct {
 	ID        string      `json:"id"`
 	TaskID    string      `json:"taskId"`
@@ -186,21 +191,22 @@ type Subscription struct {
 }
 
 type Task struct {
-	ID           string     `json:"id"`
-	Title        string     `json:"title"`
-	Description  string     `json:"description"`
-	Status       TaskStatus `json:"status"`
-	ProjectID    string     `json:"projectId"`
-	WorkerID     *string    `json:"workerId,omitempty"`
-	AgentType    *AgentType `json:"agentType,omitempty"`
-	BaseBranch   string     `json:"baseBranch"`
-	WorktreePath *string    `json:"worktreePath,omitempty"`
-	PreCommands  []string   `json:"preCommands"`
-	PostCommands []string   `json:"postCommands"`
-	Result       *string    `json:"result,omitempty"`
-	Version      int        `json:"version"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID             string     `json:"id"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	Status         TaskStatus `json:"status"`
+	ProjectID      string     `json:"projectId"`
+	WorkerID       *string    `json:"workerId,omitempty"`
+	AgentType      *AgentType `json:"agentType,omitempty"`
+	BaseBranch     string     `json:"baseBranch"`
+	WorktreePath   *string    `json:"worktreePath,omitempty"`
+	AgentSessionID *string    `json:"agentSessionId,omitempty"`
+	PreCommands    []string   `json:"preCommands"`
+	PostCommands   []string   `json:"postCommands"`
+	Result         *string    `json:"result,omitempty"`
+	Version        int        `json:"version"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type TaskConnection struct {

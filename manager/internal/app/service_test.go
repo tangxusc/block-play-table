@@ -72,6 +72,68 @@ func TestServiceCreatesAssignsStartsAndCompletesTask(t *testing.T) {
 	}
 }
 
+func TestServiceContinuesCompletedTaskOnOriginalWorker(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-continue",
+		Name:            "W",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/worker",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-continue", task.ID, "/tmp/worktree"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerTaskCompleted(ctx, "completed-continue", task.ID, "first result", "session-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	continued, payload, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"})
+	if err != nil {
+		t.Fatalf("ContinueTask returned error: %v", err)
+	}
+	if continued.Status != domain.TaskStarting || continued.Result != "" || continued.AgentSessionID != "session-1" {
+		t.Fatalf("continued task = %+v", continued)
+	}
+	if payload.Task.ID != task.ID || payload.Message != "follow up" || payload.AgentSessionID != "session-1" || payload.WorktreePath != "/tmp/worktree" {
+		t.Fatalf("continue payload = %+v", payload)
+	}
+	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedWorker.CurrentTaskID != task.ID {
+		t.Fatalf("worker current task = %q, want %q", loadedWorker.CurrentTaskID, task.ID)
+	}
+	messages, err := service.Store().TaskConversations(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Role != "user" || messages[0].Content != "follow up" {
+		t.Fatalf("conversation messages = %+v", messages)
+	}
+}
+
 func TestServiceDeduplicatesWorkerMessages(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
@@ -418,4 +480,14 @@ func seedRunningTask(t *testing.T, ctx context.Context, service *Service) *domai
 		t.Fatal(err)
 	}
 	return running
+}
+
+func seedCompletedTaskWithSession(t *testing.T, ctx context.Context, service *Service) *domain.Task {
+	t.Helper()
+	running := seedRunningTask(t, ctx, service)
+	completed, err := service.ApplyWorkerTaskCompleted(ctx, "completed-session-"+running.ID, running.ID, "done", "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return completed
 }

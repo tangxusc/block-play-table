@@ -181,6 +181,19 @@ func (c *Client) readLoop(ctx context.Context) error {
 					c.logger.Warn("task execution finished with error", "taskId", payload.Task.ID, "error", err)
 				}
 			}()
+		case protocol.MessageTaskContinue:
+			var payload protocol.TaskContinuePayload
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				return err
+			}
+			if err := c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskAccepted, WorkerID: c.config.WorkerID, TaskID: envelope.TaskID, Timestamp: time.Now().UTC()}); err != nil {
+				return err
+			}
+			go func() {
+				if err := c.executor.Continue(ctx, payload); err != nil {
+					c.logger.Warn("task continuation finished with error", "taskId", payload.Task.ID, "error", err)
+				}
+			}()
 		case protocol.MessageTaskInterrupt:
 			c.executor.Interrupt(envelope.TaskID)
 		case protocol.MessageTaskCancel:

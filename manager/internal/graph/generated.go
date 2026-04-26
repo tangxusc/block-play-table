@@ -99,6 +99,7 @@ type ComplexityRoot struct {
 		ArchiveProject               func(childComplexity int, id string) int
 		ArchiveTask                  func(childComplexity int, taskID *string, id *string) int
 		AssignWorker                 func(childComplexity int, input *model.AssignWorkerInput, taskID *string, workerID *string) int
+		ContinueTask                 func(childComplexity int, input model.ContinueTaskInput) int
 		CreateProject                func(childComplexity int, input model.CreateProjectInput) int
 		CreateTask                   func(childComplexity int, input model.CreateTaskInput) int
 		CreateWorker                 func(childComplexity int, input model.CreateWorkerInput) int
@@ -171,21 +172,22 @@ type ComplexityRoot struct {
 	}
 
 	Task struct {
-		AgentType    func(childComplexity int) int
-		BaseBranch   func(childComplexity int) int
-		CreatedAt    func(childComplexity int) int
-		Description  func(childComplexity int) int
-		ID           func(childComplexity int) int
-		PostCommands func(childComplexity int) int
-		PreCommands  func(childComplexity int) int
-		ProjectID    func(childComplexity int) int
-		Result       func(childComplexity int) int
-		Status       func(childComplexity int) int
-		Title        func(childComplexity int) int
-		UpdatedAt    func(childComplexity int) int
-		Version      func(childComplexity int) int
-		WorkerID     func(childComplexity int) int
-		WorktreePath func(childComplexity int) int
+		AgentSessionID func(childComplexity int) int
+		AgentType      func(childComplexity int) int
+		BaseBranch     func(childComplexity int) int
+		CreatedAt      func(childComplexity int) int
+		Description    func(childComplexity int) int
+		ID             func(childComplexity int) int
+		PostCommands   func(childComplexity int) int
+		PreCommands    func(childComplexity int) int
+		ProjectID      func(childComplexity int) int
+		Result         func(childComplexity int) int
+		Status         func(childComplexity int) int
+		Title          func(childComplexity int) int
+		UpdatedAt      func(childComplexity int) int
+		Version        func(childComplexity int) int
+		WorkerID       func(childComplexity int) int
+		WorktreePath   func(childComplexity int) int
 	}
 
 	TaskConnection struct {
@@ -230,6 +232,7 @@ type MutationResolver interface {
 	UpdateTask(ctx context.Context, input model.UpdateTaskInput) (*model.Task, error)
 	AssignWorker(ctx context.Context, input *model.AssignWorkerInput, taskID *string, workerID *string) (*model.Task, error)
 	StartTask(ctx context.Context, input *model.StartTaskInput, taskID *string, id *string) (*model.Task, error)
+	ContinueTask(ctx context.Context, input model.ContinueTaskInput) (*model.Task, error)
 	InterruptTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	ArchiveTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	RetryTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
@@ -539,6 +542,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.AssignWorker(childComplexity, args["input"].(*model.AssignWorkerInput), args["taskId"].(*string), args["workerId"].(*string)), true
+	case "Mutation.continueTask":
+		if e.ComplexityRoot.Mutation.ContinueTask == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_continueTask_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.ContinueTask(childComplexity, args["input"].(model.ContinueTaskInput)), true
 	case "Mutation.createProject":
 		if e.ComplexityRoot.Mutation.CreateProject == nil {
 			break
@@ -1035,6 +1049,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Subscription.WorkerUpdated(childComplexity, args["workerId"].(*string)), true
 
+	case "Task.agentSessionId":
+		if e.ComplexityRoot.Task.AgentSessionID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Task.AgentSessionID(childComplexity), true
 	case "Task.agentType":
 		if e.ComplexityRoot.Task.AgentType == nil {
 			break
@@ -1284,6 +1304,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
 		ec.unmarshalInputAgentRuntimeEnvVarInput,
 		ec.unmarshalInputAssignWorkerInput,
+		ec.unmarshalInputContinueTaskInput,
 		ec.unmarshalInputCreateProjectInput,
 		ec.unmarshalInputCreateTaskInput,
 		ec.unmarshalInputCreateWorkerInput,
@@ -1456,6 +1477,17 @@ func (ec *executionContext) field_Mutation_assignWorker_args(ctx context.Context
 		return nil, err
 	}
 	args["workerId"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_continueTask_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNContinueTaskInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐContinueTaskInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -2282,6 +2314,8 @@ func (ec *executionContext) fieldContext_Board_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -2372,6 +2406,8 @@ func (ec *executionContext) fieldContext_BoardCalendarItem_task(_ context.Contex
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -2578,6 +2614,8 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3139,6 +3177,8 @@ func (ec *executionContext) fieldContext_Mutation_createTask(ctx context.Context
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3212,6 +3252,8 @@ func (ec *executionContext) fieldContext_Mutation_updateTask(ctx context.Context
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3285,6 +3327,8 @@ func (ec *executionContext) fieldContext_Mutation_assignWorker(ctx context.Conte
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3358,6 +3402,8 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3382,6 +3428,81 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_startTask_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_continueTask(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_continueTask,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().ContinueTask(ctx, fc.Args["input"].(model.ContinueTaskInput))
+		},
+		nil,
+		ec.marshalNTask2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTask,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_continueTask(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Task_id(ctx, field)
+			case "title":
+				return ec.fieldContext_Task_title(ctx, field)
+			case "description":
+				return ec.fieldContext_Task_description(ctx, field)
+			case "status":
+				return ec.fieldContext_Task_status(ctx, field)
+			case "projectId":
+				return ec.fieldContext_Task_projectId(ctx, field)
+			case "workerId":
+				return ec.fieldContext_Task_workerId(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Task_agentType(ctx, field)
+			case "baseBranch":
+				return ec.fieldContext_Task_baseBranch(ctx, field)
+			case "worktreePath":
+				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
+			case "preCommands":
+				return ec.fieldContext_Task_preCommands(ctx, field)
+			case "postCommands":
+				return ec.fieldContext_Task_postCommands(ctx, field)
+			case "result":
+				return ec.fieldContext_Task_result(ctx, field)
+			case "version":
+				return ec.fieldContext_Task_version(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Task_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Task_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Task", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_continueTask_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -3431,6 +3552,8 @@ func (ec *executionContext) fieldContext_Mutation_interruptTask(ctx context.Cont
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3504,6 +3627,8 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -3577,6 +3702,8 @@ func (ec *executionContext) fieldContext_Mutation_retryTask(ctx context.Context,
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -4793,6 +4920,8 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -4913,6 +5042,8 @@ func (ec *executionContext) fieldContext_Query_taskList(ctx context.Context, fie
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -6426,6 +6557,35 @@ func (ec *executionContext) fieldContext_Task_worktreePath(_ context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Task_agentSessionId(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_agentSessionId,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentSessionID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_agentSessionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Task_preCommands(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6642,6 +6802,8 @@ func (ec *executionContext) fieldContext_TaskConnection_nodes(_ context.Context,
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_Task_agentSessionId(ctx, field)
 			case "preCommands":
 				return ec.fieldContext_Task_preCommands(ctx, field)
 			case "postCommands":
@@ -8900,6 +9062,43 @@ func (ec *executionContext) unmarshalInputAssignWorkerInput(ctx context.Context,
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputContinueTaskInput(ctx context.Context, obj any) (model.ContinueTaskInput, error) {
+	var it model.ContinueTaskInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"taskId", "message"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "taskId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("taskId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TaskID = data
+		case "message":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("message"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Message = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputCreateProjectInput(ctx context.Context, obj any) (model.CreateProjectInput, error) {
 	var it model.CreateProjectInput
 	if obj == nil {
@@ -10257,6 +10456,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "continueTask":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_continueTask(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "interruptTask":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_interruptTask(ctx, field)
@@ -11001,6 +11207,8 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			}
 		case "worktreePath":
 			out.Values[i] = ec._Task_worktreePath(ctx, field, obj)
+		case "agentSessionId":
+			out.Values[i] = ec._Task_agentSessionId(ctx, field, obj)
 		case "preCommands":
 			out.Values[i] = ec._Task_preCommands(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -11810,6 +12018,11 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalNContinueTaskInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐContinueTaskInput(ctx context.Context, v any) (model.ContinueTaskInput, error) {
+	res, err := ec.unmarshalInputContinueTaskInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalNConversationMessage2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐConversationMessage(ctx context.Context, sel ast.SelectionSet, v model.ConversationMessage) graphql.Marshaler {

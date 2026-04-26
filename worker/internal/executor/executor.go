@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -32,9 +33,10 @@ const (
 )
 
 type AgentEvent struct {
-	Type     AgentEventType
-	Content  string
-	Metadata map[string]string
+	Type           AgentEventType
+	Content        string
+	AgentSessionID string
+	Metadata       map[string]string
 }
 
 type AgentInput struct {
@@ -44,8 +46,21 @@ type AgentInput struct {
 	Env         map[string]string
 }
 
+type AgentContinuationInput struct {
+	Task           protocol.TaskPayload
+	Project        protocol.ProjectPayload
+	WorktreeDir    string
+	Env            map[string]string
+	Message        string
+	AgentSessionID string
+}
+
 type Agent interface {
 	Run(context.Context, AgentInput, func(AgentEvent)) error
+}
+
+type ContinuableAgent interface {
+	Continue(context.Context, AgentContinuationInput, func(AgentEvent)) error
 }
 
 type AgentFunc func(context.Context, AgentInput, func(AgentEvent)) error
@@ -89,8 +104,8 @@ func NewExecutor(config Config) *Executor {
 		config.Reporter = ReporterFunc(func(context.Context, protocol.WorkerEvent) error { return nil })
 	}
 	agents := map[domain.AgentType]Agent{
-		domain.AgentCodex:  NewCommandAgent("codex", []string{"exec", "--skip-git-repo-check"}),
-		domain.AgentClaude: NewCommandAgent("claude", []string{"-p"}),
+		domain.AgentCodex:  newCodexAgent("codex"),
+		domain.AgentClaude: newClaudeAgent("claude", func() string { return uuid.NewString() }),
 	}
 	for k, v := range config.Agents {
 		agents[k] = v
@@ -142,6 +157,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 
 	finalResult := ""
 	agentFailed := ""
+	finalSessionID := ""
 	err = agent.Run(ctx, AgentInput{Task: payload.Task, Project: payload.Project, WorktreeDir: worktree, Env: env}, func(event AgentEvent) {
 		switch event.Type {
 		case AgentEventStdout:
@@ -149,11 +165,12 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		case AgentEventStderr:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: redact(event.Content)})
 		case AgentEventConversation:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), Metadata: event.Metadata})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
 		case AgentEventWaitingInput:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: redact(event.Content)})
 		case AgentEventCompleted:
 			finalResult = redact(event.Content)
+			finalSessionID = event.AgentSessionID
 		case AgentEventFailed:
 			agentFailed = redact(event.Content)
 		}
@@ -179,10 +196,88 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	if finalResult == "" {
 		finalResult = "completed"
 	}
-	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskResult, TaskID: payload.Task.ID, Result: finalResult}); err != nil {
+	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskResult, TaskID: payload.Task.ID, Result: finalResult, AgentSessionID: finalSessionID}); err != nil {
 		return err
 	}
-	return e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskCompleted, TaskID: payload.Task.ID, Result: finalResult})
+	return e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskCompleted, TaskID: payload.Task.ID, Result: finalResult, AgentSessionID: finalSessionID})
+}
+
+func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePayload) error {
+	agent, ok := e.agents[payload.Task.AgentType]
+	if !ok {
+		err := fmt.Errorf("agent %s is not configured", payload.Task.AgentType)
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error(), AgentSessionID: payload.AgentSessionID})
+		return err
+	}
+	continuable, ok := agent.(ContinuableAgent)
+	if !ok {
+		err := fmt.Errorf("agent %s does not support continuation", payload.Task.AgentType)
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error(), AgentSessionID: payload.AgentSessionID})
+		return err
+	}
+	if strings.TrimSpace(payload.WorktreePath) == "" {
+		err := fmt.Errorf("worktree path is required to continue task %s", payload.Task.ID)
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error(), AgentSessionID: payload.AgentSessionID})
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.running[payload.Task.ID] = cancel
+	e.mu.Unlock()
+	defer func() {
+		cancel()
+		e.mu.Lock()
+		delete(e.running, payload.Task.ID)
+		e.mu.Unlock()
+	}()
+
+	env := runtimeEnv(payload.AgentRuntimeEnv)
+	redact := redactor(payload.AgentRuntimeEnv)
+	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskStarted, TaskID: payload.Task.ID, Content: payload.WorktreePath, AgentSessionID: payload.AgentSessionID}); err != nil {
+		return err
+	}
+
+	finalResult := ""
+	agentFailed := ""
+	finalSessionID := payload.AgentSessionID
+	err := continuable.Continue(ctx, AgentContinuationInput{Task: payload.Task, Project: payload.Project, WorktreeDir: payload.WorktreePath, Env: env, Message: payload.Message, AgentSessionID: payload.AgentSessionID}, func(event AgentEvent) {
+		switch event.Type {
+		case AgentEventStdout:
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stdout", Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
+		case AgentEventStderr:
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
+		case AgentEventConversation:
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
+		case AgentEventWaitingInput:
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
+		case AgentEventCompleted:
+			finalResult = redact(event.Content)
+			if event.AgentSessionID != "" {
+				finalSessionID = event.AgentSessionID
+			}
+		case AgentEventFailed:
+			agentFailed = redact(event.Content)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			_ = e.report(context.Background(), protocol.WorkerEvent{Type: protocol.MessageTaskInterrupted, TaskID: payload.Task.ID, Result: "interrupted", AgentSessionID: finalSessionID})
+		} else {
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: err.Error(), AgentSessionID: finalSessionID})
+		}
+		return err
+	}
+	if agentFailed != "" {
+		_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: payload.Task.ID, Result: agentFailed, AgentSessionID: finalSessionID})
+		return fmt.Errorf("agent failed: %s", agentFailed)
+	}
+	if finalResult == "" {
+		finalResult = "completed"
+	}
+	if err := e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskResult, TaskID: payload.Task.ID, Result: finalResult, AgentSessionID: finalSessionID}); err != nil {
+		return err
+	}
+	return e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskCompleted, TaskID: payload.Task.ID, Result: finalResult, AgentSessionID: finalSessionID})
 }
 
 func (e *Executor) Interrupt(taskID string) {
@@ -338,6 +433,216 @@ func (a *CommandAgent) Run(ctx context.Context, input AgentInput, emit func(Agen
 		<-done
 		return ctx.Err()
 	}
+}
+
+type SessionCommandAgent struct {
+	binary       string
+	agentType    domain.AgentType
+	newSessionID func() string
+}
+
+func newCodexAgent(binary string) *SessionCommandAgent {
+	return &SessionCommandAgent{binary: binary, agentType: domain.AgentCodex}
+}
+
+func newClaudeAgent(binary string, newSessionID func() string) *SessionCommandAgent {
+	if newSessionID == nil {
+		newSessionID = func() string { return uuid.NewString() }
+	}
+	return &SessionCommandAgent{binary: binary, agentType: domain.AgentClaude, newSessionID: newSessionID}
+}
+
+func (a *SessionCommandAgent) Run(ctx context.Context, input AgentInput, emit func(AgentEvent)) error {
+	prompt := promptForTask(input.Task)
+	sessionID := ""
+	var args []string
+	switch a.agentType {
+	case domain.AgentCodex:
+		args = []string{"exec", "--skip-git-repo-check", "--json", prompt}
+	case domain.AgentClaude:
+		sessionID = a.newSessionID()
+		args = []string{"-p", "--output-format=stream-json", "--verbose", "--session-id", sessionID, prompt}
+	default:
+		return fmt.Errorf("session command agent does not support %s", a.agentType)
+	}
+	return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, sessionID, emit)
+}
+
+func (a *SessionCommandAgent) Continue(ctx context.Context, input AgentContinuationInput, emit func(AgentEvent)) error {
+	if strings.TrimSpace(input.AgentSessionID) == "" {
+		return fmt.Errorf("agent session id is required")
+	}
+	if strings.TrimSpace(input.Message) == "" {
+		return fmt.Errorf("message is required")
+	}
+	var args []string
+	switch a.agentType {
+	case domain.AgentCodex:
+		args = []string{"exec", "resume", "--skip-git-repo-check", "--json", input.AgentSessionID, input.Message}
+	case domain.AgentClaude:
+		args = []string{"-p", "--output-format=stream-json", "--verbose", "--resume", input.AgentSessionID, input.Message}
+	default:
+		return fmt.Errorf("session command agent does not support %s", a.agentType)
+	}
+	return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, input.AgentSessionID, emit)
+}
+
+func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string, env map[string]string, args []string, initialSessionID string, emit func(AgentEvent)) error {
+	cmd := exec.Command(a.binary, args...)
+	cmd.Dir = dir
+	cmd.Env = mergeEnv(env)
+	configureCommandForCancel(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sessionID := initialSessionID
+	lastMessage := ""
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			emit(AgentEvent{Type: AgentEventStdout, Content: line})
+			parsedSessionID, message := parseAgentJSONLine(line)
+			mu.Lock()
+			if parsedSessionID != "" {
+				sessionID = parsedSessionID
+			}
+			currentSessionID := sessionID
+			if message != "" {
+				lastMessage = message
+			}
+			mu.Unlock()
+			if message != "" {
+				emit(AgentEvent{Type: AgentEventConversation, Content: message, AgentSessionID: currentSessionID, Metadata: map[string]string{"agentSessionId": currentSessionID}})
+			}
+		}
+	}()
+	go scanPipe(&wg, stderr, func(line string) {
+		emit(AgentEvent{Type: AgentEventStderr, Content: line})
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		wg.Wait()
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return err
+		}
+	case <-ctx.Done():
+		killCommandProcessGroup(cmd)
+		<-done
+		return ctx.Err()
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sessionID == "" {
+		return fmt.Errorf("agent session id was not reported")
+	}
+	emit(AgentEvent{Type: AgentEventCompleted, Content: lastMessage, AgentSessionID: sessionID})
+	return nil
+}
+
+func promptForTask(task protocol.TaskPayload) string {
+	prompt := task.Description
+	if strings.TrimSpace(prompt) == "" {
+		prompt = task.Title
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = "Complete task " + task.ID
+	}
+	return prompt
+}
+
+func parseAgentJSONLine(line string) (string, string) {
+	var value any
+	if err := json.Unmarshal([]byte(line), &value); err != nil {
+		return "", ""
+	}
+	return findSessionID(value), findMessageText(value)
+}
+
+func findSessionID(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"} {
+			if text, ok := typed[key].(string); ok && text != "" {
+				return text
+			}
+		}
+		for _, child := range typed {
+			if sessionID := findSessionID(child); sessionID != "" {
+				return sessionID
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if sessionID := findSessionID(child); sessionID != "" {
+				return sessionID
+			}
+		}
+	}
+	return ""
+}
+
+func findMessageText(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"message", "final_message", "finalMessage", "output", "result", "content", "text"} {
+			if child, ok := typed[key]; ok {
+				if text := textFromMessageValue(child); text != "" {
+					return text
+				}
+			}
+		}
+		for _, child := range typed {
+			if text := findMessageText(child); text != "" {
+				return text
+			}
+		}
+	case []any:
+		return strings.Join(messageTextsFromArray(typed), "\n")
+	}
+	return ""
+}
+
+func textFromMessageValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		return findMessageText(typed)
+	case []any:
+		return strings.Join(messageTextsFromArray(typed), "\n")
+	default:
+		return ""
+	}
+}
+
+func messageTextsFromArray(items []any) []string {
+	var out []string
+	for _, item := range items {
+		if text := textFromMessageValue(item); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func scanPipe(wg *sync.WaitGroup, pipe any, emit func(string)) {

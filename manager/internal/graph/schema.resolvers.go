@@ -91,6 +91,24 @@ func (r *mutationResolver) StartTask(ctx context.Context, input *model.StartTask
 	return toModelTask(task), nil
 }
 
+// ContinueTask is the resolver for the continueTask field.
+func (r *mutationResolver) ContinueTask(ctx context.Context, input model.ContinueTaskInput) (*model.Task, error) {
+	task, payload, err := r.Service.ContinueTask(ctx, app.ContinueTaskInput{
+		TaskID:  input.TaskID,
+		Message: input.Message,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r.WorkerSender != nil {
+		if err := r.WorkerSender.SendTaskContinue(task.WorkerID, task.ID, payload); err != nil {
+			_, _ = r.Service.ApplyWorkerTaskFailed(ctx, "continue-delivery-failed-"+task.ID, task.ID, "task continue delivery failed: "+err.Error())
+			return nil, err
+		}
+	}
+	return toModelTask(task), nil
+}
+
 // InterruptTask is the resolver for the interruptTask field.
 func (r *mutationResolver) InterruptTask(ctx context.Context, taskID *string, id *string) (*model.Task, error) {
 	resolvedTaskID := firstID(taskID, id)

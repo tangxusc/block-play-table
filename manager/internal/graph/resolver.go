@@ -18,6 +18,7 @@ import (
 
 type WorkerSender interface {
 	SendTaskStart(workerID, taskID string, payload protocol.TaskStartPayload) error
+	SendTaskContinue(workerID, taskID string, payload protocol.TaskContinuePayload) error
 	SendTaskInterrupt(workerID, taskID string) error
 	SendTaskCancel(workerID, taskID string) error
 }
@@ -41,21 +42,22 @@ func toModelTask(task *domain.Task) *model.Task {
 		agentType = &value
 	}
 	return &model.Task{
-		ID:           task.ID,
-		Title:        task.Title,
-		Description:  task.Description,
-		Status:       model.TaskStatus(task.Status),
-		ProjectID:    task.ProjectID,
-		WorkerID:     optionalString(task.WorkerID),
-		AgentType:    agentType,
-		BaseBranch:   task.BaseBranch,
-		WorktreePath: optionalString(task.WorktreePath),
-		PreCommands:  append([]string(nil), task.PreCommands...),
-		PostCommands: append([]string(nil), task.PostCommands...),
-		Result:       optionalString(task.Result),
-		Version:      task.Version,
-		CreatedAt:    task.CreatedAt,
-		UpdatedAt:    task.UpdatedAt,
+		ID:             task.ID,
+		Title:          task.Title,
+		Description:    task.Description,
+		Status:         model.TaskStatus(task.Status),
+		ProjectID:      task.ProjectID,
+		WorkerID:       optionalString(task.WorkerID),
+		AgentType:      agentType,
+		BaseBranch:     task.BaseBranch,
+		WorktreePath:   optionalString(task.WorktreePath),
+		AgentSessionID: optionalString(task.AgentSessionID),
+		PreCommands:    append([]string(nil), task.PreCommands...),
+		PostCommands:   append([]string(nil), task.PostCommands...),
+		Result:         optionalString(task.Result),
+		Version:        task.Version,
+		CreatedAt:      task.CreatedAt,
+		UpdatedAt:      task.UpdatedAt,
 	}
 }
 

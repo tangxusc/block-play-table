@@ -285,6 +285,7 @@ void main() {
 
     expect(apiClient.detailFetches, greaterThan(1));
     expect(find.text('COMPLETED'), findsWidgets);
+    expect(find.text('done'), findsNothing);
     expect(find.text('Logs'), findsOneWidget);
     expect(find.text('Conversation'), findsOneWidget);
     expect(find.text('Domain events'), findsOneWidget);
@@ -307,6 +308,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('TaskCompleted v2: {}'), findsOneWidget);
+  });
+
+  testWidgets('completed task detail sends continuation message', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    apiClient.completeTaskDetail();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('COMPLETED'), findsWidgets);
+    expect(find.byTooltip('Send continuation'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Continue conversation'),
+      'follow up',
+    );
+    final sendButton = find.widgetWithIcon(IconButton, Icons.send);
+    await tester.ensureVisible(sendButton);
+    await tester.tap(sendButton);
+    await tester.pumpAndSettle();
+
+    expect(apiClient.continuedTaskId, 'task-1');
+    expect(apiClient.continuedMessage, 'follow up');
   });
 
   testWidgets('settings no longer exposes agent runtime env controls', (
@@ -412,6 +440,8 @@ class FakeApiClient extends ApiClient {
   String? createdTaskTitle;
   String? createdTaskWorkerId;
   String? createdTaskAgentType;
+  String? continuedTaskId;
+  String? continuedMessage;
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
 
@@ -490,6 +520,12 @@ class FakeApiClient extends ApiClient {
     createdTaskTitle = title;
     createdTaskWorkerId = workerId;
     createdTaskAgentType = agentType;
+  }
+
+  @override
+  Future<void> continueTask(String taskId, String message) async {
+    continuedTaskId = taskId;
+    continuedMessage = message;
   }
 
   @override
@@ -602,6 +638,7 @@ final _completedTask = TaskItem(
   preCommands: const [],
   postCommands: const [],
   result: 'done',
+  agentSessionId: 'session-1',
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:01Z',
 );

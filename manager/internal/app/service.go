@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,6 +196,11 @@ type UpdateTaskInput struct {
 	BaseBranch   string           `json:"baseBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
+}
+
+type ContinueTaskInput struct {
+	TaskID  string `json:"taskId"`
+	Message string `json:"message"`
 }
 
 type TaskFilter struct {
@@ -767,6 +773,56 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	return task, buildStartPayload(task, project, worker), nil
 }
 
+func (s *Service) ContinueTask(ctx context.Context, input ContinueTaskInput) (*domain.Task, protocol.TaskContinuePayload, error) {
+	now := s.clock()
+	if strings.TrimSpace(input.Message) == "" {
+		return nil, protocol.TaskContinuePayload{}, fmt.Errorf("message is required")
+	}
+	task, err := s.store.Task(ctx, input.TaskID)
+	if err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := validateTaskCanContinue(task); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	worker, err := s.store.Worker(ctx, task.WorkerID)
+	if err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if !workerCanRunTask(worker, task.AgentType, task.ProjectID, task.ID) {
+		return nil, protocol.TaskContinuePayload{}, fmt.Errorf("%w: worker %s is not ready to continue task %s", domain.ErrConflict, worker.ID, task.ID)
+	}
+	project, err := s.store.Project(ctx, task.ProjectID)
+	if err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := task.AppendUserConversation(input.Message, now); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := s.store.AppendConversation(ctx, domain.ConversationMessage{ID: "msg_" + uuid.NewString(), TaskID: task.ID, Role: "user", Content: input.Message, CreatedAt: now}); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	events := task.PullEvents()
+	if err := task.Continue(now); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := worker.AssignTask(task.ID, now); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	events = append(events, task.PullEvents()...)
+	events = append(events, worker.PullEvents()...)
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := s.appendEvents(ctx, events); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	return task, buildContinuePayload(task, project, worker, input.Message), nil
+}
+
 func (s *Service) InterruptTask(ctx context.Context, taskID string) (*domain.Task, string, error) {
 	task, err := s.store.Task(ctx, taskID)
 	if err != nil {
@@ -887,6 +943,7 @@ func (s *Service) ApplyWorkerConversationWithMetadata(ctx context.Context, messa
 	if err := task.AppendConversation(role, content, now); err != nil {
 		return nil, err
 	}
+	task.RememberAgentSession(metadata["agentSessionId"], now)
 	if err := s.store.AppendConversation(ctx, domain.ConversationMessage{ID: "msg_" + uuid.NewString(), TaskID: taskID, Role: role, Content: content, Metadata: cloneStringMap(metadata), CreatedAt: now}); err != nil {
 		return nil, err
 	}
@@ -922,7 +979,7 @@ func (s *Service) ApplyWorkerWaitingInput(ctx context.Context, messageID, taskID
 	return task, s.appendEvents(ctx, events)
 }
 
-func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, result string) (*domain.Task, error) {
+func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, result string, agentSessionIDs ...string) (*domain.Task, error) {
 	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
 	if err != nil || !ok {
 		return s.store.Task(ctx, taskID)
@@ -931,7 +988,7 @@ func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := task.RecordResult(result, s.clock()); err != nil {
+	if err := task.RecordResult(result, s.clock(), firstString(agentSessionIDs...)); err != nil {
 		return nil, err
 	}
 	events := task.PullEvents()
@@ -941,7 +998,7 @@ func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, 
 	return task, s.appendEvents(ctx, events)
 }
 
-func (s *Service) ApplyWorkerTaskCompleted(ctx context.Context, messageID, taskID, result string) (*domain.Task, error) {
+func (s *Service) ApplyWorkerTaskCompleted(ctx context.Context, messageID, taskID, result string, agentSessionIDs ...string) (*domain.Task, error) {
 	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
 	if err != nil || !ok {
 		return s.store.Task(ctx, taskID)
@@ -951,7 +1008,7 @@ func (s *Service) ApplyWorkerTaskCompleted(ctx context.Context, messageID, taskI
 	if err != nil {
 		return nil, err
 	}
-	if err := task.Complete(result, now); err != nil {
+	if err := task.Complete(result, now, firstString(agentSessionIDs...)); err != nil {
 		return nil, err
 	}
 	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
@@ -1131,6 +1188,19 @@ func buildStartPayload(task *domain.Task, project *domain.Project, worker *domai
 	}
 }
 
+func buildContinuePayload(task *domain.Task, project *domain.Project, worker *domain.Worker, message string) protocol.TaskContinuePayload {
+	start := buildStartPayload(task, project, worker)
+	return protocol.TaskContinuePayload{
+		Task:            start.Task,
+		Project:         start.Project,
+		Message:         message,
+		AgentSessionID:  task.AgentSessionID,
+		WorktreePath:    task.WorktreePath,
+		AgentRuntimeEnv: start.AgentRuntimeEnv,
+		Settings:        start.Settings,
+	}
+}
+
 func isTaskTerminal(status domain.TaskStatus) bool {
 	switch status {
 	case domain.TaskCompleted, domain.TaskFailed, domain.TaskInterrupted, domain.TaskArchived:
@@ -1168,6 +1238,22 @@ func workerAllowsProject(worker *domain.Worker, projectID string) bool {
 	return false
 }
 
+func validateTaskCanContinue(task *domain.Task) error {
+	if task.Status != domain.TaskCompleted {
+		return fmt.Errorf("%w: continue from %s", domain.ErrInvalidTransition, task.Status)
+	}
+	if task.WorkerID == "" {
+		return fmt.Errorf("%w: continue task %s without worker", domain.ErrConflict, task.ID)
+	}
+	if task.WorktreePath == "" {
+		return fmt.Errorf("%w: continue task %s without worktree", domain.ErrConflict, task.ID)
+	}
+	if task.AgentSessionID == "" {
+		return fmt.Errorf("%w: continue task %s without agent session", domain.ErrConflict, task.ID)
+	}
+	return nil
+}
+
 func cloneStringMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
@@ -1177,4 +1263,13 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -209,6 +209,53 @@ func TestTaskUpdateRetryResultFailureAndRestoreEvents(t *testing.T) {
 	}
 }
 
+func TestTaskContinueFromCompletedRequiresPersistedAgentSession(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task, err := NewTask(NewTaskInput{ID: "task-continue", Title: "T", ProjectID: "project-1", AgentType: AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.AssignWorker("worker-1", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.Start(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.MarkRunning("/tmp/worktree", now); err != nil {
+		t.Fatal(err)
+	}
+	task.AgentSessionID = "session-1"
+	if err := task.Complete("first result", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := task.Continue(now.Add(time.Minute)); err != nil {
+		t.Fatalf("Continue returned error: %v", err)
+	}
+	if task.Status != TaskStarting || task.Result != "" {
+		t.Fatalf("continued task = status %s result %q, want STARTING and cleared result", task.Status, task.Result)
+	}
+	events := task.PullEvents()
+	last := events[len(events)-1]
+	if last.EventType != "TaskContinueRequested" {
+		t.Fatalf("last event = %s, want TaskContinueRequested", last.EventType)
+	}
+
+	for _, tt := range []struct {
+		name string
+		task Task
+	}{
+		{name: "not completed", task: Task{ID: "task-a", Status: TaskRunning, WorkerID: "worker-1", WorktreePath: "/tmp/w", AgentSessionID: "session-1"}},
+		{name: "missing worker", task: Task{ID: "task-b", Status: TaskCompleted, WorktreePath: "/tmp/w", AgentSessionID: "session-1"}},
+		{name: "missing worktree", task: Task{ID: "task-c", Status: TaskCompleted, WorkerID: "worker-1", AgentSessionID: "session-1"}},
+		{name: "missing session", task: Task{ID: "task-d", Status: TaskCompleted, WorkerID: "worker-1", WorktreePath: "/tmp/w"}},
+	} {
+		if err := tt.task.Continue(now); !errors.Is(err, ErrInvalidTransition) && !errors.Is(err, ErrConflict) {
+			t.Fatalf("%s Continue err = %v, want invalid transition or conflict", tt.name, err)
+		}
+	}
+}
+
 func TestWorkerUpdateValidationRestoreEventsAndDisabledOffline(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	worker, err := NewWorker(NewWorkerInput{ID: "worker-update", Name: "W", SupportedAgents: []AgentType{AgentCodex}, WorkDir: "/tmp", Capabilities: map[string]string{"os": "darwin"}, Now: now})

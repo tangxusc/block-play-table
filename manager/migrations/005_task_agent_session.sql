@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS agent_session_id TEXT;

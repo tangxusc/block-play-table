@@ -136,6 +136,122 @@ func TestCommandAgentRunsProcessAndEmitsOutput(t *testing.T) {
 	}
 }
 
+func TestCodexCommandAgentCapturesSessionAndResumes(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args.txt")
+	agentPath := filepath.Join(root, "fake-codex")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+argsFile+"'\ncase \"$*\" in\n  *resume*) printf '%s\\n' '{\"session_id\":\"codex-session\",\"message\":\"continued reply\"}' ;;\n  *) printf '%s\\n' '{\"session_id\":\"codex-session\",\"message\":\"first reply\"}' ;;\nesac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newCodexAgent(agentPath)
+
+	var events []AgentEvent
+	if err := agent.Run(context.Background(), AgentInput{Task: protocol.TaskPayload{ID: "task-1", Title: "first prompt"}, WorktreeDir: root}, func(event AgentEvent) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.AgentSessionID != "codex-session" || last.Content != "first reply" {
+		t.Fatalf("codex run events = %+v", events)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(args); !strings.Contains(got, "exec\n--skip-git-repo-check\n--json\nfirst prompt\n") {
+		t.Fatalf("codex run args = %q", got)
+	}
+
+	events = nil
+	if err := agent.Continue(context.Background(), AgentContinuationInput{Task: protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentCodex}, WorktreeDir: root, Message: "follow up", AgentSessionID: "codex-session"}, func(event AgentEvent) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("Continue returned error: %v", err)
+	}
+	last = events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.AgentSessionID != "codex-session" || last.Content != "continued reply" {
+		t.Fatalf("codex continue events = %+v", events)
+	}
+	args, err = os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(args); !strings.Contains(got, "exec\nresume\n--skip-git-repo-check\n--json\ncodex-session\nfollow up\n") {
+		t.Fatalf("codex resume args = %q", got)
+	}
+}
+
+func TestParseAgentJSONLineReadsCodexThreadAndAgentMessage(t *testing.T) {
+	sessionID, message := parseAgentJSONLine(`{"type":"thread.started","thread_id":"codex-thread"}`)
+	if sessionID != "codex-thread" || message != "" {
+		t.Fatalf("thread.started parsed session=%q message=%q", sessionID, message)
+	}
+
+	sessionID, message = parseAgentJSONLine(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"codex reply"}}`)
+	if sessionID != "" || message != "codex reply" {
+		t.Fatalf("item.completed parsed session=%q message=%q", sessionID, message)
+	}
+}
+
+func TestClaudeCommandAgentUsesGeneratedSessionAndResumes(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args.txt")
+	agentPath := filepath.Join(root, "fake-claude")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+argsFile+"'\ncase \"$*\" in\n  *--resume*) printf '%s\\n' '{\"type\":\"assistant\",\"session_id\":\"claude-session\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"continued reply\"}]}}' ;;\n  *) printf '%s\\n' '{\"type\":\"assistant\",\"session_id\":\"claude-session\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"first reply\"}]}}' ;;\nesac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newClaudeAgent(agentPath, func() string { return "claude-session" })
+
+	var events []AgentEvent
+	if err := agent.Run(context.Background(), AgentInput{Task: protocol.TaskPayload{ID: "task-1", Title: "first prompt"}, WorktreeDir: root}, func(event AgentEvent) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.AgentSessionID != "claude-session" || last.Content != "first reply" {
+		t.Fatalf("claude run events = %+v", events)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(args); !strings.Contains(got, "-p\n--output-format=stream-json\n--verbose\n--session-id\nclaude-session\nfirst prompt\n") {
+		t.Fatalf("claude run args = %q", got)
+	}
+
+	events = nil
+	if err := agent.Continue(context.Background(), AgentContinuationInput{Task: protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentClaude}, WorktreeDir: root, Message: "follow up", AgentSessionID: "claude-session"}, func(event AgentEvent) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("Continue returned error: %v", err)
+	}
+	last = events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.AgentSessionID != "claude-session" || last.Content != "continued reply" {
+		t.Fatalf("claude continue events = %+v", events)
+	}
+	args, err = os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(args); !strings.Contains(got, "-p\n--output-format=stream-json\n--verbose\n--resume\nclaude-session\nfollow up\n") {
+		t.Fatalf("claude resume args = %q", got)
+	}
+}
+
+func TestSessionCommandAgentFailsWithoutSessionID(t *testing.T) {
+	root := t.TempDir()
+	agentPath := filepath.Join(root, "fake-codex-no-session")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"message\":\"reply without session\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newCodexAgent(agentPath)
+	if err := agent.Run(context.Background(), AgentInput{Task: protocol.TaskPayload{ID: "task-1", Title: "prompt"}, WorktreeDir: root}, func(event AgentEvent) {}); err == nil {
+		t.Fatal("Run should fail when CLI output has no session id")
+	}
+}
+
 func TestExecutorHelperFallbacksAndCancellation(t *testing.T) {
 	env := runtimeEnv([]protocol.RuntimeEnvVar{{Key: " "}, {Key: "TOKEN", Value: "secret"}})
 	if len(env) != 1 || env["TOKEN"] != "secret" {
@@ -276,16 +392,13 @@ func TestReporterFuncAndAgentFuncPropagateErrors(t *testing.T) {
 
 func TestDefaultCodexAgentAllowsNonGitWorkdir(t *testing.T) {
 	exec := NewExecutor(Config{WorkDir: t.TempDir()})
-	agent, ok := exec.agents[domain.AgentCodex].(*CommandAgent)
+	agent, ok := exec.agents[domain.AgentCodex].(*SessionCommandAgent)
 	if !ok {
 		t.Fatalf("default codex agent type = %T", exec.agents[domain.AgentCodex])
 	}
-	for _, arg := range agent.args {
-		if arg == "--skip-git-repo-check" {
-			return
-		}
+	if agent.agentType != domain.AgentCodex {
+		t.Fatalf("default codex agent type = %s, want codex", agent.agentType)
 	}
-	t.Fatalf("codex args = %v, want --skip-git-repo-check", agent.args)
 }
 
 func runGit(t *testing.T, dir string, args ...string) {
