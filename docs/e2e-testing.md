@@ -30,7 +30,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、日志、会话和领域事件。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、日志、会话、领域事件和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -242,6 +242,7 @@ npm run e2e:real-agents
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
 | UI | Flutter Web 首屏可加载并显示 `flutter-view` | L2 | [已实现] |
 | UI | 看板将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED/ARCHIVED 分组成三列 | L2 | [已实现] |
+| UI | Calendar 按任务开始/结束日期在日、周、月、年视图展示任务范围，并支持搜索过滤 | L2 | [已实现] |
 | UI | 任务详情展示状态、日志、会话和最终结果 | L2 | [待补齐] |
 | UI | GraphQL subscription 事件到达后看板刷新 | L2 | [待补齐] |
 | UI | subscription 失败时触发兜底 reload/refresh | L2 | [待补齐] |

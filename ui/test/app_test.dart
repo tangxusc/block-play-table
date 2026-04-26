@@ -183,6 +183,127 @@ void main() {
     expect(find.text('Overflow task 17'), findsOneWidget);
   });
 
+  testWidgets('calendar month view renders ranged task bars', (tester) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient(
+      tasks: [
+        _task,
+        _taskWith(
+          id: 'task-cross-week',
+          title: 'Cross week deployment',
+          startDate: '2026-04-30T00:00:00Z',
+          endDate: '2026-05-02T00:00:00Z',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('April 2026'), findsOneWidget);
+    expect(find.text('Mon'), findsOneWidget);
+    expect(find.text('Sun'), findsOneWidget);
+    expect(find.text('Refresh board'), findsOneWidget);
+    expect(find.text('Cross week deployment'), findsOneWidget);
+  });
+
+  testWidgets('calendar switches between day week month and year views', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient();
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Day'));
+    await tester.pumpAndSettle();
+    expect(find.text('Apr 25, 2026'), findsOneWidget);
+    expect(find.text('Refresh board'), findsOneWidget);
+
+    await tester.tap(find.text('Week'));
+    await tester.pumpAndSettle();
+    expect(find.text('Apr 20 - 26, 2026'), findsOneWidget);
+    expect(find.text('Refresh board'), findsOneWidget);
+
+    await tester.tap(find.text('Year'));
+    await tester.pumpAndSettle();
+    expect(find.text('2026'), findsOneWidget);
+    expect(find.text('April'), findsOneWidget);
+    expect(find.text('1 task'), findsOneWidget);
+
+    await tester.tap(find.text('April'));
+    await tester.pumpAndSettle();
+    expect(find.text('April 2026'), findsOneWidget);
+  });
+
+  testWidgets('calendar search filters tasks and can clear results', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient(
+      tasks: [
+        _task,
+        _taskWith(
+          id: 'task-backend',
+          title: 'Backend migration',
+          description: 'GraphQL rollout',
+          startDate: '2026-04-27T00:00:00Z',
+          endDate: '2026-04-28T00:00:00Z',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('calendar-search-field')),
+      'Backend',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('April 2026'), findsOneWidget);
+    expect(find.text('Backend migration'), findsOneWidget);
+    expect(find.text('Refresh board'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('calendar-search-field')),
+      '',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Backend migration'), findsOneWidget);
+    expect(find.text('Refresh board'), findsOneWidget);
+  });
+
+  testWidgets('calendar task bars open task detail dialog', (tester) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient();
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refresh board'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(apiClient.detailFetches, 1);
+    expect(find.text('Conversation'), findsOneWidget);
+  });
+
   testWidgets('create task can save without worker or agent', (tester) async {
     final apiClient = FakeApiClient();
     await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
@@ -736,19 +857,23 @@ final _task = TaskItem(
 TaskItem _taskWith({
   required String id,
   required String title,
+  String? description,
+  String? status,
+  String? startDate,
+  String? endDate,
 }) =>
     TaskItem(
       id: id,
       title: title,
-      description: _task.description,
-      status: _task.status,
+      description: description ?? _task.description,
+      status: status ?? _task.status,
       projectId: _task.projectId,
       agentType: _task.agentType,
       baseBranch: _task.baseBranch,
       preCommands: _task.preCommands,
       postCommands: _task.postCommands,
-      startDate: _task.startDate,
-      endDate: _task.endDate,
+      startDate: startDate ?? _task.startDate,
+      endDate: endDate ?? _task.endDate,
       createdAt: _task.createdAt,
       updatedAt: _task.updatedAt,
       workerId: _task.workerId,

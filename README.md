@@ -4,7 +4,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 - Go Manager service with gqlgen GraphQL API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
 - Go Worker service that registers with Manager, sends heartbeat messages, creates task worktrees, runs task pre/post commands, and adapts Codex/Claude non-interactive CLIs.
-- Flutter Web UI scaffold for tasks, board, projects, workers, and settings.
+- Flutter Web UI for tasks, Kanban/list/calendar board views, projects, workers, and settings.
 - Dockerfiles, Docker Compose, SQL schema, Go e2e tests, and coverage gates.
 
 ## Trusted Mode

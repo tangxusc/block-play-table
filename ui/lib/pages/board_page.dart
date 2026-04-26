@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -213,9 +215,8 @@ class _BoardContent extends StatelessWidget {
           onTaskEdit: onTaskEdit,
         ),
       'CALENDAR' => _CalendarView(
-          items: data.calendarItems,
+          tasks: data.tasks,
           onTaskSelected: onTaskSelected,
-          onTaskEdit: onTaskEdit,
         ),
       _ => _KanbanView(
           columns: buildBoardStatusColumns(data.tasks),
@@ -635,48 +636,993 @@ String _taskDateRangeLabel(TaskItem task) {
   return '${_taskDateLabel(startDate)} - ${_taskDateLabel(endDate)}';
 }
 
-class _CalendarView extends StatelessWidget {
-  const _CalendarView({
-    required this.items,
-    required this.onTaskSelected,
-    required this.onTaskEdit,
+enum _CalendarMode {
+  day('Day', Icons.view_day),
+  week('Week', Icons.view_week),
+  month('Month', Icons.calendar_month),
+  year('Year', Icons.calendar_today);
+
+  const _CalendarMode(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+}
+
+class _CalendarTaskRange {
+  const _CalendarTaskRange({
+    required this.task,
+    required this.start,
+    required this.end,
   });
 
-  final List<BoardCalendarItemData> items;
+  final TaskItem task;
+  final DateTime start;
+  final DateTime end;
+
+  bool contains(DateTime date) {
+    final day = _dateOnly(date);
+    return !day.isBefore(start) && !day.isAfter(end);
+  }
+
+  bool overlaps(DateTime rangeStart, DateTime rangeEnd) {
+    return !end.isBefore(rangeStart) && !start.isAfter(rangeEnd);
+  }
+}
+
+class _CalendarView extends StatefulWidget {
+  const _CalendarView({
+    required this.tasks,
+    required this.onTaskSelected,
+  });
+
+  final List<TaskItem> tasks;
   final ValueChanged<TaskItem> onTaskSelected;
-  final ValueChanged<TaskItem> onTaskEdit;
+
+  @override
+  State<_CalendarView> createState() => _CalendarViewState();
+}
+
+class _CalendarViewState extends State<_CalendarView> {
+  final TextEditingController _searchController = TextEditingController();
+  _CalendarMode _mode = _CalendarMode.month;
+  late DateTime _focusedDate;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final ranges = _taskRanges(widget.tasks);
+    _focusedDate = ranges.isEmpty ? _todayTaskDate() : ranges.first.start;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CalendarView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tasks.isEmpty && widget.tasks.isNotEmpty) {
+      final ranges = _taskRanges(widget.tasks);
+      if (ranges.isNotEmpty) {
+        _focusedDate = ranges.first.start;
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final ranges = _visibleRanges();
+    return Column(
+      children: [
+        _CalendarToolbar(
+          mode: _mode,
+          title: _calendarTitle(),
+          searchController: _searchController,
+          onModeChanged: (mode) => setState(() => _mode = mode),
+          onSearchChanged: _setSearchQuery,
+          onPrevious: () => _moveFocus(-1),
+          onToday: () => setState(() => _focusedDate = _todayTaskDate()),
+          onNext: () => _moveFocus(1),
+        ),
+        Expanded(
+          child: ranges.isEmpty
+              ? EmptyState(
+                  icon: Icons.search_off,
+                  title: _searchQuery.trim().isEmpty
+                      ? 'No scheduled tasks'
+                      : 'No matching tasks',
+                  message: _searchQuery.trim().isEmpty
+                      ? 'Create a task with dates to fill the calendar.'
+                      : 'Clear search or try another term.',
+                )
+              : switch (_mode) {
+                  _CalendarMode.day => _CalendarDayList(
+                      date: _focusedDate,
+                      ranges: ranges,
+                      onTaskSelected: widget.onTaskSelected,
+                    ),
+                  _CalendarMode.week => _CalendarWeekGrid(
+                      weekStart: _startOfWeek(_focusedDate),
+                      ranges: ranges,
+                      onTaskSelected: widget.onTaskSelected,
+                    ),
+                  _CalendarMode.month => _CalendarMonthGrid(
+                      month: _focusedDate,
+                      ranges: ranges,
+                      onTaskSelected: widget.onTaskSelected,
+                    ),
+                  _CalendarMode.year => _CalendarYearGrid(
+                      year: _focusedDate.year,
+                      ranges: ranges,
+                      onTaskSelected: widget.onTaskSelected,
+                      onMonthSelected: (month) => setState(() {
+                        _mode = _CalendarMode.month;
+                        _focusedDate = month;
+                      }),
+                    ),
+                },
+        ),
+      ],
+    );
+  }
+
+  List<_CalendarTaskRange> _visibleRanges() {
+    final ranges = _taskRanges(widget.tasks);
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return ranges;
+    }
+    return ranges.where((range) {
+      final task = range.task;
+      return task.title.toLowerCase().contains(query) ||
+          task.description.toLowerCase().contains(query) ||
+          task.status.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  void _setSearchQuery(String value) {
+    setState(() {
+      _searchQuery = value;
+      final query = value.trim().toLowerCase();
+      if (query.isEmpty) {
+        return;
+      }
+      final matches = _taskRanges(widget.tasks).where((range) {
+        final task = range.task;
+        return task.title.toLowerCase().contains(query) ||
+            task.description.toLowerCase().contains(query) ||
+            task.status.toLowerCase().contains(query);
+      }).toList();
+      if (matches.isNotEmpty) {
+        _focusedDate = matches.first.start;
+      }
+    });
+  }
+
+  void _moveFocus(int delta) {
+    setState(() {
+      _focusedDate = switch (_mode) {
+        _CalendarMode.day => _dateOnly(_focusedDate.add(Duration(days: delta))),
+        _CalendarMode.week =>
+          _dateOnly(_focusedDate.add(Duration(days: delta * 7))),
+        _CalendarMode.month => _addMonths(_focusedDate, delta),
+        _CalendarMode.year => DateTime(
+            _focusedDate.year + delta,
+            _focusedDate.month,
+            _focusedDate.day,
+          ),
+      };
+    });
+  }
+
+  String _calendarTitle() {
+    return switch (_mode) {
+      _CalendarMode.day => _formatDayTitle(_focusedDate),
+      _CalendarMode.week => _formatWeekTitle(_focusedDate),
+      _CalendarMode.month =>
+        '${_monthName(_focusedDate.month)} ${_focusedDate.year}',
+      _CalendarMode.year => _focusedDate.year.toString(),
+    };
+  }
+}
+
+class _CalendarToolbar extends StatelessWidget {
+  const _CalendarToolbar({
+    required this.mode,
+    required this.title,
+    required this.searchController,
+    required this.onModeChanged,
+    required this.onSearchChanged,
+    required this.onPrevious,
+    required this.onToday,
+    required this.onNext,
+  });
+
+  final _CalendarMode mode;
+  final String title;
+  final TextEditingController searchController;
+  final ValueChanged<_CalendarMode> onModeChanged;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onPrevious;
+  final VoidCallback onToday;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final controls = <Widget>[
+      SegmentedButton<_CalendarMode>(
+        key: const ValueKey('calendar-mode-switcher'),
+        showSelectedIcon: false,
+        segments: _CalendarMode.values
+            .map(
+              (mode) => ButtonSegment<_CalendarMode>(
+                value: mode,
+                icon: Icon(mode.icon, size: 18),
+                label: Text(mode.label),
+              ),
+            )
+            .toList(),
+        selected: {mode},
+        onSelectionChanged: (values) => onModeChanged(values.first),
+      ),
+      SizedBox(
+        width: 260,
+        height: 40,
+        child: TextField(
+          key: const ValueKey('calendar-search-field'),
+          controller: searchController,
+          onChanged: onSearchChanged,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: 'Search',
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          ),
+        ),
+      ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Previous period',
+            onPressed: onPrevious,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          OutlinedButton(
+            onPressed: onToday,
+            child: const Text('Today'),
+          ),
+          IconButton(
+            tooltip: 'Next period',
+            onPressed: onNext,
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final titleWidget = Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          );
+          if (constraints.maxWidth < 900) {
+            return Wrap(
+              spacing: 12,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(width: constraints.maxWidth, child: titleWidget),
+                ...controls,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: titleWidget),
+              ..._spacedCalendarControls(controls),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CalendarMonthGrid extends StatelessWidget {
+  const _CalendarMonthGrid({
+    required this.month,
+    required this.ranges,
+    required this.onTaskSelected,
+  });
+
+  final DateTime month;
+  final List<_CalendarTaskRange> ranges;
+  final ValueChanged<TaskItem> onTaskSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final firstDay = DateTime(month.year, month.month);
+    final lastDay = DateTime(month.year, month.month + 1, 0);
+    final gridStart = _startOfWeek(firstDay);
+    final gridEnd = _startOfWeek(lastDay).add(const Duration(days: 6));
+    final weekStarts = <DateTime>[];
+    for (var date = gridStart;
+        !date.isAfter(gridEnd);
+        date = date.add(const Duration(days: 7))) {
+      weekStarts.add(date);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          const _CalendarWeekdayHeader(),
+          Expanded(
+            child: Column(
+              children: [
+                for (final weekStart in weekStarts)
+                  Expanded(
+                    child: _CalendarWeekRow(
+                      weekStart: weekStart,
+                      primaryMonth: month.month,
+                      ranges: ranges,
+                      onTaskSelected: onTaskSelected,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalendarWeekGrid extends StatelessWidget {
+  const _CalendarWeekGrid({
+    required this.weekStart,
+    required this.ranges,
+    required this.onTaskSelected,
+  });
+
+  final DateTime weekStart;
+  final List<_CalendarTaskRange> ranges;
+  final ValueChanged<TaskItem> onTaskSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          const _CalendarWeekdayHeader(),
+          Expanded(
+            child: _CalendarWeekRow(
+              weekStart: weekStart,
+              primaryMonth: 0,
+              ranges: ranges,
+              onTaskSelected: onTaskSelected,
+              showFullDate: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalendarWeekdayHeader extends StatelessWidget {
+  const _CalendarWeekdayHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return Container(
+      height: 32,
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: Row(
+        children: [
+          for (final label in labels)
+            Expanded(
+              child: Center(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalendarWeekRow extends StatelessWidget {
+  const _CalendarWeekRow({
+    required this.weekStart,
+    required this.primaryMonth,
+    required this.ranges,
+    required this.onTaskSelected,
+    this.showFullDate = false,
+  });
+
+  final DateTime weekStart;
+  final int primaryMonth;
+  final List<_CalendarTaskRange> ranges;
+  final ValueChanged<TaskItem> onTaskSelected;
+  final bool showFullDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    final weekRanges =
+        ranges.where((range) => range.overlaps(weekStart, weekEnd)).toList();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
+        final height =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 150.0;
+        final cellWidth = width / 7;
+        final availableSlots = math.max(1, ((height - 38) / 22).floor());
+        final visibleRanges = weekRanges.take(availableSlots).toList();
+        final overflowCount = weekRanges.length - visibleRanges.length;
+
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            border: Border(
+              bottom: BorderSide(color: Theme.of(context).dividerColor),
+            ),
+          ),
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var index = 0; index < 7; index++)
+                    Expanded(
+                      child: _CalendarDateCell(
+                        date: weekStart.add(Duration(days: index)),
+                        inPrimaryMonth: primaryMonth == 0 ||
+                            weekStart.add(Duration(days: index)).month ==
+                                primaryMonth,
+                        showFullDate: showFullDate,
+                      ),
+                    ),
+                ],
+              ),
+              for (var index = 0; index < visibleRanges.length; index++)
+                _positionedTaskBar(
+                  context,
+                  range: visibleRanges[index],
+                  index: index,
+                  cellWidth: cellWidth,
+                ),
+              if (overflowCount > 0)
+                Positioned(
+                  right: 8,
+                  bottom: 6,
+                  child: Text(
+                    '+$overflowCount more',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _positionedTaskBar(
+    BuildContext context, {
+    required _CalendarTaskRange range,
+    required int index,
+    required double cellWidth,
+  }) {
+    final segmentStart = range.start.isBefore(weekStart) ? weekStart : range.start;
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    final segmentEnd = range.end.isAfter(weekEnd) ? weekEnd : range.end;
+    final dayOffset = segmentStart.difference(weekStart).inDays;
+    final spanDays = segmentEnd.difference(segmentStart).inDays + 1;
+    return Positioned(
+      left: (dayOffset * cellWidth) + 4,
+      top: 34 + (index * 22),
+      width: math.max(40, (spanDays * cellWidth) - 8),
+      height: 18,
+      child: _CalendarTaskBar(
+        task: range.task,
+        color: _calendarStatusColor(context, range.task.status),
+        onTap: () => onTaskSelected(range.task),
+      ),
+    );
+  }
+}
+
+class _CalendarDateCell extends StatelessWidget {
+  const _CalendarDateCell({
+    required this.date,
+    required this.inPrimaryMonth,
+    required this.showFullDate,
+  });
+
+  final DateTime date;
+  final bool inPrimaryMonth;
+  final bool showFullDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final isToday = _sameDate(date, _todayTaskDate());
+    final scheme = Theme.of(context).colorScheme;
+    final labelColor = inPrimaryMonth
+        ? scheme.onSurface
+        : scheme.onSurfaceVariant.withOpacity(0.55);
+    return Container(
+      decoration: BoxDecoration(
+        color: inPrimaryMonth
+            ? scheme.surface
+            : scheme.surfaceContainerHighest.withOpacity(0.42),
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+      child: Align(
+        alignment: Alignment.topRight,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: isToday ? 28 : null,
+          height: isToday ? 28 : null,
+          alignment: Alignment.center,
+          decoration: isToday
+              ? BoxDecoration(
+                  color: scheme.error,
+                  shape: BoxShape.circle,
+                )
+              : null,
+          child: Text(
+            showFullDate ? _shortDateLabel(date) : date.day.toString(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: isToday ? scheme.onError : labelColor,
+                  fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+                ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarTaskBar extends StatelessWidget {
+  const _CalendarTaskBar({
+    required this.task,
+    required this.color,
+    required this.onTap,
+  });
+
+  final TaskItem task;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: task.title,
+      child: Material(
+        color: color.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(4),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(4),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            alignment: Alignment.centerLeft,
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: color, width: 3)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              task.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarDayList extends StatelessWidget {
+  const _CalendarDayList({
+    required this.date,
+    required this.ranges,
+    required this.onTaskSelected,
+  });
+
+  final DateTime date;
+  final List<_CalendarTaskRange> ranges;
+  final ValueChanged<TaskItem> onTaskSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final dayRanges = ranges.where((range) => range.contains(date)).toList();
+    if (dayRanges.isEmpty) {
+      return EmptyState(
+        icon: Icons.event_available,
+        title: 'No tasks on ${_taskDateLabel(date)}',
+      );
+    }
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemBuilder: (context, index) {
-        final item = items[index];
+        final range = dayRanges[index];
+        final color = _calendarStatusColor(context, range.task.status);
         return Card(
           child: ListTile(
-            leading: const Icon(Icons.event),
-            title: Text(item.task.title),
-            subtitle: Text(_taskDateRangeLabel(item.task)),
-            trailing: Wrap(
-              spacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                StatusPill(value: item.status),
-                IconButton(
-                  tooltip: 'Edit task',
-                  onPressed: () => onTaskEdit(item.task),
-                  icon: const Icon(Icons.edit_outlined),
-                ),
-              ],
-            ),
-            onTap: () => onTaskSelected(item.task),
+            leading: Icon(Icons.event, color: color),
+            title: Text(range.task.title),
+            subtitle: Text(_taskDateRangeLabel(range.task)),
+            trailing: StatusPill(value: range.task.status),
+            onTap: () => onTaskSelected(range.task),
           ),
         );
       },
       separatorBuilder: (context, index) => const SizedBox(height: 8),
-      itemCount: items.length,
+      itemCount: dayRanges.length,
     );
   }
+}
+
+class _CalendarYearGrid extends StatelessWidget {
+  const _CalendarYearGrid({
+    required this.year,
+    required this.ranges,
+    required this.onTaskSelected,
+    required this.onMonthSelected,
+  });
+
+  final int year;
+  final List<_CalendarTaskRange> ranges;
+  final ValueChanged<TaskItem> onTaskSelected;
+  final ValueChanged<DateTime> onMonthSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = width >= 1120
+            ? 4
+            : width >= 820
+                ? 3
+                : width >= 560
+                    ? 2
+                    : 1;
+        return GridView.builder(
+          padding: const EdgeInsets.all(16),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 248,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: 12,
+          itemBuilder: (context, index) {
+            final month = DateTime(year, index + 1);
+            return _YearMonthCard(
+              month: month,
+              ranges: ranges,
+              onTap: () => onMonthSelected(month),
+              onTaskSelected: onTaskSelected,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _YearMonthCard extends StatelessWidget {
+  const _YearMonthCard({
+    required this.month,
+    required this.ranges,
+    required this.onTap,
+    required this.onTaskSelected,
+  });
+
+  final DateTime month;
+  final List<_CalendarTaskRange> ranges;
+  final VoidCallback onTap;
+  final ValueChanged<TaskItem> onTaskSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final monthStart = DateTime(month.year, month.month);
+    final monthEnd = DateTime(month.year, month.month + 1, 0);
+    final monthRanges =
+        ranges.where((range) => range.overlaps(monthStart, monthEnd)).toList();
+    final busyDays = <int>{};
+    for (final range in monthRanges) {
+      final start = range.start.isBefore(monthStart) ? monthStart : range.start;
+      final end = range.end.isAfter(monthEnd) ? monthEnd : range.end;
+      for (var date = start;
+          !date.isAfter(end);
+          date = date.add(const Duration(days: 1))) {
+        busyDays.add(date.day);
+      }
+    }
+    final firstVisible = _startOfWeek(monthStart);
+    final visibleDates = List.generate(
+      42,
+      (index) => firstVisible.add(Duration(days: index)),
+    );
+    final color = monthRanges.isEmpty
+        ? Theme.of(context).colorScheme.outline
+        : _calendarStatusColor(context, monthRanges.first.task.status);
+
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Theme.of(context).dividerColor),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _monthName(month.month),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  StatusPill(
+                    value:
+                        '${monthRanges.length} ${monthRanges.length == 1 ? 'task' : 'tasks'}',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const _MiniWeekdayHeader(),
+              const SizedBox(height: 6),
+              Expanded(
+                child: GridView.builder(
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisSpacing: 2,
+                    crossAxisSpacing: 2,
+                  ),
+                  itemCount: visibleDates.length,
+                  itemBuilder: (context, index) {
+                    final date = visibleDates[index];
+                    final inMonth = date.month == month.month;
+                    final busy = inMonth && busyDays.contains(date.day);
+                    final today = _sameDate(date, _todayTaskDate());
+                    return Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: busy
+                            ? color.withOpacity(0.14)
+                            : today
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .error
+                                    .withOpacity(0.12)
+                                : null,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        inMonth ? date.day.toString() : '',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: busy
+                                  ? color
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                              fontWeight: busy || today
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (monthRanges.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                _CalendarTaskBar(
+                  task: monthRanges.first.task,
+                  color: _calendarStatusColor(
+                    context,
+                    monthRanges.first.task.status,
+                  ),
+                  onTap: () => onTaskSelected(monthRanges.first.task),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniWeekdayHeader extends StatelessWidget {
+  const _MiniWeekdayHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    return Row(
+      children: [
+        for (final label in labels)
+          Expanded(
+            child: Center(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+List<_CalendarTaskRange> _taskRanges(List<TaskItem> tasks) {
+  final out = <_CalendarTaskRange>[];
+  for (final task in tasks) {
+    final fallback = _taskDateFromIso(task.createdAt, _todayTaskDate());
+    final start = _taskDateFromIso(task.startDate, fallback);
+    var end = _taskDateFromIso(task.endDate, start);
+    if (end.isBefore(start)) {
+      end = start;
+    }
+    out.add(_CalendarTaskRange(task: task, start: start, end: end));
+  }
+  out.sort((a, b) {
+    final startCompare = a.start.compareTo(b.start);
+    if (startCompare != 0) {
+      return startCompare;
+    }
+    final durationCompare = b.end.compareTo(a.end);
+    if (durationCompare != 0) {
+      return durationCompare;
+    }
+    return a.task.title.compareTo(b.task.title);
+  });
+  return out;
+}
+
+List<Widget> _spacedCalendarControls(List<Widget> controls) {
+  final out = <Widget>[];
+  for (var index = 0; index < controls.length; index++) {
+    if (index > 0) {
+      out.add(const SizedBox(width: 12));
+    }
+    out.add(controls[index]);
+  }
+  return out;
+}
+
+DateTime _dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
+
+DateTime _startOfWeek(DateTime date) {
+  final day = _dateOnly(date);
+  return day.subtract(Duration(days: day.weekday - DateTime.monday));
+}
+
+DateTime _addMonths(DateTime date, int months) {
+  final target = DateTime(date.year, date.month + months);
+  final lastDay = DateTime(target.year, target.month + 1, 0).day;
+  return DateTime(target.year, target.month, math.min(date.day, lastDay));
+}
+
+bool _sameDate(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+String _calendarDateLabel(DateTime date) {
+  return '${_shortMonthName(date.month)} ${date.day}, ${date.year}';
+}
+
+String _formatDayTitle(DateTime date) => _calendarDateLabel(date);
+
+String _formatWeekTitle(DateTime date) {
+  final start = _startOfWeek(date);
+  final end = start.add(const Duration(days: 6));
+  if (start.year == end.year && start.month == end.month) {
+    return '${_shortMonthName(start.month)} ${start.day} - ${end.day}, ${start.year}';
+  }
+  return '${_calendarDateLabel(start)} - ${_calendarDateLabel(end)}';
+}
+
+String _shortDateLabel(DateTime date) =>
+    '${_shortMonthName(date.month)} ${date.day}';
+
+String _monthName(int month) => const [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ][month - 1];
+
+String _shortMonthName(int month) => const [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][month - 1];
+
+Color _calendarStatusColor(BuildContext context, String status) {
+  final scheme = Theme.of(context).colorScheme;
+  return switch (status) {
+    'ONLINE' || 'COMPLETED' || 'RUNNING' => const Color(0xff13795b),
+    'CREATED' || 'REGISTERED' || 'ASSIGNED' => const Color(0xff476a99),
+    'STARTING' || 'WAITING_INPUT' || 'INTERRUPTING' => const Color(0xff9a6700),
+    'FAILED' || 'ERROR' => scheme.error,
+    'ARCHIVED' ||
+    'DISABLED' ||
+    'OFFLINE' ||
+    'INTERRUPTED' => scheme.onSurfaceVariant,
+    _ => scheme.primary,
+  };
 }
 
 Future<bool?> showTaskFormDialog(
