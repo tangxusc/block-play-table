@@ -52,6 +52,73 @@ func TestTaskLifecycleEmitsEventsAndRejectsInvalidTransitions(t *testing.T) {
 	}
 }
 
+func TestTaskDisplayDatesDefaultExplicitUpdateAndValidation(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 30, 0, 0, time.UTC)
+	defaultDate := time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC)
+	task, err := NewTask(NewTaskInput{
+		ID:        "task-dates",
+		Title:     "Dates",
+		ProjectID: "project-1",
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("NewTask returned error: %v", err)
+	}
+	if !task.StartDate.Equal(defaultDate) || !task.EndDate.Equal(defaultDate) {
+		t.Fatalf("default display dates = %s %s, want %s", task.StartDate, task.EndDate, defaultDate)
+	}
+
+	start := time.Date(2026, 5, 1, 18, 0, 0, 0, time.FixedZone("test", 8*60*60))
+	end := time.Date(2026, 5, 3, 6, 0, 0, 0, time.UTC)
+	explicit, err := NewTask(NewTaskInput{
+		ID:        "task-explicit-dates",
+		Title:     "Explicit Dates",
+		ProjectID: "project-1",
+		StartDate: start,
+		EndDate:   end,
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("NewTask explicit returned error: %v", err)
+	}
+	if want := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC); !explicit.StartDate.Equal(want) {
+		t.Fatalf("explicit start date = %s, want %s", explicit.StartDate, want)
+	}
+	if want := time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC); !explicit.EndDate.Equal(want) {
+		t.Fatalf("explicit end date = %s, want %s", explicit.EndDate, want)
+	}
+
+	if err := task.Update(NewTaskInput{Title: "Dates updated", ProjectID: "project-1", Now: now.Add(time.Hour)}); err != nil {
+		t.Fatalf("Update without dates returned error: %v", err)
+	}
+	if !task.StartDate.Equal(defaultDate) || !task.EndDate.Equal(defaultDate) {
+		t.Fatalf("update without dates should preserve dates: %s %s", task.StartDate, task.EndDate)
+	}
+	if err := task.Update(NewTaskInput{
+		Title:     "Dates moved",
+		ProjectID: "project-1",
+		StartDate: time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC),
+		Now:       now.Add(2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Update with dates returned error: %v", err)
+	}
+	if !task.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !task.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("updated display dates = %s %s", task.StartDate, task.EndDate)
+	}
+
+	if _, err := NewTask(NewTaskInput{
+		ID:        "task-bad-dates",
+		Title:     "Bad Dates",
+		ProjectID: "project-1",
+		StartDate: time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC),
+		Now:       now,
+	}); err == nil {
+		t.Fatal("NewTask should reject endDate before startDate")
+	}
+}
+
 func TestWorkerCanAcceptTaskHonorsStatusAgentProjectAndOccupancy(t *testing.T) {
 	worker, err := NewWorker(NewWorkerInput{
 		ID:                 "worker-1",

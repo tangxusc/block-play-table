@@ -97,6 +97,8 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('Create task'), findsOneWidget);
       expect(find.text('Target branch'), findsNothing);
+      expect(find.textContaining('Start date:'), findsOneWidget);
+      expect(find.textContaining('End date:'), findsOneWidget);
       expect(find.text('Codex'), findsNothing);
       expect(find.text('Unassigned'), findsOneWidget);
     },
@@ -174,7 +176,7 @@ void main() {
     expect(find.text('Overflow task 0'), findsOneWidget);
     expect(find.text('Overflow task 17'), findsNothing);
 
-    await tester.drag(find.text('Overflow task 0'), const Offset(0, -1200));
+    await tester.drag(find.text('Overflow task 0'), const Offset(0, -2400));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -196,6 +198,8 @@ void main() {
     expect(apiClient.createdTaskTitle, 'Agentless task');
     expect(apiClient.createdTaskWorkerId, isNull);
     expect(apiClient.createdTaskAgentType, isNull);
+    expect(apiClient.createdTaskStartDate, isNotEmpty);
+    expect(apiClient.createdTaskEndDate, apiClient.createdTaskStartDate);
   });
 
   testWidgets('selecting worker enables supported agent selection on create', (
@@ -532,6 +536,8 @@ class FakeApiClient extends ApiClient {
   String? createdTaskTitle;
   String? createdTaskWorkerId;
   String? createdTaskAgentType;
+  String? createdTaskStartDate;
+  String? createdTaskEndDate;
   String? continuedTaskId;
   String? continuedMessage;
   SettingsData? savedSettings;
@@ -610,10 +616,14 @@ class FakeApiClient extends ApiClient {
     String baseBranch = 'main',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
+    String? startDate,
+    String? endDate,
   }) async {
     createdTaskTitle = title;
     createdTaskWorkerId = workerId;
     createdTaskAgentType = agentType;
+    createdTaskStartDate = startDate;
+    createdTaskEndDate = endDate;
   }
 
   @override
@@ -717,6 +727,8 @@ final _task = TaskItem(
   baseBranch: 'main',
   preCommands: const [],
   postCommands: const [],
+  startDate: '2026-04-25T00:00:00Z',
+  endDate: '2026-04-26T00:00:00Z',
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:00Z',
 );
@@ -735,6 +747,8 @@ TaskItem _taskWith({
       baseBranch: _task.baseBranch,
       preCommands: _task.preCommands,
       postCommands: _task.postCommands,
+      startDate: _task.startDate,
+      endDate: _task.endDate,
       createdAt: _task.createdAt,
       updatedAt: _task.updatedAt,
       workerId: _task.workerId,
@@ -753,6 +767,8 @@ final _completedTask = TaskItem(
   baseBranch: 'main',
   preCommands: const [],
   postCommands: const [],
+  startDate: '2026-04-25T00:00:00Z',
+  endDate: '2026-04-26T00:00:00Z',
   result: 'done',
   agentSessionId: 'session-1',
   createdAt: '2026-04-25T00:00:00Z',

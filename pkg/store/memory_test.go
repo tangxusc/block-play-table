@@ -30,6 +30,8 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 		ProjectID:  project.ID,
 		AgentType:  domain.AgentCodex,
 		BaseBranch: "main",
+		StartDate:  now.Add(24 * time.Hour),
+		EndDate:    now.Add(48 * time.Hour),
 		Now:        now,
 	})
 	if err != nil {
@@ -57,7 +59,7 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Task returned error: %v", err)
 	}
-	if loaded.Title != "Task" || loaded.AgentSessionID != "session-memory" {
+	if loaded.Title != "Task" || loaded.AgentSessionID != "session-memory" || !loaded.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !loaded.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("loaded task = %+v", loaded)
 	}
 	logs, err := s.TaskLogs(ctx, task.ID)

@@ -50,6 +50,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "003_drop_task_target_branch", SQL: migrations.DropTaskBranchSQL},
 		{Version: "004_worker_agent_runtime_env", SQL: migrations.WorkerAgentRuntimeEnvSQL},
 		{Version: "005_task_agent_session", SQL: migrations.TaskAgentSessionSQL},
+		{Version: "006_task_display_dates", SQL: migrations.TaskDisplayDatesSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -84,6 +85,20 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if !hasTaskAgentSession {
 		t.Fatal("tasks.agent_session_id should exist after versioned migrations")
+	}
+	hasTaskStartDate, err := sqliteTableHasColumn(ctx, sqlStore, "tasks", "start_date")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTaskStartDate {
+		t.Fatal("tasks.start_date should exist after versioned migrations")
+	}
+	hasTaskEndDate, err := sqliteTableHasColumn(ctx, sqlStore, "tasks", "end_date")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTaskEndDate {
+		t.Fatal("tasks.end_date should exist after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -132,7 +147,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker.Connect(now)
-	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-list", Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main", PreCommands: []string{"pre"}, PostCommands: []string{"post"}, Now: now})
+	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-list", Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main", PreCommands: []string{"pre"}, PostCommands: []string{"post"}, StartDate: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC), EndDate: time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC), Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +167,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if workers, err := sqlStore.Workers(ctx); err != nil || len(workers) != 1 || workers[0].StartupCommand != "boot" || workers[0].LastHeartbeatAt == nil || workers[0].EnabledRuntimeEnv(domain.AgentCodex)[0].Value != "secret" {
 		t.Fatalf("Workers = %+v, %v", workers, err)
 	}
-	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 || tasks[0].AgentSessionID != "session-list" {
+	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 || tasks[0].AgentSessionID != "session-list" || !tasks[0].StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !tasks[0].EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("Tasks = %+v, %v", tasks, err)
 	}
 	if err := sqlStore.AppendEvents(ctx, nil); err != nil {
@@ -295,6 +310,8 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 		BaseBranch:   "main",
 		PreCommands:  []string{"make pre"},
 		PostCommands: []string{"make post"},
+		StartDate:    time.Date(2026, 4, 26, 8, 0, 0, 0, time.UTC),
+		EndDate:      time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC),
 		Now:          now,
 	})
 	if err != nil {
@@ -329,7 +346,7 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if err != nil {
 		t.Fatalf("Task returned error: %v", err)
 	}
-	if loadedTask.Title != "SQL Task" || len(loadedTask.PreCommands) != 1 || loadedTask.PreCommands[0] != "make pre" || loadedTask.AgentSessionID != "session-sql" {
+	if loadedTask.Title != "SQL Task" || len(loadedTask.PreCommands) != 1 || loadedTask.PreCommands[0] != "make pre" || loadedTask.AgentSessionID != "session-sql" || !loadedTask.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !loadedTask.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("loaded task = %+v", loadedTask)
 	}
 	loadedWorker, err := reopened.Worker(ctx, workerID)

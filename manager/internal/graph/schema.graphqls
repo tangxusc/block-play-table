@@ -51,6 +51,8 @@ type Task {
   preCommands: [String!]!
   postCommands: [String!]!
   result: String
+  startDate: Time!
+  endDate: Time!
   version: Int!
   createdAt: Time!
   updatedAt: Time!
@@ -217,6 +219,8 @@ input CreateTaskInput {
   baseBranch: String
   preCommands: [String!]
   postCommands: [String!]
+  startDate: Time
+  endDate: Time
 }
 
 input UpdateTaskInput {
@@ -228,6 +232,8 @@ input UpdateTaskInput {
   baseBranch: String
   preCommands: [String!]
   postCommands: [String!]
+  startDate: Time
+  endDate: Time
 }
 
 input AssignWorkerInput {

@@ -457,14 +457,43 @@ class _TaskCard extends StatelessWidget {
                     StatusPill(value: task.agentType),
                 ],
               ),
+              const SizedBox(height: 8),
+              _TaskCardDetail(
+                icon: Icons.date_range,
+                text: _taskDateRangeLabel(task),
+              ),
               if ((task.workerId ?? '').isNotEmpty) ...[
                 const SizedBox(height: 8),
-                DetailText(icon: Icons.memory, text: task.workerId!),
+                _TaskCardDetail(icon: Icons.memory, text: task.workerId!),
               ],
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _TaskCardDetail extends StatelessWidget {
+  const _TaskCardDetail({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Theme.of(context).colorScheme.outline),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -496,7 +525,7 @@ class _TaskListView extends StatelessWidget {
             leading: const Icon(Icons.task_alt),
             title: Text(task.title),
             subtitle: Text(
-              '${project ?? task.projectId}  ${worker ?? task.workerId ?? 'Unassigned'}',
+              '${project ?? task.projectId}  ${worker ?? task.workerId ?? 'Unassigned'}  ${_taskDateRangeLabel(task)}',
             ),
             trailing: Wrap(
               spacing: 8,
@@ -569,6 +598,43 @@ String _agentLabel(String agent) => switch (agent) {
       _ => agent,
     };
 
+DateTime _todayTaskDate() {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+}
+
+DateTime _taskDateFromIso(String value, DateTime fallback) {
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) {
+    return fallback;
+  }
+  final utc = parsed.toUtc();
+  return DateTime(utc.year, utc.month, utc.day);
+}
+
+String _taskDateLabel(DateTime date) {
+  final year = date.year.toString().padLeft(4, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '$year-$month-$day';
+}
+
+String _taskDateIso(DateTime date) =>
+    DateTime.utc(date.year, date.month, date.day).toIso8601String();
+
+String _taskDateRangeLabel(TaskItem task) {
+  final fallback = _taskDateFromIso(task.createdAt, _todayTaskDate());
+  final startDate = _taskDateFromIso(task.startDate, fallback);
+  var endDate = _taskDateFromIso(task.endDate, startDate);
+  if (endDate.isBefore(startDate)) {
+    endDate = startDate;
+  }
+  if (endDate == startDate) {
+    return _taskDateLabel(startDate);
+  }
+  return '${_taskDateLabel(startDate)} - ${_taskDateLabel(endDate)}';
+}
+
 class _CalendarView extends StatelessWidget {
   const _CalendarView({
     required this.items,
@@ -590,7 +656,7 @@ class _CalendarView extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.event),
             title: Text(item.task.title),
-            subtitle: Text(item.date),
+            subtitle: Text(_taskDateRangeLabel(item.task)),
             trailing: Wrap(
               spacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
@@ -628,6 +694,14 @@ Future<bool?> showTaskFormDialog(
   final postCommands = TextEditingController(
     text: task?.postCommands.join('\n') ?? '',
   );
+  DateTime startDate = _taskDateFromIso(
+    task?.startDate ?? '',
+    _todayTaskDate(),
+  );
+  DateTime endDate = _taskDateFromIso(task?.endDate ?? '', startDate);
+  if (endDate.isBefore(startDate)) {
+    endDate = startDate;
+  }
   String? projectId = task?.projectId ??
       (data.projects.isNotEmpty ? data.projects.first.id : null);
   String selectedWorkerId = task?.workerId ?? '';
@@ -675,6 +749,7 @@ Future<bool?> showTaskFormDialog(
             selectedWorker?.supportedAgents ?? const <String>[];
         final canSave = title.text.trim().isNotEmpty &&
             projectId != null &&
+            !endDate.isBefore(startDate) &&
             (selectedWorkerId.isEmpty || selectedAgent != null);
 
         return AlertDialog(
@@ -714,6 +789,45 @@ Future<bool?> showTaskFormDialog(
                       reconcileCreateSelection();
                     }),
                   ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _TaskDateField(
+                          label: 'Start date',
+                          value: startDate,
+                          onChanged: (value) => setState(() {
+                            startDate = value;
+                            if (endDate.isBefore(startDate)) {
+                              endDate = startDate;
+                            }
+                          }),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _TaskDateField(
+                          label: 'End date',
+                          value: endDate,
+                          onChanged: (value) => setState(() {
+                            endDate = value;
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (endDate.isBefore(startDate)) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'End date must be on or after start date.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: baseBranch,
@@ -808,6 +922,8 @@ Future<bool?> showTaskFormDialog(
                               : baseBranch.text.trim(),
                           preCommands: stringList(preCommands.text),
                           postCommands: stringList(postCommands.text),
+                          startDate: _taskDateIso(startDate),
+                          endDate: _taskDateIso(endDate),
                         );
                       } else {
                         await apiClient.updateTask(
@@ -823,10 +939,13 @@ Future<bool?> showTaskFormDialog(
                                 : baseBranch.text.trim(),
                             preCommands: stringList(preCommands.text),
                             postCommands: stringList(postCommands.text),
+                            startDate: _taskDateIso(startDate),
+                            endDate: _taskDateIso(endDate),
                             createdAt: task.createdAt,
                             updatedAt: task.updatedAt,
                             workerId: task.workerId,
                             worktreePath: task.worktreePath,
+                            agentSessionId: task.agentSessionId,
                             result: task.result,
                           ),
                         );
@@ -843,6 +962,37 @@ Future<bool?> showTaskFormDialog(
       },
     ),
   );
+}
+
+class _TaskDateField extends StatelessWidget {
+  const _TaskDateField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final DateTime value;
+  final ValueChanged<DateTime> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      icon: const Icon(Icons.event_outlined),
+      label: Text('$label: ${_taskDateLabel(value)}'),
+      onPressed: () async {
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: value,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+        );
+        if (picked != null) {
+          onChanged(DateTime(picked.year, picked.month, picked.day));
+        }
+      },
+    );
+  }
 }
 
 Future<bool?> showTaskDetailDialog(
@@ -1139,6 +1289,10 @@ class _TaskDetailBody extends StatelessWidget {
               if (task.agentType.isNotEmpty)
                 DetailText(icon: Icons.terminal, text: task.agentType),
               DetailText(icon: Icons.folder_copy, text: task.projectId),
+              DetailText(
+                icon: Icons.date_range,
+                text: _taskDateRangeLabel(task),
+              ),
               if ((task.workerId ?? '').isNotEmpty)
                 DetailText(icon: Icons.memory, text: task.workerId!),
             ],

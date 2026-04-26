@@ -116,6 +116,8 @@ class TaskItem {
     required this.baseBranch,
     required this.preCommands,
     required this.postCommands,
+    required this.startDate,
+    required this.endDate,
     required this.createdAt,
     required this.updatedAt,
     this.workerId,
@@ -134,6 +136,13 @@ class TaskItem {
     baseBranch: json['baseBranch'] as String? ?? 'main',
     preCommands: stringList(json['preCommands']),
     postCommands: stringList(json['postCommands']),
+    startDate: (json['startDate'] as String?) ??
+        (json['createdAt'] as String?) ??
+        '',
+    endDate: (json['endDate'] as String?) ??
+        (json['startDate'] as String?) ??
+        (json['createdAt'] as String?) ??
+        '',
     createdAt: json['createdAt'] as String? ?? '',
     updatedAt: json['updatedAt'] as String? ?? '',
     workerId: json['workerId'] as String?,
@@ -151,6 +160,8 @@ class TaskItem {
   final String baseBranch;
   final List<String> preCommands;
   final List<String> postCommands;
+  final String startDate;
+  final String endDate;
   final String createdAt;
   final String updatedAt;
   final String? workerId;

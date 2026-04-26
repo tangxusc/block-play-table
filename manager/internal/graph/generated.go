@@ -177,11 +177,13 @@ type ComplexityRoot struct {
 		BaseBranch     func(childComplexity int) int
 		CreatedAt      func(childComplexity int) int
 		Description    func(childComplexity int) int
+		EndDate        func(childComplexity int) int
 		ID             func(childComplexity int) int
 		PostCommands   func(childComplexity int) int
 		PreCommands    func(childComplexity int) int
 		ProjectID      func(childComplexity int) int
 		Result         func(childComplexity int) int
+		StartDate      func(childComplexity int) int
 		Status         func(childComplexity int) int
 		Title          func(childComplexity int) int
 		UpdatedAt      func(childComplexity int) int
@@ -1079,6 +1081,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Task.Description(childComplexity), true
+	case "Task.endDate":
+		if e.ComplexityRoot.Task.EndDate == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Task.EndDate(childComplexity), true
 	case "Task.id":
 		if e.ComplexityRoot.Task.ID == nil {
 			break
@@ -1109,6 +1117,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Task.Result(childComplexity), true
+	case "Task.startDate":
+		if e.ComplexityRoot.Task.StartDate == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Task.StartDate(childComplexity), true
 	case "Task.status":
 		if e.ComplexityRoot.Task.Status == nil {
 			break
@@ -2322,6 +2336,10 @@ func (ec *executionContext) fieldContext_Board_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -2414,6 +2432,10 @@ func (ec *executionContext) fieldContext_BoardCalendarItem_task(_ context.Contex
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -2622,6 +2644,10 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3185,6 +3211,10 @@ func (ec *executionContext) fieldContext_Mutation_createTask(ctx context.Context
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3260,6 +3290,10 @@ func (ec *executionContext) fieldContext_Mutation_updateTask(ctx context.Context
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3335,6 +3369,10 @@ func (ec *executionContext) fieldContext_Mutation_assignWorker(ctx context.Conte
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3410,6 +3448,10 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3485,6 +3527,10 @@ func (ec *executionContext) fieldContext_Mutation_continueTask(ctx context.Conte
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3560,6 +3606,10 @@ func (ec *executionContext) fieldContext_Mutation_interruptTask(ctx context.Cont
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3635,6 +3685,10 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -3710,6 +3764,10 @@ func (ec *executionContext) fieldContext_Mutation_retryTask(ctx context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -4928,6 +4986,10 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -5050,6 +5112,10 @@ func (ec *executionContext) fieldContext_Query_taskList(ctx context.Context, fie
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -6673,6 +6739,64 @@ func (ec *executionContext) fieldContext_Task_result(_ context.Context, field gr
 	return fc, nil
 }
 
+func (ec *executionContext) _Task_startDate(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_startDate,
+		func(ctx context.Context) (any, error) {
+			return obj.StartDate, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_startDate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Task_endDate(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_endDate,
+		func(ctx context.Context) (any, error) {
+			return obj.EndDate, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_endDate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Task_version(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6810,6 +6934,10 @@ func (ec *executionContext) fieldContext_TaskConnection_nodes(_ context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "startDate":
+				return ec.fieldContext_Task_startDate(ctx, field)
+			case "endDate":
+				return ec.fieldContext_Task_endDate(ctx, field)
 			case "version":
 				return ec.fieldContext_Task_version(ctx, field)
 			case "createdAt":
@@ -9161,7 +9289,7 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "baseBranch", "preCommands", "postCommands"}
+	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9224,6 +9352,20 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.PostCommands = data
+		case "startDate":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("startDate"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.StartDate = data
+		case "endDate":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("endDate"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.EndDate = data
 		}
 	}
 	return it, nil
@@ -9706,7 +9848,7 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "preCommands", "postCommands"}
+	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9769,6 +9911,20 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.PostCommands = data
+		case "startDate":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("startDate"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.StartDate = data
+		case "endDate":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("endDate"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.EndDate = data
 		}
 	}
 	return it, nil
@@ -11221,6 +11377,16 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			}
 		case "result":
 			out.Values[i] = ec._Task_result(ctx, field, obj)
+		case "startDate":
+			out.Values[i] = ec._Task_startDate(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "endDate":
+			out.Values[i] = ec._Task_endDate(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "version":
 			out.Values[i] = ec._Task_version(ctx, field, obj)
 			if out.Values[i] == graphql.Null {

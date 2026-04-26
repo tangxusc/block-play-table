@@ -41,6 +41,14 @@ func toModelTask(task *domain.Task) *model.Task {
 		value := model.AgentType(task.AgentType)
 		agentType = &value
 	}
+	startDate := modelTaskDisplayDate(task.StartDate)
+	if startDate.IsZero() {
+		startDate = modelTaskDisplayDate(task.CreatedAt)
+	}
+	endDate := modelTaskDisplayDate(task.EndDate)
+	if endDate.IsZero() {
+		endDate = startDate
+	}
 	return &model.Task{
 		ID:             task.ID,
 		Title:          task.Title,
@@ -55,10 +63,21 @@ func toModelTask(task *domain.Task) *model.Task {
 		PreCommands:    append([]string(nil), task.PreCommands...),
 		PostCommands:   append([]string(nil), task.PostCommands...),
 		Result:         optionalString(task.Result),
+		StartDate:      startDate,
+		EndDate:        endDate,
 		Version:        task.Version,
 		CreatedAt:      task.CreatedAt,
 		UpdatedAt:      task.UpdatedAt,
 	}
+}
+
+func modelTaskDisplayDate(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	utc := value.UTC()
+	year, month, day := utc.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 func toModelTasks(tasks []*domain.Task) []*model.Task {

@@ -63,7 +63,7 @@ class ApiClient {
               status
               tasks {
                 id title description status projectId agentType baseBranch
-                workerId worktreePath agentSessionId preCommands postCommands result createdAt updatedAt
+                workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
               }
             }
             calendarItems {
@@ -72,12 +72,12 @@ class ApiClient {
               status
               task {
                 id title description status projectId agentType baseBranch
-                workerId worktreePath agentSessionId preCommands postCommands result createdAt updatedAt
+                workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
               }
             }
             tasks {
               id title description status projectId agentType baseBranch
-              workerId worktreePath agentSessionId preCommands postCommands result createdAt updatedAt
+              workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
             }
           }
         }
@@ -162,7 +162,7 @@ class ApiClient {
         query Task($id: ID!) {
           task(id: $id) {
             id title description status projectId agentType baseBranch
-            workerId worktreePath agentSessionId preCommands postCommands result createdAt updatedAt
+            workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
           }
         }
         ''',
@@ -305,6 +305,8 @@ class ApiClient {
     String baseBranch = 'main',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
+    String? startDate,
+    String? endDate,
   }) {
     final input = {
       'title': title,
@@ -315,6 +317,8 @@ class ApiClient {
       'baseBranch': baseBranch,
       'preCommands': preCommands,
       'postCommands': postCommands,
+      if ((startDate ?? '').isNotEmpty) 'startDate': startDate,
+      if ((endDate ?? '').isNotEmpty) 'endDate': endDate,
     };
     return graphQL(
       r'''
@@ -342,6 +346,8 @@ class ApiClient {
         'baseBranch': task.baseBranch,
         'preCommands': task.preCommands,
         'postCommands': task.postCommands,
+        'startDate': task.startDate,
+        'endDate': task.endDate,
       },
     },
   ).then((_) {});

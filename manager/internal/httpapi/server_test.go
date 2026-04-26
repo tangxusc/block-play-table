@@ -32,10 +32,14 @@ func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
 		t.Fatalf("registered worker status = %v, want ONLINE", got)
 	}
 
-	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status } }`, map[string]any{
+	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status startDate endDate } }`, map[string]any{
 		"input": map[string]any{"title": "Implement", "projectId": projectID, "agentType": "codex", "baseBranch": "main"},
 	})
-	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
+	createdTask := task["data"].(map[string]any)["createTask"].(map[string]any)
+	taskID := createdTask["id"].(string)
+	if createdTask["startDate"] != "2026-04-25T00:00:00Z" || createdTask["endDate"] != "2026-04-25T00:00:00Z" {
+		t.Fatalf("default task dates = %+v", createdTask)
+	}
 	assigned := postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { status workerId } }`, map[string]any{
 		"taskId": taskID, "workerId": "worker-1",
 	})
@@ -43,9 +47,13 @@ func TestServerTrustedGraphQLFlowDoesNotRequireAuthHeaders(t *testing.T) {
 		t.Fatalf("assigned status = %v, want ASSIGNED", got)
 	}
 
-	tasks := postGraphQL(t, server.URL, `query { tasks { nodes { id title status } totalCount } }`, nil)
+	tasks := postGraphQL(t, server.URL, `query { tasks { nodes { id title status startDate endDate } totalCount } }`, nil)
 	if got := int(tasks["data"].(map[string]any)["tasks"].(map[string]any)["totalCount"].(float64)); got != 1 {
 		t.Fatalf("tasks count = %d, want 1", got)
+	}
+	firstTask := tasks["data"].(map[string]any)["tasks"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+	if firstTask["startDate"] != "2026-04-25T00:00:00Z" || firstTask["endDate"] != "2026-04-25T00:00:00Z" {
+		t.Fatalf("queried task dates = %+v", firstTask)
 	}
 }
 
@@ -75,8 +83,8 @@ func TestServerGraphQLCreatesAgentlessAndWorkerAssignedTasks(t *testing.T) {
 		t.Fatalf("agentless agentType = %v, want nil", got)
 	}
 
-	assigned := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status agentType workerId } }`, map[string]any{
-		"input": map[string]any{"title": "Assigned", "projectId": projectID, "workerId": "worker-1", "agentType": "codex"},
+	assigned := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id status agentType workerId startDate endDate } }`, map[string]any{
+		"input": map[string]any{"title": "Assigned", "projectId": projectID, "workerId": "worker-1", "agentType": "codex", "startDate": "2026-05-01T00:00:00Z", "endDate": "2026-05-03T00:00:00Z"},
 	})
 	assignedTask := assigned["data"].(map[string]any)["createTask"].(map[string]any)
 	if got := assignedTask["status"]; got != string(domain.TaskAssigned) {
@@ -87,6 +95,9 @@ func TestServerGraphQLCreatesAgentlessAndWorkerAssignedTasks(t *testing.T) {
 	}
 	if got := assignedTask["workerId"]; got != "worker-1" {
 		t.Fatalf("assigned workerId = %v, want worker-1", got)
+	}
+	if assignedTask["startDate"] != "2026-05-01T00:00:00Z" || assignedTask["endDate"] != "2026-05-03T00:00:00Z" {
+		t.Fatalf("assigned task dates = %+v", assignedTask)
 	}
 }
 

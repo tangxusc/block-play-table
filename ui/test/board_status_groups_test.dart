@@ -67,6 +67,8 @@ TaskItem _task(String id, String status) => TaskItem(
       baseBranch: 'main',
       preCommands: const [],
       postCommands: const [],
+      startDate: '2026-04-25T00:00:00Z',
+      endDate: '2026-04-25T00:00:00Z',
       createdAt: '2026-04-25T00:00:00Z',
       updatedAt: '2026-04-25T00:00:00Z',
     );

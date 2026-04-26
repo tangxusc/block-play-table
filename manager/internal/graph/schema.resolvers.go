@@ -8,6 +8,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/graph/model"
@@ -20,6 +21,14 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 	if input.AgentType != nil {
 		agentType = domain.AgentType(*input.AgentType)
 	}
+	var startDate time.Time
+	if input.StartDate != nil {
+		startDate = *input.StartDate
+	}
+	var endDate time.Time
+	if input.EndDate != nil {
+		endDate = *input.EndDate
+	}
 	task, err := r.Service.CreateTask(ctx, app.CreateTaskInput{
 		Title:        input.Title,
 		Description:  valueOrEmpty(input.Description),
@@ -29,6 +38,8 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
+		StartDate:    startDate,
+		EndDate:      endDate,
 	})
 	return toModelTask(task), err
 }
@@ -39,6 +50,14 @@ func (r *mutationResolver) UpdateTask(ctx context.Context, input model.UpdateTas
 	if input.AgentType != nil {
 		agentType = domain.AgentType(*input.AgentType)
 	}
+	var startDate time.Time
+	if input.StartDate != nil {
+		startDate = *input.StartDate
+	}
+	var endDate time.Time
+	if input.EndDate != nil {
+		endDate = *input.EndDate
+	}
 	task, err := r.Service.UpdateTask(ctx, app.UpdateTaskInput{
 		ID:           input.ID,
 		Title:        input.Title,
@@ -48,6 +67,8 @@ func (r *mutationResolver) UpdateTask(ctx context.Context, input model.UpdateTas
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
+		StartDate:    startDate,
+		EndDate:      endDate,
 	})
 	return toModelTask(task), err
 }
@@ -317,7 +338,8 @@ func (r *queryResolver) Board(ctx context.Context, id *string) (*model.Board, er
 	columns := boardColumns(tasks)
 	calendarItems := make([]*model.BoardCalendarItem, 0, len(tasks))
 	for _, task := range tasks {
-		calendarItems = append(calendarItems, &model.BoardCalendarItem{ID: task.ID, Task: toModelTask(task), Date: task.CreatedAt, Status: model.TaskStatus(task.Status)})
+		modelTask := toModelTask(task)
+		calendarItems = append(calendarItems, &model.BoardCalendarItem{ID: task.ID, Task: modelTask, Date: modelTask.StartDate, Status: model.TaskStatus(task.Status)})
 	}
 	return &model.Board{ID: boardID, Name: name, Type: boardType, Columns: columns, CalendarItems: calendarItems, Tasks: toModelTasks(tasks)}, nil
 }

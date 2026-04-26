@@ -185,6 +185,8 @@ type CreateTaskInput struct {
 	BaseBranch   string           `json:"baseBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
+	StartDate    time.Time        `json:"startDate"`
+	EndDate      time.Time        `json:"endDate"`
 }
 
 type UpdateTaskInput struct {
@@ -196,6 +198,8 @@ type UpdateTaskInput struct {
 	BaseBranch   string           `json:"baseBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
+	StartDate    time.Time        `json:"startDate"`
+	EndDate      time.Time        `json:"endDate"`
 }
 
 type ContinueTaskInput struct {
@@ -237,6 +241,8 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
+		StartDate:    input.StartDate,
+		EndDate:      input.EndDate,
 		Now:          now,
 	})
 	if err != nil {
@@ -353,6 +359,8 @@ func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*domai
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
+		StartDate:    input.StartDate,
+		EndDate:      input.EndDate,
 		Now:          now,
 	}); err != nil {
 		return nil, err

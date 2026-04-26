@@ -250,10 +250,18 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	if err != nil {
 		return err
 	}
+	startDate := storeTaskDisplayDate(task.StartDate)
+	if startDate.IsZero() {
+		startDate = storeTaskDisplayDate(task.CreatedAt)
+	}
+	endDate := storeTaskDisplayDate(task.EndDate)
+	if endDate.IsZero() {
+		endDate = startDate
+	}
 	_, err = s.db.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "version", "created_at", "updated_at"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at"},
 	),
 		task.ID,
 		task.Title,
@@ -268,6 +276,8 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		preCommands,
 		postCommands,
 		nullableString(task.Result),
+		startDate,
+		endDate,
 		task.Version,
 		task.CreatedAt,
 		task.UpdatedAt,
@@ -276,7 +286,7 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -288,7 +298,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -810,15 +820,29 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var worktreePath sql.NullString
 	var agentSessionID sql.NullString
 	var result sql.NullString
+	var startDate sql.NullTime
+	var endDate sql.NullTime
 	var preCommands string
 	var postCommands string
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)
 	task.WorktreePath = fromNullString(worktreePath)
 	task.AgentSessionID = fromNullString(agentSessionID)
 	task.Result = fromNullString(result)
+	if startDate.Valid {
+		task.StartDate = storeTaskDisplayDate(startDate.Time)
+	}
+	if task.StartDate.IsZero() {
+		task.StartDate = storeTaskDisplayDate(task.CreatedAt)
+	}
+	if endDate.Valid {
+		task.EndDate = storeTaskDisplayDate(endDate.Time)
+	}
+	if task.EndDate.IsZero() {
+		task.EndDate = task.StartDate
+	}
 	if err := decodeJSON(preCommands, &task.PreCommands); err != nil {
 		return nil, err
 	}
@@ -826,6 +850,15 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 		return nil, err
 	}
 	return &task, nil
+}
+
+func storeTaskDisplayDate(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	utc := value.UTC()
+	year, month, day := utc.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 func scanProject(scanner interface{ Scan(...any) error }) (*domain.Project, error) {

@@ -34,6 +34,8 @@ type Task struct {
 	PreCommands    []string   `json:"preCommands"`
 	PostCommands   []string   `json:"postCommands"`
 	Result         string     `json:"result,omitempty"`
+	StartDate      time.Time  `json:"startDate"`
+	EndDate        time.Time  `json:"endDate"`
 	Version        int        `json:"version"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
@@ -50,6 +52,8 @@ type NewTaskInput struct {
 	BaseBranch   string
 	PreCommands  []string
 	PostCommands []string
+	StartDate    time.Time
+	EndDate      time.Time
 	Now          time.Time
 }
 
@@ -69,6 +73,11 @@ func NewTask(input NewTaskInput) (*Task, error) {
 	if input.BaseBranch == "" {
 		input.BaseBranch = "main"
 	}
+	startDate := defaultTaskDisplayDate(input.StartDate, input.Now)
+	endDate := defaultTaskDisplayDate(input.EndDate, input.Now)
+	if err := validateTaskDisplayDates(startDate, endDate); err != nil {
+		return nil, err
+	}
 	task := &Task{
 		ID:           input.ID,
 		Title:        input.Title,
@@ -79,11 +88,13 @@ func NewTask(input NewTaskInput) (*Task, error) {
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
+		StartDate:    startDate,
+		EndDate:      endDate,
 		Version:      1,
 		CreatedAt:    input.Now,
 		UpdatedAt:    input.Now,
 	}
-	task.addEvent("TaskCreated", map[string]any{"title": task.Title, "projectId": task.ProjectID}, input.Now)
+	task.addEvent("TaskCreated", map[string]any{"title": task.Title, "projectId": task.ProjectID, "startDate": task.StartDate, "endDate": task.EndDate}, input.Now)
 	return task, nil
 }
 
@@ -131,6 +142,17 @@ func (t *Task) Update(input NewTaskInput) error {
 	if input.BaseBranch == "" {
 		input.BaseBranch = "main"
 	}
+	startDate := taskDisplayDate(input.StartDate)
+	if startDate.IsZero() {
+		startDate = defaultTaskDisplayDate(t.StartDate, input.Now)
+	}
+	endDate := taskDisplayDate(input.EndDate)
+	if endDate.IsZero() {
+		endDate = defaultTaskDisplayDate(t.EndDate, input.Now)
+	}
+	if err := validateTaskDisplayDates(startDate, endDate); err != nil {
+		return err
+	}
 	t.Title = input.Title
 	t.Description = input.Description
 	t.ProjectID = input.ProjectID
@@ -138,8 +160,10 @@ func (t *Task) Update(input NewTaskInput) error {
 	t.BaseBranch = input.BaseBranch
 	t.PreCommands = append([]string(nil), input.PreCommands...)
 	t.PostCommands = append([]string(nil), input.PostCommands...)
+	t.StartDate = startDate
+	t.EndDate = endDate
 	t.touch(input.Now)
-	t.addEvent("TaskUpdated", map[string]any{"title": t.Title, "projectId": t.ProjectID}, input.Now)
+	t.addEvent("TaskUpdated", map[string]any{"title": t.Title, "projectId": t.ProjectID, "startDate": t.StartDate, "endDate": t.EndDate}, input.Now)
 	return nil
 }
 
@@ -339,6 +363,33 @@ func (t *Task) touch(now time.Time) {
 
 func (t *Task) addEvent(eventType string, payload any, now time.Time) {
 	t.pendingEvents = append(t.pendingEvents, newEvent(eventType, "Task", t.ID, t.Version, payload, now))
+}
+
+func defaultTaskDisplayDate(value, fallback time.Time) time.Time {
+	date := taskDisplayDate(value)
+	if !date.IsZero() {
+		return date
+	}
+	return taskDisplayDate(fallback)
+}
+
+func taskDisplayDate(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	utc := value.UTC()
+	year, month, day := utc.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func validateTaskDisplayDates(startDate, endDate time.Time) error {
+	if startDate.IsZero() || endDate.IsZero() {
+		return nil
+	}
+	if endDate.Before(startDate) {
+		return fmt.Errorf("%w: task endDate before startDate", ErrConflict)
+	}
+	return nil
 }
 
 type TaskLog struct {

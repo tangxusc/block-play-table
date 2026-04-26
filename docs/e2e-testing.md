@@ -224,6 +224,7 @@ npm run e2e:real-agents
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |
 | Task | 创建未分配、无 Agent 的任务 | L1/L2 | [待补齐] |
 | Task | 创建指定 Worker 与 Agent 的任务后状态为 `ASSIGNED` | L2 | [已实现] |
+| Task | 创建任务时保存并展示开始/结束日期，默认当天且不影响启动执行 | L1/L2 | [已实现] |
 | Task | 自动分配只选择在线、空闲、支持 Agent、允许 Project 的 Worker | L1/L2 | [待补齐] |
 | Task | 启动已分配任务，Manager 向 Worker 下发 `TASK_START` | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_ACCEPTED` 后保持启动流程可追踪 | L2 | [已实现] |

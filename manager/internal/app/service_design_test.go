@@ -58,16 +58,35 @@ func TestServiceDesignCRUDFilteringAndSettings(t *testing.T) {
 		t.Fatalf("WorkersFiltered = %d, %v", len(workers), err)
 	}
 
-	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex})
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:     "T",
+		ProjectID: project.ID,
+		AgentType: domain.AgentCodex,
+		StartDate: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC),
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !task.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !task.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("created task display dates = %s %s", task.StartDate, task.EndDate)
 	}
 	updated, err := service.UpdateTask(ctx, UpdateTaskInput{ID: task.ID, Title: "T2", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "develop", PreCommands: []string{"make pre"}})
 	if err != nil {
 		t.Fatalf("UpdateTask returned error: %v", err)
 	}
-	if updated.Title != "T2" || len(updated.PreCommands) != 1 {
+	if updated.Title != "T2" || len(updated.PreCommands) != 1 || !updated.StartDate.Equal(task.StartDate) || !updated.EndDate.Equal(task.EndDate) {
 		t.Fatalf("updated task = %+v", updated)
+	}
+	if _, err := service.UpdateTask(ctx, UpdateTaskInput{
+		ID:        task.ID,
+		Title:     "Bad Dates",
+		ProjectID: project.ID,
+		AgentType: domain.AgentCodex,
+		StartDate: time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC),
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("UpdateTask invalid dates err = %v, want conflict", err)
 	}
 	if tasks, total, err := service.TasksFiltered(ctx, TaskFilter{ProjectID: project.ID, AgentType: domain.AgentCodex}, PageInput{Limit: 1}); err != nil || total != 1 || len(tasks) != 1 {
 		t.Fatalf("TasksFiltered = len %d total %d err %v", len(tasks), total, err)

@@ -85,6 +85,8 @@ type CreateTaskInput struct {
 	BaseBranch   *string    `json:"baseBranch,omitempty"`
 	PreCommands  []string   `json:"preCommands,omitempty"`
 	PostCommands []string   `json:"postCommands,omitempty"`
+	StartDate    *time.Time `json:"startDate,omitempty"`
+	EndDate      *time.Time `json:"endDate,omitempty"`
 }
 
 type CreateWorkerInput struct {
@@ -204,6 +206,8 @@ type Task struct {
 	PreCommands    []string   `json:"preCommands"`
 	PostCommands   []string   `json:"postCommands"`
 	Result         *string    `json:"result,omitempty"`
+	StartDate      time.Time  `json:"startDate"`
+	EndDate        time.Time  `json:"endDate"`
 	Version        int        `json:"version"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
@@ -247,6 +251,8 @@ type UpdateTaskInput struct {
 	BaseBranch   *string    `json:"baseBranch,omitempty"`
 	PreCommands  []string   `json:"preCommands,omitempty"`
 	PostCommands []string   `json:"postCommands,omitempty"`
+	StartDate    *time.Time `json:"startDate,omitempty"`
+	EndDate      *time.Time `json:"endDate,omitempty"`
 }
 
 type UpdateWorkerInput struct {

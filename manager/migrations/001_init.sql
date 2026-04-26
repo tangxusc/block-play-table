@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   pre_commands TEXT NOT NULL DEFAULT '[]',
   post_commands TEXT NOT NULL DEFAULT '[]',
   result TEXT,
+  start_date TIMESTAMP NOT NULL,
+  end_date TIMESTAMP NOT NULL,
   version INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL

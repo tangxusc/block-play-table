@@ -62,16 +62,30 @@ async function openWorkerEditor(page, workerName: string) {
   await workerGroup.getByRole("button", { name: "Edit worker" }).click();
 }
 
+async function fillFlutterTextField(page, input, value: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.click();
+    await page.waitForTimeout(100);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(100);
+    await input.type(value, { delay: 20 });
+    await page.waitForTimeout(100);
+    if ((await input.inputValue()) === value) {
+      return;
+    }
+  }
+  await expect(input).toHaveValue(value);
+}
+
 async function addWorkerEnvVar(page, key: string, value: string) {
   await page.getByRole("button", { name: "New env var" }).click();
   await expect(page.getByText("Create env var")).toBeVisible();
-  const keyInput = page.getByLabel("Key");
-  await keyInput.fill(key);
-  await expect(keyInput).toHaveValue(key);
-  const valueInput = page.getByLabel("Value");
-  await valueInput.fill(value);
-  await expect(valueInput).toHaveValue(value);
-  await page.getByLabel("Description").click();
+  const keyInput = page.getByLabel("Key").last();
+  await fillFlutterTextField(page, keyInput, key);
+  const valueInput = page.getByLabel("Value").last();
+  await fillFlutterTextField(page, valueInput, value);
+  await page.getByLabel("Description").last().click();
   await page.getByRole("button", { name: "Save" }).last().click();
   await expect(page.getByText("Create env var")).toBeHidden();
 }
@@ -277,6 +291,8 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   const taskTitle = `E2E Task ${suffix}`;
   const workerId = `worker-e2e-${suffix}`;
   const workerName = `E2E Worker ${suffix}`;
+  const taskStartDate = "2026-05-01T00:00:00Z";
+  const taskEndDate = "2026-05-03T00:00:00Z";
 
   const createdProject = await graphQL(
     request,
@@ -341,7 +357,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
 
   const createdTask = await graphQL(
     request,
-    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }",
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status startDate endDate } }",
     {
       input: {
         title: taskTitle,
@@ -349,29 +365,36 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
         workerId,
         agentType: "codex",
         baseBranch: "main",
+        startDate: taskStartDate,
+        endDate: taskEndDate,
       },
     },
   );
   expect(createdTask.createTask.status).toBe("ASSIGNED");
+  expect(createdTask.createTask.startDate).toBe(taskStartDate);
+  expect(createdTask.createTask.endDate).toBe(taskEndDate);
 
   await expect
     .poll(async () => {
       const data = await graphQL(
         request,
-        "query { tasks { nodes { title status } } }",
+        "query { tasks { nodes { title status startDate endDate } } }",
       );
       return data.tasks.nodes.some(
-        (task: { title: string; status: string }) =>
-          task.title === taskTitle && task.status === "ASSIGNED",
+        (task: { title: string; status: string; startDate: string; endDate: string }) =>
+          task.title === taskTitle &&
+          task.status === "ASSIGNED" &&
+          task.startDate === taskStartDate &&
+          task.endDate === taskEndDate,
       );
     })
     .toBeTruthy();
   const tasks = await graphQL(
     request,
-    "query { tasks { nodes { id title status } } }",
+    "query { tasks { nodes { id title status startDate endDate } } }",
   );
   const task = tasks.tasks.nodes.find(
-    (item: { id: string; title: string; status: string }) =>
+    (item: { id: string; title: string; status: string; startDate: string; endDate: string }) =>
       item.title === taskTitle,
   );
   expect(task).toBeTruthy();
@@ -438,7 +461,10 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
 
   await page.reload();
   await page.waitForTimeout(1500);
-  await page.mouse.click(40, 96);
+  await enableFlutterAccessibility(page);
+  await openTaskFromList(page, taskTitle);
+  await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.locator("flutter-view")).toBeVisible();
 });
 

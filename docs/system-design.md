@@ -176,19 +176,20 @@ Worker 与 Project 的绑定模式：
 
 1. 任务标题。
 2. 任务描述。
-3. Project ID。
-4. 基础分支。
-5. 目标分支。
-6. Git Worktree 路径。
-7. 选择的 Agent 类型，例如 `codex`、`claude`。
-8. 绑定的 Worker。
-9. 前置命令。
-10. 后置命令。
-11. 任务状态。
-12. 执行日志。
-13. AI 对话记录。
-14. 任务结果。
-15. 创建时间和更新时间。
+3. 开始日期和结束日期，仅用于展示。
+4. Project ID。
+5. 基础分支。
+6. 目标分支。
+7. Git Worktree 路径。
+8. 选择的 Agent 类型，例如 `codex`、`claude`。
+9. 绑定的 Worker。
+10. 前置命令。
+11. 后置命令。
+12. 任务状态。
+13. 执行日志。
+14. AI 对话记录。
+15. 任务结果。
+16. 创建时间和更新时间。
 
 任务不保存 Git 仓库信息。Git URL、默认分支和 worktree 命名前缀都从 Project 获取，任务只引用 `projectId` 并保存本次执行生成的 `worktreePath`。
 
@@ -352,9 +353,9 @@ sequenceDiagram
 
 ### 4.2 创建任务流程
 
-1. 用户在 UI 中填写任务标题、描述、Project、Agent 类型和命令配置。
+1. 用户在 UI 中填写任务标题、描述、开始/结束日期、Project、Agent 类型和命令配置。
 2. UI 调用 Manager 的 `createTask` Mutation。
-3. Manager 创建 `Task` 聚合。
+3. Manager 创建 `Task` 聚合；未传开始/结束日期时默认使用创建当天。
 4. `Task` 聚合产生 `TaskCreated` 领域事件。
 5. Application Service 在同一事务中保存任务和领域事件。
 6. Manager 返回任务 ID。
@@ -507,6 +508,8 @@ Task
 - preCommands
 - postCommands
 - result
+- startDate
+- endDate
 - version
 - createdAt
 - updatedAt
@@ -921,6 +924,27 @@ AgentEvent
 ### 8.1 核心类型
 
 ```graphql
+type Task {
+  id: ID!
+  title: String!
+  description: String!
+  status: TaskStatus!
+  projectId: ID!
+  workerId: ID
+  agentType: AgentType
+  baseBranch: String!
+  worktreePath: String
+  agentSessionId: String
+  preCommands: [String!]!
+  postCommands: [String!]!
+  result: String
+  startDate: Time!
+  endDate: Time!
+  version: Int!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
 type Project {
   id: ID!
   name: String!
@@ -1131,6 +1155,8 @@ PostgreSQL Implementation
 | `base_branch` | string | 基础分支 |
 | `worktree_path` | string | Worktree 路径 |
 | `result` | json/text | 结果 |
+| `start_date` | datetime | 展示用开始日期，按 UTC 零点保存 |
+| `end_date` | datetime | 展示用结束日期，按 UTC 零点保存 |
 | `version` | integer | 聚合版本 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
