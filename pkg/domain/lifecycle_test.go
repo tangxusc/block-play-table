@@ -89,6 +89,29 @@ func TestWorkerLifecycleControlsAvailability(t *testing.T) {
 	}
 }
 
+func TestWorkerDeleteProducesDomainEvent(t *testing.T) {
+	now := time.Now().UTC()
+	worker, err := NewWorker(NewWorkerInput{ID: "worker-delete", Name: "Delete Me", SupportedAgents: []AgentType{AgentCodex}, WorkDir: "/tmp", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = worker.PullEvents()
+
+	worker.Delete(now.Add(time.Second))
+
+	events := worker.PullEvents()
+	if len(events) != 1 {
+		t.Fatalf("worker delete events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.EventType != "WorkerDeleted" || event.AggregateType != "Worker" || event.AggregateID != worker.ID {
+		t.Fatalf("delete event = %+v", event)
+	}
+	if event.AggregateVersion != worker.Version {
+		t.Fatalf("event version = %d, want worker version %d", event.AggregateVersion, worker.Version)
+	}
+}
+
 func TestProjectUpdateArchiveAndValidation(t *testing.T) {
 	now := time.Now().UTC()
 	project, err := NewProject(NewProjectInput{ID: "project-1", Name: "P", GitURL: "git://repo", Now: now})

@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../realtime_refresh.dart';
 import '../widgets.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -20,22 +19,22 @@ class _SettingsPageState extends State<SettingsPage> {
   SettingsData? _settings;
   List<EnvVarItem> _vars = const [];
   final _heartbeat = TextEditingController();
-  StreamSubscription<DomainEventItem>? _subscription;
-  Timer? _refreshTimer;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
-    _subscription = widget.apiClient
-        .subscribeDomainEvents(aggregateType: 'Settings')
-        .listen((_) => _scheduleReload());
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(aggregateType: 'Settings'),
+      reload: _reload,
+      shouldReload: (_) => true,
+    );
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
-    _subscription?.cancel();
+    _realtime?.dispose();
     _heartbeat.dispose();
     super.dispose();
   }
@@ -49,17 +48,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = _load();
-    });
-  }
-
-  void _scheduleReload() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _reload();
-      }
     });
   }
 
@@ -225,9 +218,8 @@ class _SettingsPageState extends State<SettingsPage> {
     await widget.apiClient.updateSettings(
       SettingsData(
         agentRuntimeEnvVars: _vars,
-        workerHeartbeatTimeout: _heartbeat.text.trim().isEmpty
-            ? '90s'
-            : _heartbeat.text.trim(),
+        workerHeartbeatTimeout:
+            _heartbeat.text.trim().isEmpty ? '90s' : _heartbeat.text.trim(),
         securityPolicy: settings.securityPolicy,
       ),
     );

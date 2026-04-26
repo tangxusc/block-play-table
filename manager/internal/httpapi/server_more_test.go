@@ -225,6 +225,34 @@ func TestServerSubscriptionsPushDomainEvents(t *testing.T) {
 	}
 }
 
+func TestServerSubscriptionsAcceptBrowserOrigin(t *testing.T) {
+	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore())).Handler())
+	defer server.Close()
+
+	dialer := websocket.Dialer{Subprotocols: []string{"graphql-transport-ws"}}
+	conn, _, err := dialer.Dial(
+		"ws"+strings.TrimPrefix(server.URL, "http")+"/subscriptions",
+		http.Header{"Origin": []string{"http://localhost:3000"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(map[string]any{"type": "connection_init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var message map[string]any
+	if err := conn.ReadJSON(&message); err != nil {
+		t.Fatalf("subscription read: %v", err)
+	}
+	if message["type"] != "connection_ack" {
+		t.Fatalf("subscription message = %#v", message)
+	}
+}
+
 func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)

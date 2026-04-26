@@ -85,6 +85,87 @@ void main() {
 
     expect(apiClient.boardFetches, greaterThan(1));
   });
+
+  testWidgets('board refreshes when worker delete event arrives', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.boardFetches, 1);
+
+    apiClient.emit(
+      DomainEventItem(
+        eventId: 'event-worker-deleted',
+        eventType: 'WorkerDeleted',
+        aggregateType: 'Worker',
+        aggregateId: 'worker-1',
+        aggregateVersion: 3,
+        payload: '{}',
+        occurredAt: '2026-04-25T00:00:00Z',
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.boardFetches, greaterThan(1));
+  });
+
+  testWidgets('board falls back to reload when subscription errors', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    final initialFetches = apiClient.boardFetches;
+    apiClient.emitError(StateError('subscription disconnected'));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(apiClient.boardFetches, greaterThan(initialFetches));
+
+    final afterErrorFetches = apiClient.boardFetches;
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.boardFetches, greaterThan(afterErrorFetches));
+  });
+
+  testWidgets('task detail dialog refreshes on task subscription event', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('CREATED'), findsWidgets);
+    expect(apiClient.detailFetches, 1);
+
+    apiClient.completeTaskDetail();
+    apiClient.emit(
+      DomainEventItem(
+        eventId: 'event-task-completed',
+        eventType: 'TaskCompleted',
+        aggregateType: 'Task',
+        aggregateId: 'task-1',
+        aggregateVersion: 2,
+        payload: '{}',
+        occurredAt: '2026-04-25T00:00:01Z',
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.detailFetches, greaterThan(1));
+    expect(find.text('COMPLETED'), findsWidgets);
+    expect(find.textContaining('done from subscription'), findsOneWidget);
+  });
 }
 
 class FakeApiClient extends ApiClient {
@@ -93,8 +174,16 @@ class FakeApiClient extends ApiClient {
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
   int boardFetches = 0;
+  int detailFetches = 0;
+  bool _completedDetail = false;
 
   void emit(DomainEventItem event) => _events.add(event);
+
+  void emitError(Object error) => _events.addError(error);
+
+  void completeTaskDetail() {
+    _completedDetail = true;
+  }
 
   @override
   Future<BoardData> fetchBoardData(String view) async {
@@ -143,15 +232,36 @@ class FakeApiClient extends ApiClient {
     String? aggregateId,
     String? aggregateType,
     String? eventType,
-  }) => _events.stream;
+  }) =>
+      _events.stream;
 
   @override
-  Future<TaskDetailData> fetchTaskDetail(String taskId) async => TaskDetailData(
-    task: _task,
-    logs: const [],
-    conversations: const [],
-    events: const [],
-  );
+  Future<TaskDetailData> fetchTaskDetail(String taskId) async {
+    detailFetches++;
+    final task = _completedDetail ? _completedTask : _task;
+    return TaskDetailData(
+      task: task,
+      logs: _completedDetail
+          ? const [
+              TaskLogItem(stream: 'stdout', content: 'done from subscription'),
+            ]
+          : const [],
+      conversations: const [],
+      events: _completedDetail
+          ? const [
+              DomainEventItem(
+                eventId: 'event-task-completed',
+                eventType: 'TaskCompleted',
+                aggregateType: 'Task',
+                aggregateId: 'task-1',
+                aggregateVersion: 2,
+                payload: '{}',
+                occurredAt: '2026-04-25T00:00:01Z',
+              ),
+            ]
+          : const [],
+    );
+  }
 
   @override
   void dispose() {
@@ -194,4 +304,20 @@ final _task = TaskItem(
   postCommands: const [],
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:00Z',
+);
+
+final _completedTask = TaskItem(
+  id: 'task-1',
+  title: 'Refresh board',
+  description: 'Keep board up to date',
+  status: 'COMPLETED',
+  projectId: _project.id,
+  agentType: 'codex',
+  baseBranch: 'main',
+  targetBranch: 'task/refresh-board',
+  preCommands: const [],
+  postCommands: const [],
+  result: 'done',
+  createdAt: '2026-04-25T00:00:00Z',
+  updatedAt: '2026-04-25T00:00:01Z',
 );

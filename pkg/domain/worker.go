@@ -201,6 +201,11 @@ func (w *Worker) ReleaseTask(now time.Time) {
 	w.addEvent("WorkerTaskReleased", map[string]any{"taskId": released}, now)
 }
 
+func (w *Worker) Delete(now time.Time) {
+	w.touch(now)
+	w.addEvent("WorkerDeleted", map[string]any{"name": w.Name}, now)
+}
+
 func (w *Worker) PullEvents() []DomainEvent {
 	events := append([]DomainEvent(nil), w.pendingEvents...)
 	w.pendingEvents = nil

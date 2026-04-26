@@ -4,16 +4,16 @@ import 'models.dart';
 
 class ApiClient {
   ApiClient(this.endpoint, {String? websocketEndpoint})
-    : websocketEndpoint =
+      : websocketEndpoint =
+            websocketEndpoint ?? _inferWebsocketEndpoint(endpoint),
+        _webSocketLink = WebSocketLink(
           websocketEndpoint ?? _inferWebsocketEndpoint(endpoint),
-      _webSocketLink = WebSocketLink(
-        websocketEndpoint ?? _inferWebsocketEndpoint(endpoint),
-        config: const SocketClientConfig(
-          autoReconnect: true,
-          inactivityTimeout: Duration(seconds: 45),
-        ),
-        subProtocol: GraphQLProtocol.graphqlTransportWs,
-      ) {
+          config: const SocketClientConfig(
+            autoReconnect: true,
+            inactivityTimeout: Duration(seconds: 45),
+          ),
+          subProtocol: GraphQLProtocol.graphqlTransportWs,
+        ) {
     final httpLink = HttpLink(endpoint);
     _client = GraphQLClient(
       link: Link.split(
@@ -26,18 +26,17 @@ class ApiClient {
   }
 
   factory ApiClient.fromEnvironment() => ApiClient(
-    const String.fromEnvironment(
-      'MANAGER_GRAPHQL_URL',
-      defaultValue: 'http://localhost:8080/graphql',
-    ),
-    websocketEndpoint:
         const String.fromEnvironment(
+          'MANAGER_GRAPHQL_URL',
+          defaultValue: 'http://localhost:8080/graphql',
+        ),
+        websocketEndpoint: const String.fromEnvironment(
           'MANAGER_GRAPHQL_WS_URL',
           defaultValue: '',
         ).trim().isEmpty
-        ? null
-        : const String.fromEnvironment('MANAGER_GRAPHQL_WS_URL'),
-  );
+            ? null
+            : const String.fromEnvironment('MANAGER_GRAPHQL_WS_URL'),
+      );
 
   final String endpoint;
   final String websocketEndpoint;
@@ -222,24 +221,30 @@ class ApiClient {
     };
     return _client
         .subscribe(
-          SubscriptionOptions(
-            document: gql(r'''
+      SubscriptionOptions(
+        document: gql(r'''
               subscription Events($filter: DomainEventFilter) {
                 domainEvents(filter: $filter) {
                   eventId eventType aggregateType aggregateId aggregateVersion payload occurredAt
                 }
               }
               '''),
-            variables: {'filter': filter.isEmpty ? null : filter},
-            fetchPolicy: FetchPolicy.noCache,
-          ),
-        )
-        .where((result) => !result.hasException && result.data != null)
-        .map(
-          (result) => DomainEventItem.fromJson(
-            result.data!['domainEvents'] as Map<String, dynamic>,
-          ),
-        );
+        variables: {'filter': filter.isEmpty ? null : filter},
+        fetchPolicy: FetchPolicy.noCache,
+      ),
+    )
+        .map((result) {
+      if (result.hasException) {
+        throw StateError(result.exception.toString());
+      }
+      final data = result.data;
+      if (data == null) {
+        throw StateError('subscription yielded no data');
+      }
+      return DomainEventItem.fromJson(
+        data['domainEvents'] as Map<String, dynamic>,
+      );
+    });
   }
 
   Future<void> createProject({
@@ -248,49 +253,50 @@ class ApiClient {
     required String prefix,
     String defaultBranch = 'main',
     List<String> setupCommands = const [],
-  }) => graphQL(
-    r'''
+  }) =>
+      graphQL(
+        r'''
         mutation CreateProject($input: CreateProjectInput!) {
           createProject(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'name': name,
-        'gitUrl': gitUrl,
-        'defaultBranch': defaultBranch,
-        'worktreeNamePrefix': prefix,
-        'setupCommands': setupCommands,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'name': name,
+            'gitUrl': gitUrl,
+            'defaultBranch': defaultBranch,
+            'worktreeNamePrefix': prefix,
+            'setupCommands': setupCommands,
+          },
+        },
+      ).then((_) {});
 
   Future<void> updateProject(ProjectItem project) => graphQL(
-    r'''
+        r'''
         mutation UpdateProject($input: UpdateProjectInput!) {
           updateProject(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'id': project.id,
-        'name': project.name,
-        'gitUrl': project.gitUrl,
-        'defaultBranch': project.defaultBranch,
-        'worktreeNamePrefix': project.worktreeNamePrefix,
-        'setupCommands': project.setupCommands,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'id': project.id,
+            'name': project.name,
+            'gitUrl': project.gitUrl,
+            'defaultBranch': project.defaultBranch,
+            'worktreeNamePrefix': project.worktreeNamePrefix,
+            'setupCommands': project.setupCommands,
+          },
+        },
+      ).then((_) {});
 
   Future<void> archiveProject(String projectId) => graphQL(
-    r'''
+        r'''
         mutation ArchiveProject($id: ID!) {
           archiveProject(id: $id) { id }
         }
         ''',
-    variables: {'id': projectId},
-  ).then((_) {});
+        variables: {'id': projectId},
+      ).then((_) {});
 
   Future<void> createTask({
     required String title,
@@ -301,93 +307,94 @@ class ApiClient {
     String targetBranch = '',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
-  }) => graphQL(
-    r'''
+  }) =>
+      graphQL(
+        r'''
         mutation CreateTask($input: CreateTaskInput!) {
           createTask(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'title': title,
-        'description': description,
-        'projectId': projectId,
-        'agentType': agentType,
-        'baseBranch': baseBranch,
-        'targetBranch': targetBranch.isEmpty ? 'task/$title' : targetBranch,
-        'preCommands': preCommands,
-        'postCommands': postCommands,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'title': title,
+            'description': description,
+            'projectId': projectId,
+            'agentType': agentType,
+            'baseBranch': baseBranch,
+            'targetBranch': targetBranch.isEmpty ? 'task/$title' : targetBranch,
+            'preCommands': preCommands,
+            'postCommands': postCommands,
+          },
+        },
+      ).then((_) {});
 
   Future<void> updateTask(TaskItem task) => graphQL(
-    r'''
+        r'''
         mutation UpdateTask($input: UpdateTaskInput!) {
           updateTask(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'id': task.id,
-        'title': task.title,
-        'description': task.description,
-        'projectId': task.projectId,
-        'agentType': task.agentType,
-        'baseBranch': task.baseBranch,
-        'targetBranch': task.targetBranch,
-        'preCommands': task.preCommands,
-        'postCommands': task.postCommands,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'id': task.id,
+            'title': task.title,
+            'description': task.description,
+            'projectId': task.projectId,
+            'agentType': task.agentType,
+            'baseBranch': task.baseBranch,
+            'targetBranch': task.targetBranch,
+            'preCommands': task.preCommands,
+            'postCommands': task.postCommands,
+          },
+        },
+      ).then((_) {});
 
   Future<void> assignWorker(String taskId, String workerId) => graphQL(
-    r'''
+        r'''
         mutation AssignWorker($input: AssignWorkerInput!) {
           assignWorker(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {'taskId': taskId, 'workerId': workerId},
-    },
-  ).then((_) {});
+        variables: {
+          'input': {'taskId': taskId, 'workerId': workerId},
+        },
+      ).then((_) {});
 
   Future<void> startTask(String taskId) => graphQL(
-    r'''
+        r'''
         mutation StartTask($taskId: ID!) {
           startTask(taskId: $taskId) { id }
         }
         ''',
-    variables: {'taskId': taskId},
-  ).then((_) {});
+        variables: {'taskId': taskId},
+      ).then((_) {});
 
   Future<void> interruptTask(String taskId) => graphQL(
-    r'''
+        r'''
         mutation InterruptTask($taskId: ID!) {
           interruptTask(taskId: $taskId) { id }
         }
         ''',
-    variables: {'taskId': taskId},
-  ).then((_) {});
+        variables: {'taskId': taskId},
+      ).then((_) {});
 
   Future<void> archiveTask(String taskId) => graphQL(
-    r'''
+        r'''
         mutation ArchiveTask($taskId: ID!) {
           archiveTask(taskId: $taskId) { id }
         }
         ''',
-    variables: {'taskId': taskId},
-  ).then((_) {});
+        variables: {'taskId': taskId},
+      ).then((_) {});
 
   Future<void> retryTask(String taskId) => graphQL(
-    r'''
+        r'''
         mutation RetryTask($taskId: ID!) {
           retryTask(taskId: $taskId) { id }
         }
         ''',
-    variables: {'taskId': taskId},
-  ).then((_) {});
+        variables: {'taskId': taskId},
+      ).then((_) {});
 
   Future<void> createWorker({
     String id = '',
@@ -397,95 +404,96 @@ class ApiClient {
     String startupCommand = '',
     String projectBindingMode = 'ALL_PROJECTS',
     List<String> boundProjectIds = const [],
-  }) => graphQL(
-    r'''
+  }) =>
+      graphQL(
+        r'''
         mutation CreateWorker($input: CreateWorkerInput!) {
           createWorker(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        if (id.isNotEmpty) 'id': id,
-        'name': name,
-        'supportedAgents': supportedAgents,
-        'workDir': workDir,
-        'startupCommand': startupCommand,
-        'projectBindingMode': projectBindingMode,
-        'boundProjectIds': boundProjectIds,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            if (id.isNotEmpty) 'id': id,
+            'name': name,
+            'supportedAgents': supportedAgents,
+            'workDir': workDir,
+            'startupCommand': startupCommand,
+            'projectBindingMode': projectBindingMode,
+            'boundProjectIds': boundProjectIds,
+          },
+        },
+      ).then((_) {});
 
   Future<void> updateWorker(WorkerItem worker) => graphQL(
-    r'''
+        r'''
         mutation UpdateWorker($input: UpdateWorkerInput!) {
           updateWorker(input: $input) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'id': worker.id,
-        'name': worker.name,
-        'supportedAgents': worker.supportedAgents,
-        'workDir': worker.workDir,
-        'startupCommand': worker.startupCommand,
-        'projectBindingMode': worker.projectBindingMode,
-        'boundProjectIds': worker.boundProjectIds,
-      },
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'id': worker.id,
+            'name': worker.name,
+            'supportedAgents': worker.supportedAgents,
+            'workDir': worker.workDir,
+            'startupCommand': worker.startupCommand,
+            'projectBindingMode': worker.projectBindingMode,
+            'boundProjectIds': worker.boundProjectIds,
+          },
+        },
+      ).then((_) {});
 
   Future<void> enableWorker(String workerId) => graphQL(
-    r'''
+        r'''
         mutation EnableWorker($id: ID!) {
           enableWorker(id: $id) { id }
         }
         ''',
-    variables: {'id': workerId},
-  ).then((_) {});
+        variables: {'id': workerId},
+      ).then((_) {});
 
   Future<void> disableWorker(String workerId) => graphQL(
-    r'''
+        r'''
         mutation DisableWorker($id: ID!) {
           disableWorker(id: $id) { id }
         }
         ''',
-    variables: {'id': workerId},
-  ).then((_) {});
+        variables: {'id': workerId},
+      ).then((_) {});
 
   Future<void> deleteWorker(String workerId) => graphQL(
-    r'''
+        r'''
         mutation DeleteWorker($id: ID!) {
           deleteWorker(id: $id)
         }
         ''',
-    variables: {'id': workerId},
-  ).then((_) {});
+        variables: {'id': workerId},
+      ).then((_) {});
 
   Future<void> updateSettings(SettingsData settings) => graphQL(
-    r'''
+        r'''
         mutation UpdateSettings($input: UpdateAgentRuntimeEnvVarsInput!, $timeout: String!) {
           updateAgentRuntimeEnvVars(input: $input) { id }
           updateWorkerHeartbeatTimeout(timeout: $timeout) { id }
         }
         ''',
-    variables: {
-      'input': {
-        'vars': settings.agentRuntimeEnvVars
-            .map(
-              (item) => {
-                'key': item.key,
-                if (item.valueInput.isNotEmpty) 'value': item.valueInput,
-                'description': item.description,
-                'enabled': item.enabled,
-                'sensitive': item.sensitive,
-              },
-            )
-            .toList(),
-      },
-      'timeout': settings.workerHeartbeatTimeout,
-    },
-  ).then((_) {});
+        variables: {
+          'input': {
+            'vars': settings.agentRuntimeEnvVars
+                .map(
+                  (item) => {
+                    'key': item.key,
+                    if (item.valueInput.isNotEmpty) 'value': item.valueInput,
+                    'description': item.description,
+                    'enabled': item.enabled,
+                    'sensitive': item.sensitive,
+                  },
+                )
+                .toList(),
+          },
+          'timeout': settings.workerHeartbeatTimeout,
+        },
+      ).then((_) {});
 
   Future<Map<String, dynamic>> graphQL(
     String query, {

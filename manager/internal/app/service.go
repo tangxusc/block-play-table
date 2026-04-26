@@ -561,7 +561,12 @@ func (s *Service) DeleteWorker(ctx context.Context, workerID string) error {
 	if worker.CurrentTaskID != "" {
 		return fmt.Errorf("%w: worker %s has current task %s", domain.ErrConflict, workerID, worker.CurrentTaskID)
 	}
-	return s.store.DeleteWorker(ctx, workerID)
+	worker.Delete(s.clock())
+	events := worker.PullEvents()
+	if err := s.store.DeleteWorker(ctx, workerID); err != nil {
+		return err
+	}
+	return s.appendEvents(ctx, events)
 }
 
 func (s *Service) WorkerConnected(ctx context.Context, workerID string) (*domain.Worker, error) {

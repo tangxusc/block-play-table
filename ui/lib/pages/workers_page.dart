@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../realtime_refresh.dart';
 import '../widgets.dart';
 
 class WorkersPage extends StatefulWidget {
@@ -18,24 +17,23 @@ class WorkersPage extends StatefulWidget {
 class _WorkersPageState extends State<WorkersPage> {
   late Future<_WorkersData> _future;
   _WorkersData? _lastData;
-  StreamSubscription<DomainEventItem>? _subscription;
-  Timer? _refreshTimer;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
-    _subscription = widget.apiClient.subscribeDomainEvents().listen((event) {
-      if (event.aggregateType == 'Worker' || event.aggregateType == 'Project') {
-        _scheduleReload();
-      }
-    });
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(),
+      reload: _reload,
+      shouldReload: (event) =>
+          event.aggregateType == 'Worker' || event.aggregateType == 'Project',
+    );
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
-    _subscription?.cancel();
+    _realtime?.dispose();
     super.dispose();
   }
 
@@ -53,17 +51,11 @@ class _WorkersPageState extends State<WorkersPage> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = _load();
-    });
-  }
-
-  void _scheduleReload() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _reload();
-      }
     });
   }
 
@@ -334,12 +326,12 @@ Future<bool?> showWorkerFormDialog(
                             onSelected: bindingMode == 'ALL_PROJECTS'
                                 ? null
                                 : (selected) => setState(() {
-                                    if (selected) {
-                                      boundProjectIds.add(project.id);
-                                    } else {
-                                      boundProjectIds.remove(project.id);
-                                    }
-                                  }),
+                                      if (selected) {
+                                        boundProjectIds.add(project.id);
+                                      } else {
+                                        boundProjectIds.remove(project.id);
+                                      }
+                                    }),
                           ),
                         )
                         .toList(),

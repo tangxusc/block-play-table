@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../realtime_refresh.dart';
 import '../widgets.dart';
 
 class ProjectsPage extends StatefulWidget {
@@ -18,22 +17,22 @@ class ProjectsPage extends StatefulWidget {
 class _ProjectsPageState extends State<ProjectsPage> {
   late Future<List<ProjectItem>> _future;
   List<ProjectItem>? _lastProjects;
-  StreamSubscription<DomainEventItem>? _subscription;
-  Timer? _refreshTimer;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
-    _subscription = widget.apiClient
-        .subscribeDomainEvents(aggregateType: 'Project')
-        .listen((_) => _scheduleReload());
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(aggregateType: 'Project'),
+      reload: _reload,
+      shouldReload: (_) => true,
+    );
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
-    _subscription?.cancel();
+    _realtime?.dispose();
     super.dispose();
   }
 
@@ -44,17 +43,11 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = _load();
-    });
-  }
-
-  void _scheduleReload() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _reload();
-      }
     });
   }
 

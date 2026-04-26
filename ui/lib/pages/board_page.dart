@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../realtime_refresh.dart';
 import '../widgets.dart';
 
 class BoardPage extends StatefulWidget {
@@ -19,8 +18,7 @@ class _BoardPageState extends State<BoardPage> {
   String _view = 'KANBAN';
   late Future<BoardData> _future;
   BoardData? _lastData;
-  StreamSubscription<DomainEventItem>? _subscription;
-  Timer? _refreshTimer;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
@@ -33,7 +31,7 @@ class _BoardPageState extends State<BoardPage> {
   void didUpdateWidget(covariant BoardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.apiClient != widget.apiClient) {
-      _subscription?.cancel();
+      _realtime?.dispose();
       _future = _load();
       _subscribe();
     }
@@ -41,8 +39,7 @@ class _BoardPageState extends State<BoardPage> {
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
-    _subscription?.cancel();
+    _realtime?.dispose();
     super.dispose();
   }
 
@@ -53,28 +50,23 @@ class _BoardPageState extends State<BoardPage> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = _load();
     });
   }
 
-  void _scheduleReload() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _reload();
-      }
-    });
-  }
-
   void _subscribe() {
-    _subscription = widget.apiClient.subscribeDomainEvents().listen((event) {
-      if (event.aggregateType == 'Task' ||
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(),
+      reload: _reload,
+      shouldReload: (event) =>
+          event.aggregateType == 'Task' ||
           event.aggregateType == 'Worker' ||
-          event.aggregateType == 'Project') {
-        _scheduleReload();
-      }
-    });
+          event.aggregateType == 'Project',
+    );
   }
 
   @override
@@ -213,22 +205,22 @@ class _BoardContent extends StatelessWidget {
     }
     return switch (view) {
       'LIST' => _TaskListView(
-        tasks: data.tasks,
-        projects: data.projects,
-        workers: data.workers,
-        onTaskSelected: onTaskSelected,
-        onTaskEdit: onTaskEdit,
-      ),
+          tasks: data.tasks,
+          projects: data.projects,
+          workers: data.workers,
+          onTaskSelected: onTaskSelected,
+          onTaskEdit: onTaskEdit,
+        ),
       'CALENDAR' => _CalendarView(
-        items: data.calendarItems,
-        onTaskSelected: onTaskSelected,
-        onTaskEdit: onTaskEdit,
-      ),
+          items: data.calendarItems,
+          onTaskSelected: onTaskSelected,
+          onTaskEdit: onTaskEdit,
+        ),
       _ => _KanbanView(
-        columns: data.columns,
-        onTaskSelected: onTaskSelected,
-        onTaskEdit: onTaskEdit,
-      ),
+          columns: data.columns,
+          onTaskSelected: onTaskSelected,
+          onTaskEdit: onTaskEdit,
+        ),
     };
   }
 }
@@ -504,8 +496,7 @@ Future<bool?> showTaskFormDialog(
   final postCommands = TextEditingController(
     text: task?.postCommands.join('\n') ?? '',
   );
-  String? projectId =
-      task?.projectId ??
+  String? projectId = task?.projectId ??
       (data.projects.isNotEmpty ? data.projects.first.id : null);
   String agent = task?.agentType ?? 'codex';
   return showDialog<bool>(
@@ -695,11 +686,42 @@ class _TaskDetailDialog extends StatefulWidget {
 
 class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   late Future<TaskDetailData> _future;
+  TaskDetailData? _lastDetail;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.apiClient.fetchTaskDetail(widget.task.id!);
+    _future = _load();
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(
+        aggregateId: widget.task.id!,
+        aggregateType: 'Task',
+      ),
+      reload: _reload,
+      shouldReload: (_) => true,
+    );
+  }
+
+  @override
+  void dispose() {
+    _realtime?.dispose();
+    super.dispose();
+  }
+
+  Future<TaskDetailData> _load() async {
+    final detail = await widget.apiClient.fetchTaskDetail(widget.task.id!);
+    _lastDetail = detail;
+    return detail;
+  }
+
+  void _reload() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _future = _load();
+    });
   }
 
   @override
@@ -712,21 +734,31 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
         child: FutureBuilder<TaskDetailData>(
           future: _future,
           builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
+            final detail = snapshot.data ?? _lastDetail;
+            if (snapshot.connectionState != ConnectionState.done &&
+                detail == null) {
               return const Center(child: CircularProgressIndicator());
             }
-            if (snapshot.hasError) {
+            if (snapshot.hasError && detail == null) {
               return ErrorView(
                 message: snapshot.error.toString(),
                 onRetry: () {
-                  setState(() {
-                    _future = widget.apiClient.fetchTaskDetail(widget.task.id!);
-                  });
+                  _reload();
                 },
               );
             }
-            final detail = snapshot.data!;
-            return _TaskDetailBody(detail: detail);
+            return Stack(
+              children: [
+                _TaskDetailBody(detail: detail!),
+                if (snapshot.connectionState != ConnectionState.done)
+                  const Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+              ],
+            );
           },
         ),
       ),
@@ -788,8 +820,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   Future<void> _assign() async {
     final candidates = widget.boardData.workers.where((worker) {
       final supports = worker.supportedAgents.contains(widget.task.agentType);
-      final projectMatches =
-          worker.projectBindingMode == 'ALL_PROJECTS' ||
+      final projectMatches = worker.projectBindingMode == 'ALL_PROJECTS' ||
           worker.boundProjectIds.contains(widget.task.projectId);
       return worker.status == 'ONLINE' &&
           (worker.currentTaskId ?? '').isEmpty &&

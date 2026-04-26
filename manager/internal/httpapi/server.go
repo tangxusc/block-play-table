@@ -11,12 +11,16 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/extension"
+	"github.com/99designs/gqlgen/graphql/handler/lru"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/graph"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 type Server struct {
@@ -72,7 +76,21 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) graphqlHandler() http.Handler {
-	return handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: graph.NewResolver(s.service, s.gateway)}))
+	gqlHandler := handler.New(graph.NewExecutableSchema(graph.Config{Resolvers: graph.NewResolver(s.service, s.gateway)}))
+	gqlHandler.AddTransport(transport.Websocket{
+		KeepAlivePingInterval: 10 * time.Second,
+		Upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
+	})
+	gqlHandler.AddTransport(transport.Options{})
+	gqlHandler.AddTransport(transport.GET{})
+	gqlHandler.AddTransport(transport.POST{})
+	gqlHandler.AddTransport(transport.MultipartForm{})
+	gqlHandler.SetQueryCache(lru.New[*ast.QueryDocument](1000))
+	gqlHandler.Use(extension.Introspection{})
+	gqlHandler.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
+	return gqlHandler
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -131,6 +132,85 @@ func TestServicePublishesDomainEventsAndMarksOutbox(t *testing.T) {
 	}
 	if outbox[0].Status != domain.OutboxPublished || outbox[0].PublishedAt == nil {
 		t.Fatalf("outbox message was not marked published: %+v", outbox[0])
+	}
+}
+
+func TestServiceDeleteWorkerPublishesDomainEventAndMarksOutbox(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-delete", Name: "Delete Me", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{AggregateType: "Worker", EventType: "WorkerDeleted"})
+	defer unsubscribe()
+
+	if err := service.DeleteWorker(ctx, worker.ID); err != nil {
+		t.Fatalf("DeleteWorker returned error: %v", err)
+	}
+
+	select {
+	case event := <-events:
+		if event.EventType != "WorkerDeleted" || event.AggregateID != worker.ID {
+			t.Fatalf("published delete event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for worker delete event")
+	}
+	stored, err := service.DomainEvents(ctx, domain.EventFilter{AggregateID: worker.ID, EventType: "WorkerDeleted"})
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("DomainEvents = %d, %v", len(stored), err)
+	}
+	outbox, err := service.OutboxMessages(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range outbox {
+		if message.Event.EventType == "WorkerDeleted" && message.Event.AggregateID == worker.ID {
+			found = message.Status == domain.OutboxPublished && message.PublishedAt != nil
+		}
+	}
+	if !found {
+		t.Fatalf("worker delete outbox was not published: %+v", outbox)
+	}
+}
+
+func TestServiceDeleteOccupiedWorkerDoesNotPublishDeleteEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := NewService(store.NewMemoryStore())
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-occupied", Name: "Busy", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{AggregateType: "Worker", EventType: "WorkerDeleted"})
+	defer unsubscribe()
+
+	if err := service.DeleteWorker(ctx, worker.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("DeleteWorker occupied err = %v, want conflict", err)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected delete event = %+v", event)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

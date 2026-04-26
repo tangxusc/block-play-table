@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../realtime_refresh.dart';
 import '../widgets.dart';
 
 class EventsPage extends StatefulWidget {
@@ -18,29 +17,34 @@ class EventsPage extends StatefulWidget {
 class _EventsPageState extends State<EventsPage> {
   late Future<List<DomainEventItem>> _future;
   List<DomainEventItem>? _events;
-  StreamSubscription<DomainEventItem>? _subscription;
-  Timer? _refreshTimer;
+  RealtimeRefreshController? _realtime;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
-    _subscription = widget.apiClient.subscribeDomainEvents().listen((event) {
-      setState(() {
-        final current = _events ?? const <DomainEventItem>[];
-        if (current.any((item) => item.eventId == event.eventId)) {
+    _realtime = RealtimeRefreshController(
+      events: widget.apiClient.subscribeDomainEvents(),
+      reload: _reload,
+      shouldReload: (_) => true,
+      onEvent: (event) {
+        if (!mounted) {
           return;
         }
-        _events = [...current, event];
-      });
-      _scheduleReload();
-    });
+        setState(() {
+          final current = _events ?? const <DomainEventItem>[];
+          if (current.any((item) => item.eventId == event.eventId)) {
+            return;
+          }
+          _events = [...current, event];
+        });
+      },
+    );
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
-    _subscription?.cancel();
+    _realtime?.dispose();
     super.dispose();
   }
 
@@ -51,17 +55,11 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = _load();
-    });
-  }
-
-  void _scheduleReload() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _reload();
-      }
     });
   }
 
