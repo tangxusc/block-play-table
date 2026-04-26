@@ -239,6 +239,6 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
 
   await page.reload();
   await page.waitForTimeout(1500);
-  await page.mouse.click(40, 336);
+  await page.mouse.click(40, 96);
   await expect(page.locator("flutter-view")).toBeVisible();
 });
