@@ -49,7 +49,6 @@ type TaskPayload struct {
 	Description  string           `json:"description"`
 	AgentType    domain.AgentType `json:"agentType"`
 	BaseBranch   string           `json:"baseBranch"`
-	TargetBranch string           `json:"targetBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
 }

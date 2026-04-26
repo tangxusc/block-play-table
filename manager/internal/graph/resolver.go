@@ -35,6 +35,11 @@ func toModelTask(task *domain.Task) *model.Task {
 	if task == nil {
 		return nil
 	}
+	var agentType *model.AgentType
+	if task.AgentType != "" {
+		value := model.AgentType(task.AgentType)
+		agentType = &value
+	}
 	return &model.Task{
 		ID:           task.ID,
 		Title:        task.Title,
@@ -42,9 +47,8 @@ func toModelTask(task *domain.Task) *model.Task {
 		Status:       model.TaskStatus(task.Status),
 		ProjectID:    task.ProjectID,
 		WorkerID:     optionalString(task.WorkerID),
-		AgentType:    model.AgentType(task.AgentType),
+		AgentType:    agentType,
 		BaseBranch:   task.BaseBranch,
-		TargetBranch: task.TargetBranch,
 		WorktreePath: optionalString(task.WorktreePath),
 		PreCommands:  append([]string(nil), task.PreCommands...),
 		PostCommands: append([]string(nil), task.PostCommands...),

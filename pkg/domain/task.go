@@ -29,7 +29,6 @@ type Task struct {
 	WorkerID     string     `json:"workerId,omitempty"`
 	AgentType    AgentType  `json:"agentType"`
 	BaseBranch   string     `json:"baseBranch"`
-	TargetBranch string     `json:"targetBranch"`
 	WorktreePath string     `json:"worktreePath,omitempty"`
 	PreCommands  []string   `json:"preCommands"`
 	PostCommands []string   `json:"postCommands"`
@@ -48,7 +47,6 @@ type NewTaskInput struct {
 	ProjectID    string
 	AgentType    AgentType
 	BaseBranch   string
-	TargetBranch string
 	PreCommands  []string
 	PostCommands []string
 	Now          time.Time
@@ -64,14 +62,11 @@ func NewTask(input NewTaskInput) (*Task, error) {
 	if err := requireNonBlank("project id", input.ProjectID); err != nil {
 		return nil, err
 	}
-	if !input.AgentType.Valid() {
+	if input.AgentType != "" && !input.AgentType.Valid() {
 		return nil, fmt.Errorf("unsupported agent type %q", input.AgentType)
 	}
 	if input.BaseBranch == "" {
 		input.BaseBranch = "main"
-	}
-	if input.TargetBranch == "" {
-		input.TargetBranch = "task/" + input.ID
 	}
 	task := &Task{
 		ID:           input.ID,
@@ -81,7 +76,6 @@ func NewTask(input NewTaskInput) (*Task, error) {
 		ProjectID:    input.ProjectID,
 		AgentType:    input.AgentType,
 		BaseBranch:   input.BaseBranch,
-		TargetBranch: input.TargetBranch,
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
 		Version:      1,
@@ -93,14 +87,30 @@ func NewTask(input NewTaskInput) (*Task, error) {
 }
 
 func (t *Task) AssignWorker(workerID string, now time.Time) error {
+	return t.AssignWorkerWithAgent(workerID, "", now)
+}
+
+func (t *Task) AssignWorkerWithAgent(workerID string, agent AgentType, now time.Time) error {
 	if t.Status != TaskCreated && t.Status != TaskAssigned {
 		return fmt.Errorf("%w: assign worker from %s", ErrInvalidTransition, t.Status)
 	}
 	if err := requireNonBlank("worker id", workerID); err != nil {
 		return err
 	}
+	if t.AgentType == "" {
+		if !agent.Valid() {
+			return fmt.Errorf("agent type is required for assignment")
+		}
+		t.AgentType = agent
+	} else if agent != "" && agent != t.AgentType {
+		return fmt.Errorf("%w: task agent %s does not match assignment agent %s", ErrConflict, t.AgentType, agent)
+	}
 	t.WorkerID = workerID
-	t.transition(TaskAssigned, now, "TaskAssigned", map[string]any{"workerId": workerID})
+	payload := map[string]any{"workerId": workerID}
+	if t.AgentType != "" {
+		payload["agentType"] = t.AgentType
+	}
+	t.transition(TaskAssigned, now, "TaskAssigned", payload)
 	return nil
 }
 
@@ -114,21 +124,17 @@ func (t *Task) Update(input NewTaskInput) error {
 	if err := requireNonBlank("project id", input.ProjectID); err != nil {
 		return err
 	}
-	if !input.AgentType.Valid() {
+	if input.AgentType != "" && !input.AgentType.Valid() {
 		return fmt.Errorf("unsupported agent type %q", input.AgentType)
 	}
 	if input.BaseBranch == "" {
 		input.BaseBranch = "main"
-	}
-	if input.TargetBranch == "" {
-		input.TargetBranch = "task/" + t.ID
 	}
 	t.Title = input.Title
 	t.Description = input.Description
 	t.ProjectID = input.ProjectID
 	t.AgentType = input.AgentType
 	t.BaseBranch = input.BaseBranch
-	t.TargetBranch = input.TargetBranch
 	t.PreCommands = append([]string(nil), input.PreCommands...)
 	t.PostCommands = append([]string(nil), input.PostCommands...)
 	t.touch(input.Now)

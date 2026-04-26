@@ -44,9 +44,8 @@ type Task {
   status: TaskStatus!
   projectId: ID!
   workerId: ID
-  agentType: AgentType!
+  agentType: AgentType
   baseBranch: String!
-  targetBranch: String!
   worktreePath: String
   preCommands: [String!]!
   postCommands: [String!]!
@@ -207,9 +206,9 @@ input CreateTaskInput {
   title: String!
   description: String
   projectId: ID!
-  agentType: AgentType!
+  workerId: ID
+  agentType: AgentType
   baseBranch: String
-  targetBranch: String
   preCommands: [String!]
   postCommands: [String!]
 }
@@ -219,9 +218,8 @@ input UpdateTaskInput {
   title: String!
   description: String
   projectId: ID!
-  agentType: AgentType!
+  agentType: AgentType
   baseBranch: String
-  targetBranch: String
   preCommands: [String!]
   postCommands: [String!]
 }
@@ -229,6 +227,7 @@ input UpdateTaskInput {
 input AssignWorkerInput {
   taskId: ID!
   workerId: ID!
+  agentType: AgentType
 }
 
 input StartTaskInput {

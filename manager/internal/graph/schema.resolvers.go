@@ -16,13 +16,17 @@ import (
 
 // CreateTask is the resolver for the createTask field.
 func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTaskInput) (*model.Task, error) {
+	var agentType domain.AgentType
+	if input.AgentType != nil {
+		agentType = domain.AgentType(*input.AgentType)
+	}
 	task, err := r.Service.CreateTask(ctx, app.CreateTaskInput{
 		Title:        input.Title,
 		Description:  valueOrEmpty(input.Description),
 		ProjectID:    input.ProjectID,
-		AgentType:    domain.AgentType(input.AgentType),
+		WorkerID:     valueOrEmpty(input.WorkerID),
+		AgentType:    agentType,
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
-		TargetBranch: valueOrEmpty(input.TargetBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
 	})
@@ -31,14 +35,17 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 
 // UpdateTask is the resolver for the updateTask field.
 func (r *mutationResolver) UpdateTask(ctx context.Context, input model.UpdateTaskInput) (*model.Task, error) {
+	var agentType domain.AgentType
+	if input.AgentType != nil {
+		agentType = domain.AgentType(*input.AgentType)
+	}
 	task, err := r.Service.UpdateTask(ctx, app.UpdateTaskInput{
 		ID:           input.ID,
 		Title:        input.Title,
 		Description:  valueOrEmpty(input.Description),
 		ProjectID:    input.ProjectID,
-		AgentType:    domain.AgentType(input.AgentType),
+		AgentType:    agentType,
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
-		TargetBranch: valueOrEmpty(input.TargetBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
 	})
@@ -54,7 +61,11 @@ func (r *mutationResolver) AssignWorker(ctx context.Context, input *model.Assign
 	if taskID == nil || workerID == nil {
 		return nil, fmt.Errorf("taskId and workerId are required")
 	}
-	task, err := r.Service.AssignWorker(ctx, *taskID, *workerID)
+	var agentTypes []domain.AgentType
+	if input != nil && input.AgentType != nil {
+		agentTypes = append(agentTypes, domain.AgentType(*input.AgentType))
+	}
+	task, err := r.Service.AssignWorker(ctx, *taskID, *workerID, agentTypes...)
 	return toModelTask(task), err
 }
 

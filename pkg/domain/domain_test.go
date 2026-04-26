@@ -8,14 +8,13 @@ import (
 func TestTaskLifecycleEmitsEventsAndRejectsInvalidTransitions(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	task, err := NewTask(NewTaskInput{
-		ID:           "task-1",
-		Title:        "Implement feature",
-		Description:  "Do the work",
-		ProjectID:    "project-1",
-		AgentType:    AgentCodex,
-		BaseBranch:   "main",
-		TargetBranch: "task/task-1",
-		Now:          now,
+		ID:          "task-1",
+		Title:       "Implement feature",
+		Description: "Do the work",
+		ProjectID:   "project-1",
+		AgentType:   AgentCodex,
+		BaseBranch:  "main",
+		Now:         now,
 	})
 	if err != nil {
 		t.Fatalf("NewTask returned error: %v", err)

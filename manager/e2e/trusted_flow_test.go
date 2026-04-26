@@ -51,7 +51,7 @@ func TestTrustedManagerWorkerFlow(t *testing.T) {
 	})
 	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
-		"input": map[string]any{"title": "E2E", "projectId": projectID, "agentType": "codex", "baseBranch": "main", "targetBranch": "task/e2e"},
+		"input": map[string]any{"title": "E2E", "projectId": projectID, "agentType": "codex", "baseBranch": "main"},
 	})
 	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
 	postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { id } }`, map[string]any{"taskId": taskID, "workerId": "worker-e2e"})

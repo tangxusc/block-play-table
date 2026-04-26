@@ -93,7 +93,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker.Connect(now)
-	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-list", Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main", TargetBranch: "task/list", PreCommands: []string{"pre"}, PostCommands: []string{"post"}, Now: now})
+	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-list", Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex, BaseBranch: "main", PreCommands: []string{"pre"}, PostCommands: []string{"post"}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 		ProjectID:    projectID,
 		AgentType:    domain.AgentCodex,
 		BaseBranch:   "main",
-		TargetBranch: "task/sql",
 		PreCommands:  []string{"make pre"},
 		PostCommands: []string{"make post"},
 		Now:          now,

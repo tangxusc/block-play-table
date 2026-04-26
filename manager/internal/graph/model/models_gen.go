@@ -27,8 +27,9 @@ type AgentRuntimeEnvVarInput struct {
 }
 
 type AssignWorkerInput struct {
-	TaskID   string `json:"taskId"`
-	WorkerID string `json:"workerId"`
+	TaskID    string     `json:"taskId"`
+	WorkerID  string     `json:"workerId"`
+	AgentType *AgentType `json:"agentType,omitempty"`
 }
 
 type Board struct {
@@ -71,14 +72,14 @@ type CreateProjectInput struct {
 }
 
 type CreateTaskInput struct {
-	Title        string    `json:"title"`
-	Description  *string   `json:"description,omitempty"`
-	ProjectID    string    `json:"projectId"`
-	AgentType    AgentType `json:"agentType"`
-	BaseBranch   *string   `json:"baseBranch,omitempty"`
-	TargetBranch *string   `json:"targetBranch,omitempty"`
-	PreCommands  []string  `json:"preCommands,omitempty"`
-	PostCommands []string  `json:"postCommands,omitempty"`
+	Title        string     `json:"title"`
+	Description  *string    `json:"description,omitempty"`
+	ProjectID    string     `json:"projectId"`
+	WorkerID     *string    `json:"workerId,omitempty"`
+	AgentType    *AgentType `json:"agentType,omitempty"`
+	BaseBranch   *string    `json:"baseBranch,omitempty"`
+	PreCommands  []string   `json:"preCommands,omitempty"`
+	PostCommands []string   `json:"postCommands,omitempty"`
 }
 
 type CreateWorkerInput struct {
@@ -190,9 +191,8 @@ type Task struct {
 	Status       TaskStatus `json:"status"`
 	ProjectID    string     `json:"projectId"`
 	WorkerID     *string    `json:"workerId,omitempty"`
-	AgentType    AgentType  `json:"agentType"`
+	AgentType    *AgentType `json:"agentType,omitempty"`
 	BaseBranch   string     `json:"baseBranch"`
-	TargetBranch string     `json:"targetBranch"`
 	WorktreePath *string    `json:"worktreePath,omitempty"`
 	PreCommands  []string   `json:"preCommands"`
 	PostCommands []string   `json:"postCommands"`
@@ -236,15 +236,14 @@ type UpdateProjectInput struct {
 }
 
 type UpdateTaskInput struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	Description  *string   `json:"description,omitempty"`
-	ProjectID    string    `json:"projectId"`
-	AgentType    AgentType `json:"agentType"`
-	BaseBranch   *string   `json:"baseBranch,omitempty"`
-	TargetBranch *string   `json:"targetBranch,omitempty"`
-	PreCommands  []string  `json:"preCommands,omitempty"`
-	PostCommands []string  `json:"postCommands,omitempty"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Description  *string    `json:"description,omitempty"`
+	ProjectID    string     `json:"projectId"`
+	AgentType    *AgentType `json:"agentType,omitempty"`
+	BaseBranch   *string    `json:"baseBranch,omitempty"`
+	PreCommands  []string   `json:"preCommands,omitempty"`
+	PostCommands []string   `json:"postCommands,omitempty"`
 }
 
 type UpdateWorkerInput struct {

@@ -25,13 +25,12 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 		t.Fatalf("NewProject returned error: %v", err)
 	}
 	task, err := domain.NewTask(domain.NewTaskInput{
-		ID:           "task-1",
-		Title:        "Task",
-		ProjectID:    project.ID,
-		AgentType:    domain.AgentCodex,
-		BaseBranch:   "main",
-		TargetBranch: "task/task-1",
-		Now:          now,
+		ID:         "task-1",
+		Title:      "Task",
+		ProjectID:  project.ID,
+		AgentType:  domain.AgentCodex,
+		BaseBranch: "main",
+		Now:        now,
 	})
 	if err != nil {
 		t.Fatalf("NewTask returned error: %v", err)

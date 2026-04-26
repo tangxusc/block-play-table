@@ -23,7 +23,6 @@ func TestExecutorRunsPreCommandsAgentAndPostCommands(t *testing.T) {
 			Title:        "Task",
 			AgentType:    domain.AgentCodex,
 			BaseBranch:   "main",
-			TargetBranch: "task/task-1",
 			PreCommands:  []string{"printf pre > pre.txt"},
 			PostCommands: []string{"printf post > post.txt"},
 		},
@@ -103,7 +102,7 @@ func TestExecutorInterruptStopsLongRunningAgent(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- exec.Execute(context.Background(), protocol.TaskStartPayload{
-			Task:    protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentCodex, TargetBranch: "task/t"},
+			Task:    protocol.TaskPayload{ID: "task-1", AgentType: domain.AgentCodex},
 			Project: protocol.ProjectPayload{ID: "project-1", GitURL: root, DefaultBranch: "main", WorktreeNamePrefix: "p"},
 		})
 	}()

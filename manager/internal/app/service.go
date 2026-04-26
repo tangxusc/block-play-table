@@ -179,9 +179,9 @@ type CreateTaskInput struct {
 	Title        string           `json:"title"`
 	Description  string           `json:"description"`
 	ProjectID    string           `json:"projectId"`
+	WorkerID     string           `json:"workerId"`
 	AgentType    domain.AgentType `json:"agentType"`
 	BaseBranch   string           `json:"baseBranch"`
-	TargetBranch string           `json:"targetBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
 }
@@ -193,7 +193,6 @@ type UpdateTaskInput struct {
 	ProjectID    string           `json:"projectId"`
 	AgentType    domain.AgentType `json:"agentType"`
 	BaseBranch   string           `json:"baseBranch"`
-	TargetBranch string           `json:"targetBranch"`
 	PreCommands  []string         `json:"preCommands"`
 	PostCommands []string         `json:"postCommands"`
 }
@@ -220,6 +219,9 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 	if project.Archived {
 		return nil, fmt.Errorf("%w: project %s is archived", domain.ErrConflict, project.ID)
 	}
+	if input.WorkerID != "" && !input.AgentType.Valid() {
+		return nil, fmt.Errorf("%w: agent type is required when creating task with worker %s", domain.ErrConflict, input.WorkerID)
+	}
 	task, err := domain.NewTask(domain.NewTaskInput{
 		ID:           "task_" + uuid.NewString(),
 		Title:        input.Title,
@@ -227,7 +229,6 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 		ProjectID:    input.ProjectID,
 		AgentType:    input.AgentType,
 		BaseBranch:   input.BaseBranch,
-		TargetBranch: input.TargetBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
 		Now:          now,
@@ -235,9 +236,32 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 	if err != nil {
 		return nil, err
 	}
+	var worker *domain.Worker
+	if input.WorkerID != "" {
+		worker, err = s.store.Worker(ctx, input.WorkerID)
+		if err != nil {
+			return nil, err
+		}
+		if !workerCanRunTask(worker, input.AgentType, input.ProjectID, task.ID) {
+			return nil, fmt.Errorf("%w: worker %s cannot accept task %s", domain.ErrConflict, input.WorkerID, task.ID)
+		}
+		if err := task.AssignWorkerWithAgent(input.WorkerID, input.AgentType, now); err != nil {
+			return nil, err
+		}
+		if err := worker.AssignTask(task.ID, now); err != nil {
+			return nil, err
+		}
+	}
 	events := task.PullEvents()
 	if err := s.store.SaveTask(ctx, task); err != nil {
 		return nil, err
+	}
+	if worker != nil {
+		workerEvents := worker.PullEvents()
+		if err := s.store.SaveWorker(ctx, worker); err != nil {
+			return nil, err
+		}
+		events = append(events, workerEvents...)
 	}
 	if err := s.appendEvents(ctx, events); err != nil {
 		return nil, err
@@ -321,7 +345,6 @@ func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*domai
 		ProjectID:    input.ProjectID,
 		AgentType:    input.AgentType,
 		BaseBranch:   input.BaseBranch,
-		TargetBranch: input.TargetBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
 		Now:          now,
@@ -655,7 +678,7 @@ func (s *Service) MonitorWorkerHeartbeats(ctx context.Context, timeout, interval
 	}
 }
 
-func (s *Service) AssignWorker(ctx context.Context, taskID, workerID string) (*domain.Task, error) {
+func (s *Service) AssignWorker(ctx context.Context, taskID, workerID string, agentTypes ...domain.AgentType) (*domain.Task, error) {
 	now := s.clock()
 	task, err := s.store.Task(ctx, taskID)
 	if err != nil {
@@ -665,10 +688,20 @@ func (s *Service) AssignWorker(ctx context.Context, taskID, workerID string) (*d
 	if err != nil {
 		return nil, err
 	}
-	if !worker.CanAcceptTask(task.AgentType, task.ProjectID) && worker.CurrentTaskID != taskID {
+	agentType := task.AgentType
+	if len(agentTypes) > 0 {
+		agentType = agentTypes[0]
+	}
+	if task.AgentType != "" && len(agentTypes) > 0 && agentTypes[0] != "" && agentTypes[0] != task.AgentType {
+		return nil, fmt.Errorf("%w: task %s already uses agent %s", domain.ErrConflict, taskID, task.AgentType)
+	}
+	if task.AgentType == "" && !agentType.Valid() {
+		return nil, fmt.Errorf("%w: agent type is required to assign task %s", domain.ErrConflict, taskID)
+	}
+	if !workerCanRunTask(worker, agentType, task.ProjectID, taskID) {
 		return nil, fmt.Errorf("%w: worker %s cannot accept task %s", domain.ErrConflict, workerID, taskID)
 	}
-	if err := task.AssignWorker(workerID, now); err != nil {
+	if err := task.AssignWorkerWithAgent(workerID, agentType, now); err != nil {
 		return nil, err
 	}
 	if err := worker.AssignTask(taskID, now); err != nil {
@@ -693,6 +726,9 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	task, err := s.store.Task(ctx, taskID)
 	if err != nil {
 		return nil, protocol.TaskStartPayload{}, err
+	}
+	if task.AgentType == "" {
+		return nil, protocol.TaskStartPayload{}, fmt.Errorf("%w: task %s requires agent before start", domain.ErrConflict, task.ID)
 	}
 	if task.WorkerID == "" && task.Status == domain.TaskCreated {
 		task, err = s.assignFirstAvailableWorker(ctx, task, now)
@@ -1093,7 +1129,6 @@ func buildStartPayload(task *domain.Task, project *domain.Project, settings *dom
 			Description:  task.Description,
 			AgentType:    task.AgentType,
 			BaseBranch:   task.BaseBranch,
-			TargetBranch: task.TargetBranch,
 			PreCommands:  append([]string(nil), task.PreCommands...),
 			PostCommands: append([]string(nil), task.PostCommands...),
 		},

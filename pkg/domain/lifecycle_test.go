@@ -175,7 +175,7 @@ func TestTaskUpdateRetryResultFailureAndRestoreEvents(t *testing.T) {
 	if err := task.Update(NewTaskInput{Title: "T2", ProjectID: "project-2", AgentType: AgentClaude, PreCommands: []string{"pre"}, PostCommands: []string{"post"}, Now: now.Add(time.Minute)}); err != nil {
 		t.Fatalf("Update returned error: %v", err)
 	}
-	if task.Title != "T2" || task.BaseBranch != "main" || task.TargetBranch != "task/task-update" || len(task.PreCommands) != 1 {
+	if task.Title != "T2" || task.BaseBranch != "main" || len(task.PreCommands) != 1 {
 		t.Fatalf("updated task = %+v", task)
 	}
 	for _, input := range []NewTaskInput{

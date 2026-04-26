@@ -503,7 +503,6 @@ Task
 - workerId
 - agentType
 - baseBranch
-- targetBranch
 - worktreePath
 - preCommands
 - postCommands
@@ -1054,8 +1053,7 @@ Worker -> Manager
     "title": "实现任务功能",
     "description": "根据需求完成代码修改",
     "agentType": "codex",
-    "baseBranch": "main",
-    "targetBranch": "task/task_001"
+    "baseBranch": "main"
   },
   "project": {
     "id": "project_001",
@@ -1123,7 +1121,6 @@ PostgreSQL Implementation
 | `worker_id` | string | Worker ID |
 | `agent_type` | string | Agent 类型 |
 | `base_branch` | string | 基础分支 |
-| `target_branch` | string | 目标分支 |
 | `worktree_path` | string | Worktree 路径 |
 | `result` | json/text | 结果 |
 | `version` | integer | 聚合版本 |

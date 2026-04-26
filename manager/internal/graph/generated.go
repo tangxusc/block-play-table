@@ -183,7 +183,6 @@ type ComplexityRoot struct {
 		ProjectID    func(childComplexity int) int
 		Result       func(childComplexity int) int
 		Status       func(childComplexity int) int
-		TargetBranch func(childComplexity int) int
 		Title        func(childComplexity int) int
 		UpdatedAt    func(childComplexity int) int
 		Version      func(childComplexity int) int
@@ -1110,12 +1109,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Task.Status(childComplexity), true
-	case "Task.targetBranch":
-		if e.ComplexityRoot.Task.TargetBranch == nil {
-			break
-		}
-
-		return e.ComplexityRoot.Task.TargetBranch(childComplexity), true
 	case "Task.title":
 		if e.ComplexityRoot.Task.Title == nil {
 			break
@@ -2293,8 +2286,6 @@ func (ec *executionContext) fieldContext_Board_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -2385,8 +2376,6 @@ func (ec *executionContext) fieldContext_BoardCalendarItem_task(_ context.Contex
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -2593,8 +2582,6 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3156,8 +3143,6 @@ func (ec *executionContext) fieldContext_Mutation_createTask(ctx context.Context
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3231,8 +3216,6 @@ func (ec *executionContext) fieldContext_Mutation_updateTask(ctx context.Context
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3306,8 +3289,6 @@ func (ec *executionContext) fieldContext_Mutation_assignWorker(ctx context.Conte
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3381,8 +3362,6 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3456,8 +3435,6 @@ func (ec *executionContext) fieldContext_Mutation_interruptTask(ctx context.Cont
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3531,8 +3508,6 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -3606,8 +3581,6 @@ func (ec *executionContext) fieldContext_Mutation_retryTask(ctx context.Context,
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -4871,8 +4844,6 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -4993,8 +4964,6 @@ func (ec *executionContext) fieldContext_Query_taskList(ctx context.Context, fie
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -6472,9 +6441,9 @@ func (ec *executionContext) _Task_agentType(ctx context.Context, field graphql.C
 			return obj.AgentType, nil
 		},
 		nil,
-		ec.marshalNAgentType2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType,
+		ec.marshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType,
 		true,
-		true,
+		false,
 	)
 }
 
@@ -6508,35 +6477,6 @@ func (ec *executionContext) _Task_baseBranch(ctx context.Context, field graphql.
 }
 
 func (ec *executionContext) fieldContext_Task_baseBranch(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Task",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Task_targetBranch(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Task_targetBranch,
-		func(ctx context.Context) (any, error) {
-			return obj.TargetBranch, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Task_targetBranch(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Task",
 		Field:      field,
@@ -6792,8 +6732,6 @@ func (ec *executionContext) fieldContext_TaskConnection_nodes(_ context.Context,
 				return ec.fieldContext_Task_agentType(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
-			case "targetBranch":
-				return ec.fieldContext_Task_targetBranch(ctx, field)
 			case "worktreePath":
 				return ec.fieldContext_Task_worktreePath(ctx, field)
 			case "preCommands":
@@ -8916,7 +8854,7 @@ func (ec *executionContext) unmarshalInputAssignWorkerInput(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"taskId", "workerId"}
+	fieldsInOrder := [...]string{"taskId", "workerId", "agentType"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -8937,6 +8875,13 @@ func (ec *executionContext) unmarshalInputAssignWorkerInput(ctx context.Context,
 				return it, err
 			}
 			it.WorkerID = data
+		case "agentType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentType"))
+			data, err := ec.unmarshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentType = data
 		}
 	}
 	return it, nil
@@ -9004,7 +8949,7 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "description", "projectId", "agentType", "baseBranch", "targetBranch", "preCommands", "postCommands"}
+	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "baseBranch", "preCommands", "postCommands"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9032,9 +8977,16 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.ProjectID = data
+		case "workerId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workerId"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WorkerID = data
 		case "agentType":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentType"))
-			data, err := ec.unmarshalNAgentType2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
+			data, err := ec.unmarshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -9046,13 +8998,6 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.BaseBranch = data
-		case "targetBranch":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetBranch"))
-			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.TargetBranch = data
 		case "preCommands":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("preCommands"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -9565,7 +9510,7 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "targetBranch", "preCommands", "postCommands"}
+	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "preCommands", "postCommands"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9602,7 +9547,7 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 			it.ProjectID = data
 		case "agentType":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentType"))
-			data, err := ec.unmarshalNAgentType2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
+			data, err := ec.unmarshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -9614,13 +9559,6 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.BaseBranch = data
-		case "targetBranch":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetBranch"))
-			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.TargetBranch = data
 		case "preCommands":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("preCommands"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -11027,16 +10965,8 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			out.Values[i] = ec._Task_workerId(ctx, field, obj)
 		case "agentType":
 			out.Values[i] = ec._Task_agentType(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
 		case "baseBranch":
 			out.Values[i] = ec._Task_baseBranch(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
-		case "targetBranch":
-			out.Values[i] = ec._Task_targetBranch(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

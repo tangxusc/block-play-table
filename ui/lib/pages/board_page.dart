@@ -352,7 +352,7 @@ class _TaskCard extends StatelessWidget {
                 runSpacing: 6,
                 children: [
                   StatusPill(value: task.status),
-                  StatusPill(value: task.agentType),
+                  if (task.agentType.isNotEmpty) StatusPill(value: task.agentType),
                 ],
               ),
               if ((task.workerId ?? '').isNotEmpty) ...[
@@ -437,6 +437,36 @@ String? _workerName(List<WorkerItem> workers, String? workerId) {
   return null;
 }
 
+WorkerItem? _workerById(List<WorkerItem> workers, String workerId) {
+  for (final worker in workers) {
+    if (worker.id == workerId) {
+      return worker;
+    }
+  }
+  return null;
+}
+
+bool _workerAllowsProject(WorkerItem worker, String? projectId) {
+  if (projectId == null) {
+    return false;
+  }
+  return worker.projectBindingMode == 'ALL_PROJECTS' ||
+      worker.boundProjectIds.contains(projectId);
+}
+
+bool _workerAvailableForProject(WorkerItem worker, String? projectId) {
+  return worker.status == 'ONLINE' &&
+      (worker.currentTaskId ?? '').isEmpty &&
+      worker.supportedAgents.isNotEmpty &&
+      _workerAllowsProject(worker, projectId);
+}
+
+String _agentLabel(String agent) => switch (agent) {
+      'codex' => 'Codex',
+      'claude' => 'Claude',
+      _ => agent,
+    };
+
 class _CalendarView extends StatelessWidget {
   const _CalendarView({
     required this.items,
@@ -490,7 +520,6 @@ Future<bool?> showTaskFormDialog(
   final title = TextEditingController(text: task?.title ?? '');
   final description = TextEditingController(text: task?.description ?? '');
   final baseBranch = TextEditingController(text: task?.baseBranch ?? 'main');
-  final targetBranch = TextEditingController(text: task?.targetBranch ?? '');
   final preCommands = TextEditingController(
     text: task?.preCommands.join('\n') ?? '',
   );
@@ -499,157 +528,217 @@ Future<bool?> showTaskFormDialog(
   );
   String? projectId = task?.projectId ??
       (data.projects.isNotEmpty ? data.projects.first.id : null);
-  String agent = task?.agentType ?? 'codex';
+  String selectedWorkerId = task?.workerId ?? '';
+  String? selectedAgent =
+      (task?.agentType ?? '').isEmpty ? null : task!.agentType;
+
+  List<WorkerItem> availableWorkers() => data.workers
+      .where((worker) => _workerAvailableForProject(worker, projectId))
+      .toList();
+
+  void reconcileCreateSelection() {
+    if (task != null) {
+      return;
+    }
+    final workers = availableWorkers();
+    if (selectedWorkerId.isNotEmpty &&
+        !workers.any((worker) => worker.id == selectedWorkerId)) {
+      selectedWorkerId = '';
+      selectedAgent = null;
+    }
+    final worker = selectedWorkerId.isEmpty
+        ? null
+        : _workerById(workers, selectedWorkerId);
+    if (worker == null) {
+      selectedAgent = null;
+      return;
+    }
+    if (selectedAgent == null ||
+        !worker.supportedAgents.contains(selectedAgent)) {
+      selectedAgent = worker.supportedAgents.first;
+    }
+  }
+
+  reconcileCreateSelection();
   return showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(task == null ? 'Create task' : 'Edit task'),
-        content: SizedBox(
-          width: 680,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: title,
-                  decoration: const InputDecoration(labelText: 'Title'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: description,
-                  decoration: const InputDecoration(labelText: 'Description'),
-                  minLines: 2,
-                  maxLines: 4,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: projectId,
-                  decoration: const InputDecoration(labelText: 'Project'),
-                  items: data.projects
-                      .map(
-                        (project) => DropdownMenuItem(
-                          value: project.id,
-                          child: Text(project.name),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => setState(() => projectId = value),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: baseBranch,
-                        decoration: const InputDecoration(
-                          labelText: 'Base branch',
-                        ),
-                      ),
+      builder: (context, setState) {
+        reconcileCreateSelection();
+        final workers = availableWorkers();
+        final selectedWorker = selectedWorkerId.isEmpty
+            ? null
+            : _workerById(workers, selectedWorkerId);
+        final supportedAgents =
+            selectedWorker?.supportedAgents ?? const <String>[];
+        final canSave = title.text.trim().isNotEmpty &&
+            projectId != null &&
+            (selectedWorkerId.isEmpty || selectedAgent != null);
+
+        return AlertDialog(
+          title: Text(task == null ? 'Create task' : 'Edit task'),
+          content: SizedBox(
+            width: 680,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: title,
+                    decoration: const InputDecoration(labelText: 'Title'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: description,
+                    decoration: const InputDecoration(labelText: 'Description'),
+                    minLines: 2,
+                    maxLines: 4,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: projectId,
+                    decoration: const InputDecoration(labelText: 'Project'),
+                    items: data.projects
+                        .map(
+                          (project) => DropdownMenuItem(
+                            value: project.id,
+                            child: Text(project.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() {
+                      projectId = value;
+                      reconcileCreateSelection();
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: baseBranch,
+                    decoration: const InputDecoration(
+                      labelText: 'Base branch',
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: targetBranch,
-                        decoration: const InputDecoration(
-                          labelText: 'Target branch',
+                  ),
+                  if (task == null) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedWorkerId,
+                      decoration: const InputDecoration(labelText: 'Worker'),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Unassigned'),
                         ),
-                      ),
+                        ...workers.map(
+                          (worker) => DropdownMenuItem(
+                            value: worker.id,
+                            child: Text(worker.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => setState(() {
+                        selectedWorkerId = value ?? '';
+                        selectedAgent = null;
+                        reconcileCreateSelection();
+                      }),
                     ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                      value: 'codex',
-                      icon: Icon(Icons.terminal),
-                      label: Text('Codex'),
-                    ),
-                    ButtonSegment(
-                      value: 'claude',
-                      icon: Icon(Icons.chat_bubble_outline),
-                      label: Text('Claude'),
+                  if (selectedWorker != null) ...[
+                    const SizedBox(height: 12),
+                    SegmentedButton<String>(
+                      segments: supportedAgents
+                          .map(
+                            (agent) => ButtonSegment(
+                              value: agent,
+                              icon: Icon(
+                                agent == 'claude'
+                                    ? Icons.chat_bubble_outline
+                                    : Icons.terminal,
+                              ),
+                              label: Text(_agentLabel(agent)),
+                            ),
+                          )
+                          .toList(),
+                      selected: {selectedAgent ?? supportedAgents.first},
+                      onSelectionChanged: (values) =>
+                          setState(() => selectedAgent = values.first),
                     ),
                   ],
-                  selected: {agent},
-                  onSelectionChanged: (values) =>
-                      setState(() => agent = values.first),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: preCommands,
-                  decoration: const InputDecoration(labelText: 'Pre commands'),
-                  minLines: 2,
-                  maxLines: 5,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: postCommands,
-                  decoration: const InputDecoration(labelText: 'Post commands'),
-                  minLines: 2,
-                  maxLines: 5,
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: preCommands,
+                    decoration:
+                        const InputDecoration(labelText: 'Pre commands'),
+                    minLines: 2,
+                    maxLines: 5,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: postCommands,
+                    decoration:
+                        const InputDecoration(labelText: 'Post commands'),
+                    minLines: 2,
+                    maxLines: 5,
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (title.text.trim().isEmpty || projectId == null) {
-                return;
-              }
-              if (task == null) {
-                await apiClient.createTask(
-                  title: title.text.trim(),
-                  description: description.text.trim(),
-                  projectId: projectId!,
-                  agentType: agent,
-                  baseBranch: baseBranch.text.trim().isEmpty
-                      ? 'main'
-                      : baseBranch.text.trim(),
-                  targetBranch: targetBranch.text.trim(),
-                  preCommands: stringList(preCommands.text),
-                  postCommands: stringList(postCommands.text),
-                );
-              } else {
-                await apiClient.updateTask(
-                  TaskItem(
-                    id: task.id,
-                    title: title.text.trim(),
-                    description: description.text.trim(),
-                    status: task.status,
-                    projectId: projectId!,
-                    agentType: agent,
-                    baseBranch: baseBranch.text.trim().isEmpty
-                        ? 'main'
-                        : baseBranch.text.trim(),
-                    targetBranch: targetBranch.text.trim().isEmpty
-                        ? 'task/${task.id}'
-                        : targetBranch.text.trim(),
-                    preCommands: stringList(preCommands.text),
-                    postCommands: stringList(postCommands.text),
-                    createdAt: task.createdAt,
-                    updatedAt: task.updatedAt,
-                    workerId: task.workerId,
-                    worktreePath: task.worktreePath,
-                    result: task.result,
-                  ),
-                );
-              }
-              if (context.mounted) {
-                Navigator.of(context).pop(true);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: canSave
+                  ? () async {
+                      if (task == null) {
+                        await apiClient.createTask(
+                          title: title.text.trim(),
+                          description: description.text.trim(),
+                          projectId: projectId!,
+                          workerId: selectedWorkerId.isEmpty
+                              ? null
+                              : selectedWorkerId,
+                          agentType: selectedAgent,
+                          baseBranch: baseBranch.text.trim().isEmpty
+                              ? 'main'
+                              : baseBranch.text.trim(),
+                          preCommands: stringList(preCommands.text),
+                          postCommands: stringList(postCommands.text),
+                        );
+                      } else {
+                        await apiClient.updateTask(
+                          TaskItem(
+                            id: task.id,
+                            title: title.text.trim(),
+                            description: description.text.trim(),
+                            status: task.status,
+                            projectId: projectId!,
+                            agentType: selectedAgent ?? '',
+                            baseBranch: baseBranch.text.trim().isEmpty
+                                ? 'main'
+                                : baseBranch.text.trim(),
+                            preCommands: stringList(preCommands.text),
+                            postCommands: stringList(postCommands.text),
+                            createdAt: task.createdAt,
+                            updatedAt: task.updatedAt,
+                            workerId: task.workerId,
+                            worktreePath: task.worktreePath,
+                            result: task.result,
+                          ),
+                        );
+                      }
+                      if (context.mounted) {
+                        Navigator.of(context).pop(true);
+                      }
+                    }
+                  : null,
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
     ),
   );
 }
@@ -820,53 +909,103 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
 
   Future<void> _assign() async {
     final candidates = widget.boardData.workers.where((worker) {
-      final supports = worker.supportedAgents.contains(widget.task.agentType);
+      final supports = widget.task.agentType.isEmpty ||
+          worker.supportedAgents.contains(widget.task.agentType);
       final projectMatches = worker.projectBindingMode == 'ALL_PROJECTS' ||
           worker.boundProjectIds.contains(widget.task.projectId);
       return worker.status == 'ONLINE' &&
           (worker.currentTaskId ?? '').isEmpty &&
           supports &&
+          worker.supportedAgents.isNotEmpty &&
           projectMatches;
     }).toList();
     if (candidates.isEmpty) {
       return;
     }
     String selected = candidates.first.id;
+    String selectedAgent = widget.task.agentType.isEmpty
+        ? candidates.first.supportedAgents.first
+        : widget.task.agentType;
     final workerId = await showDialog<String>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Assign worker'),
-          content: DropdownButtonFormField<String>(
-            value: selected,
-            decoration: const InputDecoration(labelText: 'Worker'),
-            items: candidates
-                .map(
-                  (worker) => DropdownMenuItem(
-                    value: worker.id,
-                    child: Text(worker.name),
+        builder: (context, setState) {
+          final worker = _workerById(candidates, selected) ?? candidates.first;
+          if (!worker.supportedAgents.contains(selectedAgent)) {
+            selectedAgent = worker.supportedAgents.first;
+          }
+          return AlertDialog(
+            title: const Text('Assign worker'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selected,
+                  decoration: const InputDecoration(labelText: 'Worker'),
+                  items: candidates
+                      .map(
+                        (worker) => DropdownMenuItem(
+                          value: worker.id,
+                          child: Text(worker.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() {
+                    selected = value ?? selected;
+                    final worker =
+                        _workerById(candidates, selected) ?? candidates.first;
+                    selectedAgent = widget.task.agentType.isEmpty
+                        ? worker.supportedAgents.first
+                        : widget.task.agentType;
+                  }),
+                ),
+                if (widget.task.agentType.isEmpty) ...[
+                  const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: worker.supportedAgents
+                        .map(
+                          (agent) => ButtonSegment(
+                            value: agent,
+                            icon: Icon(
+                              agent == 'claude'
+                                  ? Icons.chat_bubble_outline
+                                  : Icons.terminal,
+                            ),
+                            label: Text(_agentLabel(agent)),
+                          ),
+                        )
+                        .toList(),
+                    selected: {selectedAgent},
+                    onSelectionChanged: (values) =>
+                        setState(() => selectedAgent = values.first),
                   ),
-                )
-                .toList(),
-            onChanged: (value) => setState(() => selected = value ?? selected),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+                ],
+              ],
             ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(selected),
-              child: const Text('Assign'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(selected),
+                child: const Text('Assign'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (workerId == null) {
       return;
     }
-    await _run(() => widget.apiClient.assignWorker(widget.task.id!, workerId));
+    await _run(
+      () => widget.apiClient.assignWorker(
+        widget.task.id!,
+        workerId,
+        agentType: widget.task.agentType.isEmpty ? selectedAgent : null,
+      ),
+    );
   }
 }
 
@@ -887,7 +1026,8 @@ class _TaskDetailBody extends StatelessWidget {
             runSpacing: 8,
             children: [
               StatusPill(value: task.status),
-              DetailText(icon: Icons.terminal, text: task.agentType),
+              if (task.agentType.isNotEmpty)
+                DetailText(icon: Icons.terminal, text: task.agentType),
               DetailText(icon: Icons.folder_copy, text: task.projectId),
               if ((task.workerId ?? '').isNotEmpty)
                 DetailText(icon: Icons.memory, text: task.workerId!),
