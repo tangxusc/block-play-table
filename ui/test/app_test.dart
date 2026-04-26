@@ -19,6 +19,9 @@ void main() {
       expect(find.text('Workers'), findsWidgets);
       expect(find.text('Events'), findsWidgets);
       expect(find.byIcon(Icons.view_kanban), findsWidgets);
+      expect(find.text('Pending'), findsOneWidget);
+      expect(find.text('Running'), findsOneWidget);
+      expect(find.text('Complete'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(FilledButton, 'New task'));
       await tester.pumpAndSettle();

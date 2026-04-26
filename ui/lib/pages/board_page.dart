@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../board_status_groups.dart';
 import '../models.dart';
 import '../realtime_refresh.dart';
 import '../widgets.dart';
@@ -217,7 +218,7 @@ class _BoardContent extends StatelessWidget {
           onTaskEdit: onTaskEdit,
         ),
       _ => _KanbanView(
-          columns: data.columns,
+          columns: buildBoardStatusColumns(data.tasks),
           onTaskSelected: onTaskSelected,
           onTaskEdit: onTaskEdit,
         ),
