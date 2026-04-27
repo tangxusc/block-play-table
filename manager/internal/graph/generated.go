@@ -232,7 +232,7 @@ type ComplexityRoot struct {
 		BoundProjectIds    func(childComplexity int) int
 		Capabilities       func(childComplexity int) int
 		CreatedAt          func(childComplexity int) int
-		CurrentTaskID      func(childComplexity int) int
+		CurrentTaskIds     func(childComplexity int) int
 		ID                 func(childComplexity int) int
 		LastHeartbeatAt    func(childComplexity int) int
 		Name               func(childComplexity int) int
@@ -1331,12 +1331,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Worker.CreatedAt(childComplexity), true
-	case "Worker.currentTaskId":
-		if e.ComplexityRoot.Worker.CurrentTaskID == nil {
+	case "Worker.currentTaskIds":
+		if e.ComplexityRoot.Worker.CurrentTaskIds == nil {
 			break
 		}
 
-		return e.ComplexityRoot.Worker.CurrentTaskID(childComplexity), true
+		return e.ComplexityRoot.Worker.CurrentTaskIds(childComplexity), true
 	case "Worker.id":
 		if e.ComplexityRoot.Worker.ID == nil {
 			break
@@ -4335,8 +4335,8 @@ func (ec *executionContext) fieldContext_Mutation_createWorker(ctx context.Conte
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -4408,8 +4408,8 @@ func (ec *executionContext) fieldContext_Mutation_registerWorker(ctx context.Con
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -4481,8 +4481,8 @@ func (ec *executionContext) fieldContext_Mutation_updateWorker(ctx context.Conte
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -4554,8 +4554,8 @@ func (ec *executionContext) fieldContext_Mutation_updateWorkerProjectBindings(ct
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -4627,8 +4627,8 @@ func (ec *executionContext) fieldContext_Mutation_enableWorker(ctx context.Conte
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -4700,8 +4700,8 @@ func (ec *executionContext) fieldContext_Mutation_disableWorker(ctx context.Cont
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -5687,8 +5687,8 @@ func (ec *executionContext) fieldContext_Query_worker(ctx context.Context, field
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -5760,8 +5760,8 @@ func (ec *executionContext) fieldContext_Query_workers(ctx context.Context, fiel
 				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
 			case "agentRuntimeEnv":
 				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
-			case "currentTaskId":
-				return ec.fieldContext_Worker_currentTaskId(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
 			case "lastHeartbeatAt":
 				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
 			case "version":
@@ -7968,23 +7968,23 @@ func (ec *executionContext) fieldContext_Worker_agentRuntimeEnv(_ context.Contex
 	return fc, nil
 }
 
-func (ec *executionContext) _Worker_currentTaskId(ctx context.Context, field graphql.CollectedField, obj *model.Worker) (ret graphql.Marshaler) {
+func (ec *executionContext) _Worker_currentTaskIds(ctx context.Context, field graphql.CollectedField, obj *model.Worker) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_Worker_currentTaskId,
+		ec.fieldContext_Worker_currentTaskIds,
 		func(ctx context.Context) (any, error) {
-			return obj.CurrentTaskID, nil
+			return obj.CurrentTaskIds, nil
 		},
 		nil,
-		ec.marshalOID2ᚖstring,
+		ec.marshalNID2ᚕstringᚄ,
 		true,
-		false,
+		true,
 	)
 }
 
-func (ec *executionContext) fieldContext_Worker_currentTaskId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Worker_currentTaskIds(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Worker",
 		Field:      field,
@@ -12431,8 +12431,11 @@ func (ec *executionContext) _Worker(ctx context.Context, sel ast.SelectionSet, o
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "currentTaskId":
-			out.Values[i] = ec._Worker_currentTaskId(ctx, field, obj)
+		case "currentTaskIds":
+			out.Values[i] = ec._Worker_currentTaskIds(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "lastHeartbeatAt":
 			out.Values[i] = ec._Worker_lastHeartbeatAt(ctx, field, obj)
 		case "version":

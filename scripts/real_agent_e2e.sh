@@ -63,7 +63,7 @@ def wait_for_worker():
     while time.time() < deadline:
         try:
             data = graphql(
-                "query Worker($id: ID!) { worker(id: $id) { id status supportedAgents currentTaskId } }",
+                "query Worker($id: ID!) { worker(id: $id) { id status supportedAgents currentTaskIds } }",
                 {"id": worker_id},
             )
             worker = data.get("worker")
@@ -112,10 +112,10 @@ def wait_for_idle_worker():
     deadline = time.time() + 60
     while time.time() < deadline:
         worker = graphql(
-            "query Worker($id: ID!) { worker(id: $id) { id status currentTaskId } }",
+            "query Worker($id: ID!) { worker(id: $id) { id status currentTaskIds } }",
             {"id": worker_id},
         )["worker"]
-        if worker["status"] == "ONLINE" and not worker.get("currentTaskId"):
+        if worker["status"] == "ONLINE" and not worker.get("currentTaskIds"):
             return
         time.sleep(0.5)
     raise TimeoutError("worker did not become idle")

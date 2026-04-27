@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS workers (
   startup_command TEXT,
   project_binding_mode TEXT NOT NULL,
   current_task_id TEXT,
+  current_task_ids TEXT NOT NULL DEFAULT '[]',
   last_heartbeat_at TIMESTAMP,
   version INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL,

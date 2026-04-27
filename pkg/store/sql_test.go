@@ -52,6 +52,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "005_task_agent_session", SQL: migrations.TaskAgentSessionSQL},
 		{Version: "006_task_display_dates", SQL: migrations.TaskDisplayDatesSQL},
 		{Version: "007_task_agent_config", SQL: migrations.TaskAgentConfigSQL},
+		{Version: "008_worker_current_task_ids", SQL: migrations.WorkerCurrentTaskIDsSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -107,6 +108,20 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if !hasTaskAgentConfig {
 		t.Fatal("tasks.agent_config should exist after versioned migrations")
+	}
+	hasWorkerCurrentTaskID, err := sqliteTableHasColumn(ctx, sqlStore, "workers", "current_task_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasWorkerCurrentTaskID {
+		t.Fatal("workers.current_task_id should be absent after versioned migrations")
+	}
+	hasWorkerCurrentTaskIDs, err := sqliteTableHasColumn(ctx, sqlStore, "workers", "current_task_ids")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWorkerCurrentTaskIDs {
+		t.Fatal("workers.current_task_ids should exist after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)

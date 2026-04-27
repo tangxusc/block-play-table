@@ -141,8 +141,8 @@ func TestServiceContinuesCompletedTaskOnOriginalWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedWorker.CurrentTaskID != task.ID {
-		t.Fatalf("worker current task = %q, want %q", loadedWorker.CurrentTaskID, task.ID)
+	if len(loadedWorker.CurrentTaskIDs) != 1 || loadedWorker.CurrentTaskIDs[0] != task.ID {
+		t.Fatalf("worker current tasks = %+v, want [%q]", loadedWorker.CurrentTaskIDs, task.ID)
 	}
 	messages, err := service.Store().TaskConversations(ctx, task.ID)
 	if err != nil {
@@ -321,8 +321,8 @@ func TestServiceCreateTaskWithWorkerAssignsImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Worker returned error: %v", err)
 	}
-	if loadedWorker.CurrentTaskID != task.ID {
-		t.Fatalf("worker current task = %q, want %q", loadedWorker.CurrentTaskID, task.ID)
+	if len(loadedWorker.CurrentTaskIDs) != 1 || loadedWorker.CurrentTaskIDs[0] != task.ID {
+		t.Fatalf("worker current tasks = %+v, want [%q]", loadedWorker.CurrentTaskIDs, task.ID)
 	}
 }
 
@@ -472,8 +472,8 @@ func TestServiceInterruptsTaskAndReleasesWorkerWhenWorkerConfirms(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if worker.CurrentTaskID != "" {
-		t.Fatalf("worker current task = %q, want released", worker.CurrentTaskID)
+	if len(worker.CurrentTaskIDs) != 0 {
+		t.Fatalf("worker current tasks = %+v, want released", worker.CurrentTaskIDs)
 	}
 }
 

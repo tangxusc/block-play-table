@@ -296,8 +296,11 @@ func TestWorkerUpdateValidationRestoreEventsAndDisabledOffline(t *testing.T) {
 	if err := worker.AssignTask("task-1", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.AssignTask("task-2", now); !errors.Is(err, ErrConflict) {
-		t.Fatalf("assign occupied err = %v, want conflict", err)
+	if err := worker.AssignTask("task-2", now); err != nil {
+		t.Fatalf("AssignTask should allow concurrent tasks: %v", err)
+	}
+	if len(worker.CurrentTaskIDs) != 2 {
+		t.Fatalf("current tasks = %+v, want two tasks", worker.CurrentTaskIDs)
 	}
 	worker.RestoreEvents([]DomainEvent{{EventID: "evt-worker"}})
 	if events := worker.PullEvents(); events[len(events)-1].EventID != "evt-worker" {

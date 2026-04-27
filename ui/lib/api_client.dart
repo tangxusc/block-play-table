@@ -138,7 +138,7 @@ class ApiClient {
       query Workers {
         workers(filter: { includeDisabled: true }) {
           id name status supportedAgents workDir startupCommand projectBindingMode
-          boundProjectIds currentTaskId lastHeartbeatAt
+          boundProjectIds currentTaskIds lastHeartbeatAt
           agentRuntimeEnv {
             agentType
             vars { key valueMasked description enabled sensitive }

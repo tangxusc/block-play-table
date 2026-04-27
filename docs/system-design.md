@@ -154,12 +154,12 @@ Worker 推荐状态：
 | `ERROR` | Worker 异常 |
 | `DISABLED` | 被禁用，不参与调度 |
 
-Worker 状态只描述连接和可用生命周期，不描述任务占用。Worker 没有 `IDLE` 状态，也不通过 `BUSY` 状态表达正在执行任务；是否可分配由 `currentTaskId` 派生：
+Worker 状态只描述连接和可用生命周期，不描述任务占用。Worker 没有 `IDLE` 状态，也不通过 `BUSY` 状态表达正在执行任务；运行期活跃任务由 `currentTaskIds` 记录：
 
 | 派生状态 | 判断规则 | 说明 |
 | --- | --- | --- |
-| 可分配 | `status = ONLINE` 且 `currentTaskId = null` | 可以接收新任务 |
-| 已占用 | `currentTaskId != null` | 正在执行或关联某个任务 |
+| 可分配 | `status = ONLINE` | 可以接收新任务；Worker 支持无限并发 |
+| 有运行任务 | `currentTaskIds` 非空 | 正在执行或等待输入的任务集合 |
 
 Worker 与 Project 的绑定模式：
 
@@ -178,7 +178,7 @@ Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent �
 4. Manager 在下发 `TASK_START` 或 `TASK_CONTINUE` 时，只读取被分配 Worker 上匹配任务 Agent 类型的启用变量。
 5. Worker 合并 Manager 下发的运行时变量与本机环境变量后启动 Agent。
 
-调度时必须同时满足 Worker 在线、`currentTaskId` 为空、支持目标 Agent、Project 绑定范围匹配。
+调度时必须同时满足 Worker 在线、支持目标 Agent、Project 绑定范围匹配；`currentTaskIds` 只做运行期记录，不限制并发分配。
 
 ### 3.3.1 任务级 Agent CLI 运行配置
 
@@ -412,7 +412,7 @@ Worker 分配支持两种模式：
 3. 排除不支持目标 Agent 类型的 Worker。
 4. 排除未绑定目标 Project 的专用 Worker。
 5. 如果 Worker 配置为所有 Project 共用，则可参与任意 Project 的任务调度。
-6. 只选择 `currentTaskId` 为空的 Worker。
+6. 不因 `currentTaskIds` 非空排除 Worker。
 7. 可选按标签、机器能力、最近任务数和负载进行排序。
 
 对应领域事件：
@@ -426,7 +426,7 @@ Worker 分配支持两种模式：
 1. 用户点击启动任务。
 2. UI 调用 `startTask` Mutation。
 3. Manager 校验任务状态必须是 `ASSIGNED`。
-4. Manager 校验 Worker 在线且 `currentTaskId` 为空。
+4. Manager 校验 Worker 在线、支持目标 Agent、Project 绑定范围匹配。
 5. Manager 生成 `TaskStartRequested` 领域事件。
 6. Manager 通过 WebSocket 向 Worker 发送 `TASK_START`。
 7. Worker 返回 `TASK_ACCEPTED`。
@@ -608,7 +608,7 @@ Worker
 - projectBindingMode
 - boundProjectIds
 - agentRuntimeEnv
-- currentTaskId
+- currentTaskIds
 - lastHeartbeatAt
 - version
 - createdAt
@@ -793,8 +793,8 @@ DomainEvent
 | `WorkerConnected` | Worker 已连接 |
 | `WorkerHeartbeatReceived` | 收到 Worker 心跳 |
 | `WorkerDisconnected` | Worker 断开 |
-| `WorkerTaskAssigned` | Worker 绑定到任务，`currentTaskId` 已设置 |
-| `WorkerTaskReleased` | Worker 释放任务，`currentTaskId` 已清空 |
+| `WorkerTaskAssigned` | Worker 开始运行任务，`currentTaskIds` 已追加任务 |
+| `WorkerTaskReleased` | Worker 结束运行任务，`currentTaskIds` 已移除任务 |
 | `WorkerDisabled` | Worker 被禁用 |
 | `WorkerProjectBindingUpdated` | Worker 可执行 Project 范围已更新 |
 | `ProjectCreated` | Project 已创建 |
@@ -1047,7 +1047,7 @@ type Worker {
   projectBindingMode: WorkerProjectBindingMode!
   boundProjectIds: [ID!]!
   agentRuntimeEnv: [WorkerAgentRuntimeEnv!]!
-  currentTaskId: ID
+  currentTaskIds: [ID!]!
   lastHeartbeatAt: Time
   version: Int!
   createdAt: Time!
@@ -1386,7 +1386,7 @@ PostgreSQL Implementation
 | `work_dir` | string | 工作目录 |
 | `startup_command` | string | 启动命令 |
 | `project_binding_mode` | string | `ALL_PROJECTS` 或 `SPECIFIC_PROJECTS` |
-| `current_task_id` | string | 当前任务 |
+| `current_task_ids` | json | 运行期活跃任务 ID 集合 |
 | `last_heartbeat_at` | datetime | 最近心跳 |
 | `version` | integer | 聚合版本 |
 | `created_at` | datetime | 创建时间 |

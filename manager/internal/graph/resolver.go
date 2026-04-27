@@ -212,7 +212,7 @@ func toModelWorker(worker *domain.Worker) *model.Worker {
 		ProjectBindingMode: model.WorkerProjectBindingMode(worker.ProjectBindingMode),
 		BoundProjectIds:    append([]string(nil), worker.BoundProjectIDs...),
 		AgentRuntimeEnv:    toModelWorkerAgentRuntimeEnv(worker.MaskedAgentRuntimeEnv()),
-		CurrentTaskID:      optionalString(worker.CurrentTaskID),
+		CurrentTaskIds:     append([]string(nil), worker.CurrentTaskIDs...),
 		LastHeartbeatAt:    optionalTime(worker.LastHeartbeatAt),
 		Version:            worker.Version,
 		CreatedAt:          worker.CreatedAt,

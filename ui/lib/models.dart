@@ -400,9 +400,9 @@ class WorkerItem {
     required this.startupCommand,
     required this.projectBindingMode,
     required this.boundProjectIds,
+    required this.currentTaskIds,
     this.agentRuntimeEnv = const [],
     this.lastHeartbeatAt,
-    this.currentTaskId,
   });
 
   factory WorkerItem.fromJson(Map<String, dynamic> json) => WorkerItem(
@@ -414,6 +414,7 @@ class WorkerItem {
     startupCommand: json['startupCommand'] as String? ?? '',
     projectBindingMode: json['projectBindingMode'] as String? ?? 'ALL_PROJECTS',
     boundProjectIds: stringList(json['boundProjectIds']),
+    currentTaskIds: stringList(json['currentTaskIds']),
     agentRuntimeEnv: (json['agentRuntimeEnv'] as List<dynamic>? ?? [])
         .map(
           (item) =>
@@ -421,7 +422,6 @@ class WorkerItem {
         )
         .toList(),
     lastHeartbeatAt: json['lastHeartbeatAt'] as String?,
-    currentTaskId: json['currentTaskId'] as String?,
   );
 
   final String id;
@@ -432,9 +432,9 @@ class WorkerItem {
   final String startupCommand;
   final String projectBindingMode;
   final List<String> boundProjectIds;
+  final List<String> currentTaskIds;
   final List<WorkerAgentRuntimeEnvItem> agentRuntimeEnv;
   final String? lastHeartbeatAt;
-  final String? currentTaskId;
 
   WorkerItem copyWith({
     String? id,
@@ -445,9 +445,9 @@ class WorkerItem {
     String? startupCommand,
     String? projectBindingMode,
     List<String>? boundProjectIds,
+    List<String>? currentTaskIds,
     List<WorkerAgentRuntimeEnvItem>? agentRuntimeEnv,
     String? lastHeartbeatAt,
-    String? currentTaskId,
   }) => WorkerItem(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -457,9 +457,9 @@ class WorkerItem {
     startupCommand: startupCommand ?? this.startupCommand,
     projectBindingMode: projectBindingMode ?? this.projectBindingMode,
     boundProjectIds: boundProjectIds ?? this.boundProjectIds,
+    currentTaskIds: currentTaskIds ?? this.currentTaskIds,
     agentRuntimeEnv: agentRuntimeEnv ?? this.agentRuntimeEnv,
     lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
-    currentTaskId: currentTaskId ?? this.currentTaskId,
   );
 }
 

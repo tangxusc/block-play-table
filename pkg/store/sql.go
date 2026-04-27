@@ -328,6 +328,10 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 	if err != nil {
 		return err
 	}
+	currentTaskIDs, err := encodeJSON(worker.CurrentTaskIDs)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -335,8 +339,8 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 	defer rollback(tx)
 	if _, err := tx.ExecContext(ctx, s.upsertSQL(
 		"workers",
-		[]string{"id", "name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_id", "last_heartbeat_at", "version", "created_at", "updated_at"},
-		[]string{"name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_id", "last_heartbeat_at", "version", "created_at", "updated_at"},
+		[]string{"id", "name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_ids", "last_heartbeat_at", "version", "created_at", "updated_at"},
+		[]string{"name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_ids", "last_heartbeat_at", "version", "created_at", "updated_at"},
 	),
 		worker.ID,
 		worker.Name,
@@ -346,7 +350,7 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 		worker.WorkDir,
 		nullableString(worker.StartupCommand),
 		worker.ProjectBindingMode,
-		nullableString(worker.CurrentTaskID),
+		currentTaskIDs,
 		nullableTime(worker.LastHeartbeatAt),
 		worker.Version,
 		worker.CreatedAt,
@@ -378,7 +382,7 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 }
 
 func (s *SQLStore) Worker(ctx context.Context, id string) (*domain.Worker, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, status, capabilities, supported_agents, work_dir, startup_command, project_binding_mode, current_task_id, last_heartbeat_at, version, created_at, updated_at FROM workers WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, status, capabilities, supported_agents, work_dir, startup_command, project_binding_mode, current_task_ids, last_heartbeat_at, version, created_at, updated_at FROM workers WHERE id = `+s.bind(1), id)
 	worker, err := s.scanWorker(ctx, row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -395,7 +399,7 @@ func (s *SQLStore) Worker(ctx context.Context, id string) (*domain.Worker, error
 }
 
 func (s *SQLStore) Workers(ctx context.Context) ([]*domain.Worker, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, status, capabilities, supported_agents, work_dir, startup_command, project_binding_mode, current_task_id, last_heartbeat_at, version, created_at, updated_at FROM workers ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, status, capabilities, supported_agents, work_dir, startup_command, project_binding_mode, current_task_ids, last_heartbeat_at, version, created_at, updated_at FROM workers ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -753,9 +757,9 @@ func scanWorkerFields(scanner interface{ Scan(...any) error }) (*domain.Worker, 
 	var capabilities string
 	var supportedAgents string
 	var startupCommand sql.NullString
-	var currentTaskID sql.NullString
+	var currentTaskIDs string
 	var lastHeartbeatAt sql.NullTime
-	if err := scanner.Scan(&worker.ID, &worker.Name, &worker.Status, &capabilities, &supportedAgents, &worker.WorkDir, &startupCommand, &worker.ProjectBindingMode, &currentTaskID, &lastHeartbeatAt, &worker.Version, &worker.CreatedAt, &worker.UpdatedAt); err != nil {
+	if err := scanner.Scan(&worker.ID, &worker.Name, &worker.Status, &capabilities, &supportedAgents, &worker.WorkDir, &startupCommand, &worker.ProjectBindingMode, &currentTaskIDs, &lastHeartbeatAt, &worker.Version, &worker.CreatedAt, &worker.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if err := decodeJSON(capabilities, &worker.Capabilities); err != nil {
@@ -765,7 +769,9 @@ func scanWorkerFields(scanner interface{ Scan(...any) error }) (*domain.Worker, 
 		return nil, err
 	}
 	worker.StartupCommand = fromNullString(startupCommand)
-	worker.CurrentTaskID = fromNullString(currentTaskID)
+	if err := decodeJSON(currentTaskIDs, &worker.CurrentTaskIDs); err != nil {
+		return nil, err
+	}
 	if lastHeartbeatAt.Valid {
 		worker.LastHeartbeatAt = &lastHeartbeatAt.Time
 	}

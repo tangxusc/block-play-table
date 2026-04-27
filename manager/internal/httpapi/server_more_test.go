@@ -34,7 +34,7 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatalf("projects count = %d, want 1", len(got))
 	}
 
-	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: CreateWorkerInput!) { createWorker(input: $input) { id status agentRuntimeEnv { agentType vars { key valueMasked enabled sensitive } } } }`, map[string]any{
+	worker := postGraphQL(t, server.URL, `mutation CreateWorker($input: CreateWorkerInput!) { createWorker(input: $input) { id status currentTaskIds agentRuntimeEnv { agentType vars { key valueMasked enabled sensitive } } } }`, map[string]any{
 		"input": map[string]any{
 			"id":                 "worker-ops",
 			"name":               "W",
@@ -53,6 +53,9 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	createdWorker := worker["data"].(map[string]any)["createWorker"].(map[string]any)
 	if got := createdWorker["status"]; got != string(domain.WorkerOnline) {
 		t.Fatalf("worker status = %v, want ONLINE", got)
+	}
+	if got := createdWorker["currentTaskIds"].([]any); len(got) != 0 {
+		t.Fatalf("created worker currentTaskIds = %+v, want empty", got)
 	}
 	workerEnv := createdWorker["agentRuntimeEnv"].([]any)
 	firstVar := workerEnv[0].(map[string]any)["vars"].([]any)[0].(map[string]any)
@@ -78,6 +81,11 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	started := postGraphQL(t, server.URL, `mutation StartTask($id: ID!) { startTask(id: $id) { status } }`, map[string]any{"id": taskID})
 	if got := started["data"].(map[string]any)["startTask"].(map[string]any)["status"]; got != string(domain.TaskStarting) {
 		t.Fatalf("task status = %v, want STARTING", got)
+	}
+	workerAfterStart := postGraphQL(t, server.URL, `query Worker($id: ID!) { worker(id: $id) { currentTaskIds } }`, map[string]any{"id": "worker-ops"})
+	currentTaskIDs := workerAfterStart["data"].(map[string]any)["worker"].(map[string]any)["currentTaskIds"].([]any)
+	if len(currentTaskIDs) != 1 || currentTaskIDs[0] != taskID {
+		t.Fatalf("worker currentTaskIds = %+v, want [%s]", currentTaskIDs, taskID)
 	}
 	_ = workerConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var start rawEnvelope

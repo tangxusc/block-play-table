@@ -23,6 +23,9 @@ var TaskDisplayDatesSQL string
 //go:embed 007_task_agent_config.sql
 var TaskAgentConfigSQL string
 
+//go:embed 008_worker_current_task_ids.sql
+var WorkerCurrentTaskIDsSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -36,4 +39,5 @@ var All = []Migration{
 	{Version: "005_task_agent_session", SQL: TaskAgentSessionSQL},
 	{Version: "006_task_display_dates", SQL: TaskDisplayDatesSQL},
 	{Version: "007_task_agent_config", SQL: TaskAgentConfigSQL},
+	{Version: "008_worker_current_task_ids", SQL: WorkerCurrentTaskIDsSQL},
 }

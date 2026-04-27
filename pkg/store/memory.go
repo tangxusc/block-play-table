@@ -297,6 +297,7 @@ func cloneWorker(worker *domain.Worker) *domain.Worker {
 	copy := *worker
 	copy.SupportedAgents = append([]domain.AgentType(nil), worker.SupportedAgents...)
 	copy.BoundProjectIDs = append([]string(nil), worker.BoundProjectIDs...)
+	copy.CurrentTaskIDs = append([]string(nil), worker.CurrentTaskIDs...)
 	copy.AgentRuntimeEnv = cloneWorkerAgentRuntimeEnv(worker.AgentRuntimeEnv)
 	if worker.Capabilities != nil {
 		copy.Capabilities = map[string]string{}

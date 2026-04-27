@@ -237,6 +237,16 @@ func TestServiceDesignEdgeBranches(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
+	blocker, err := service.CreateTask(ctx, CreateTaskInput{Title: "Blocker", ProjectID: project.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AssignWorker(ctx, blocker.ID, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, blocker.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.DeleteWorker(ctx, worker.ID); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("DeleteWorker occupied err = %v, want conflict", err)
 	}
@@ -391,13 +401,8 @@ func TestServiceSchedulingHelpers(t *testing.T) {
 		t.Fatal("offline worker should not be able to run task")
 	}
 	worker.Status = domain.WorkerOnline
-	worker.CurrentTaskID = "task-other"
-	if workerCanRunTask(worker, domain.AgentCodex, "project-1", "task-1") {
-		t.Fatal("worker assigned to another task should not be able to run task")
-	}
-	worker.CurrentTaskID = "task-1"
 	if !workerCanRunTask(worker, domain.AgentCodex, "project-1", "task-1") {
-		t.Fatal("worker should be able to keep running its current compatible task")
+		t.Fatal("online compatible worker should be able to run another task")
 	}
 	if workerAllowsProject(worker, "project-missing") {
 		t.Fatal("specific-project worker should reject unbound project")

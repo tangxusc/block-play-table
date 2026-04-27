@@ -39,6 +39,7 @@ void main() {
         startupCommand: '',
         projectBindingMode: 'ALL_PROJECTS',
         boundProjectIds: const [],
+        currentTaskIds: const [],
         agentRuntimeEnv: const [
           WorkerAgentRuntimeEnvItem(
             agentType: 'codex',
@@ -865,6 +866,7 @@ final _defaultWorker = WorkerItem(
   startupCommand: '',
   projectBindingMode: 'ALL_PROJECTS',
   boundProjectIds: const [],
+  currentTaskIds: const [],
 );
 
 final _task = TaskItem(

@@ -252,9 +252,8 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 	if err != nil {
 		return nil, err
 	}
-	var worker *domain.Worker
 	if input.WorkerID != "" {
-		worker, err = s.store.Worker(ctx, input.WorkerID)
+		worker, err := s.store.Worker(ctx, input.WorkerID)
 		if err != nil {
 			return nil, err
 		}
@@ -264,20 +263,10 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 		if err := task.AssignWorkerWithAgentConfig(input.WorkerID, input.AgentType, input.AgentConfig, now); err != nil {
 			return nil, err
 		}
-		if err := worker.AssignTask(task.ID, now); err != nil {
-			return nil, err
-		}
 	}
 	events := task.PullEvents()
 	if err := s.store.SaveTask(ctx, task); err != nil {
 		return nil, err
-	}
-	if worker != nil {
-		workerEvents := worker.PullEvents()
-		if err := s.store.SaveWorker(ctx, worker); err != nil {
-			return nil, err
-		}
-		events = append(events, workerEvents...)
 	}
 	if err := s.appendEvents(ctx, events); err != nil {
 		return nil, err
@@ -603,8 +592,8 @@ func (s *Service) DeleteWorker(ctx context.Context, workerID string) error {
 	if err != nil {
 		return err
 	}
-	if worker.CurrentTaskID != "" {
-		return fmt.Errorf("%w: worker %s has current task %s", domain.ErrConflict, workerID, worker.CurrentTaskID)
+	if len(worker.CurrentTaskIDs) > 0 {
+		return fmt.Errorf("%w: worker %s has current tasks %v", domain.ErrConflict, workerID, worker.CurrentTaskIDs)
 	}
 	worker.Delete(s.clock())
 	events := worker.PullEvents()
@@ -730,42 +719,14 @@ func (s *Service) AssignWorkerWithConfig(ctx context.Context, taskID, workerID s
 	if !workerCanRunTask(worker, agentType, task.ProjectID, taskID) {
 		return nil, fmt.Errorf("%w: worker %s cannot accept task %s", domain.ErrConflict, workerID, taskID)
 	}
-	var previousWorker *domain.Worker
-	if task.WorkerID != "" && task.WorkerID != workerID {
-		previousWorker, err = s.store.Worker(ctx, task.WorkerID)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if err := task.AssignWorkerWithAgentConfig(workerID, agentType, config, now); err != nil {
 		return nil, err
 	}
-	if err := worker.AssignTask(taskID, now); err != nil {
-		return nil, err
-	}
-	if previousWorker != nil && previousWorker.CurrentTaskID == taskID {
-		previousWorker.ReleaseTask(now)
-	}
 	taskEvents := task.PullEvents()
-	workerEvents := worker.PullEvents()
-	var previousWorkerEvents []domain.DomainEvent
-	if previousWorker != nil {
-		previousWorkerEvents = previousWorker.PullEvents()
-	}
 	if err := s.store.SaveTask(ctx, task); err != nil {
 		return nil, err
 	}
-	if err := s.store.SaveWorker(ctx, worker); err != nil {
-		return nil, err
-	}
-	if previousWorker != nil {
-		if err := s.store.SaveWorker(ctx, previousWorker); err != nil {
-			return nil, err
-		}
-	}
-	events := append(taskEvents, workerEvents...)
-	events = append(events, previousWorkerEvents...)
-	if err := s.appendEvents(ctx, events); err != nil {
+	if err := s.appendEvents(ctx, taskEvents); err != nil {
 		return nil, err
 	}
 	return task, nil
@@ -790,7 +751,7 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	if err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
-	if worker.Status != domain.WorkerOnline || worker.CurrentTaskID != task.ID {
+	if !workerCanRunTask(worker, task.AgentType, task.ProjectID, task.ID) {
 		return nil, protocol.TaskStartPayload{}, fmt.Errorf("%w: worker %s is not ready for task", domain.ErrConflict, worker.ID)
 	}
 	project, err := s.store.Project(ctx, task.ProjectID)
@@ -800,8 +761,15 @@ func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, p
 	if err := task.Start(now); err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
+	if err := worker.AssignTask(task.ID, now); err != nil {
+		return nil, protocol.TaskStartPayload{}, err
+	}
 	events := task.PullEvents()
+	events = append(events, worker.PullEvents()...)
 	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, protocol.TaskStartPayload{}, err
+	}
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
 		return nil, protocol.TaskStartPayload{}, err
 	}
 	if err := s.appendEvents(ctx, events); err != nil {
@@ -896,18 +864,11 @@ func (s *Service) assignFirstAvailableWorker(ctx context.Context, task *domain.T
 	if err := task.AssignWorker(selected.ID, now); err != nil {
 		return nil, err
 	}
-	if err := selected.AssignTask(task.ID, now); err != nil {
-		return nil, err
-	}
 	taskEvents := task.PullEvents()
-	workerEvents := selected.PullEvents()
 	if err := s.store.SaveTask(ctx, task); err != nil {
 		return nil, err
 	}
-	if err := s.store.SaveWorker(ctx, selected); err != nil {
-		return nil, err
-	}
-	if err := s.appendEvents(ctx, append(taskEvents, workerEvents...)); err != nil {
+	if err := s.appendEvents(ctx, taskEvents); err != nil {
 		return nil, err
 	}
 	return task, nil
@@ -1121,10 +1082,11 @@ func (s *Service) releaseWorkerIDFromTask(ctx context.Context, workerID, taskID 
 	if err != nil {
 		return nil
 	}
-	if worker.CurrentTaskID != "" && worker.CurrentTaskID != taskID {
+	before := len(worker.CurrentTaskIDs)
+	worker.ReleaseTask(taskID, now)
+	if len(worker.CurrentTaskIDs) == before {
 		return nil
 	}
-	worker.ReleaseTask(now)
 	workerEvents := worker.PullEvents()
 	if err := s.store.SaveWorker(ctx, worker); err != nil {
 		return err
@@ -1248,8 +1210,8 @@ func isTaskTerminal(status domain.TaskStatus) bool {
 	}
 }
 
-func workerCanRunTask(worker *domain.Worker, agent domain.AgentType, projectID, taskID string) bool {
-	if worker.Status != domain.WorkerOnline || (worker.CurrentTaskID != "" && worker.CurrentTaskID != taskID) {
+func workerCanRunTask(worker *domain.Worker, agent domain.AgentType, projectID, _ string) bool {
+	if worker.Status != domain.WorkerOnline {
 		return false
 	}
 	return workerSupportsAgent(worker, agent) && workerAllowsProject(worker, projectID)

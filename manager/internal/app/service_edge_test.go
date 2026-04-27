@@ -123,7 +123,7 @@ func TestServiceContinueTaskValidatesBeforeAppendingUserMessage(t *testing.T) {
 	}
 }
 
-func TestServiceContinueTaskRequiresOriginalWorkerOnlineAndIdle(t *testing.T) {
+func TestServiceContinueTaskRequiresOriginalWorkerOnlineButAllowsConcurrency(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
@@ -148,8 +148,8 @@ func TestServiceContinueTaskRequiresOriginalWorkerOnlineAndIdle(t *testing.T) {
 	if err := service.Store().SaveWorker(ctx, worker); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("ContinueTask busy worker err = %v, want conflict", err)
+	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); err != nil {
+		t.Fatalf("ContinueTask with concurrent worker task returned error: %v", err)
 	}
 }
 

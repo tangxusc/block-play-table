@@ -118,7 +118,11 @@ class _WorkersPageState extends State<WorkersPage> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           StatusPill(value: worker.status),
-                          Text(worker.currentTaskId ?? 'Available'),
+                          Text(
+                            worker.currentTaskIds.isEmpty
+                                ? 'No running tasks'
+                                : '${worker.currentTaskIds.length} running',
+                          ),
                           IconButton(
                             tooltip: 'Edit worker',
                             onPressed: () => _openWorkerDialog(worker),
@@ -140,7 +144,7 @@ class _WorkersPageState extends State<WorkersPage> {
                           ),
                           IconButton(
                             tooltip: 'Delete worker',
-                            onPressed: (worker.currentTaskId ?? '').isEmpty
+                            onPressed: worker.currentTaskIds.isEmpty
                                 ? () => _deleteWorker(worker)
                                 : null,
                             icon: const Icon(Icons.delete_outline),
@@ -465,7 +469,7 @@ Future<bool?> showWorkerFormDialog(
                         : boundProjectIds.toList(),
                     agentRuntimeEnv: agentRuntimeEnvInput(),
                     lastHeartbeatAt: worker.lastHeartbeatAt,
-                    currentTaskId: worker.currentTaskId,
+                    currentTaskIds: worker.currentTaskIds,
                   ),
                 );
               }

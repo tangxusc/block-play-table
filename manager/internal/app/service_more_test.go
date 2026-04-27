@@ -33,8 +33,8 @@ func TestServiceSettingsConversationFailureHeartbeatAndArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Worker returned error: %v", err)
 	}
-	if worker.CurrentTaskID != "" {
-		t.Fatalf("worker current task = %q, want released after failure", worker.CurrentTaskID)
+	if len(worker.CurrentTaskIDs) != 0 {
+		t.Fatalf("worker current tasks = %+v, want released after failure", worker.CurrentTaskIDs)
 	}
 	if _, err := service.WorkerHeartbeat(ctx, "worker-1"); err != nil {
 		t.Fatalf("WorkerHeartbeat returned error: %v", err)
@@ -194,6 +194,9 @@ func TestServiceDeleteOccupiedWorkerDoesNotPublishDeleteEvent(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
 	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{AggregateType: "Worker", EventType: "WorkerDeleted"})
 	defer unsubscribe()
 
@@ -238,7 +241,7 @@ func TestServiceMarksStaleWorkersOfflineAndReconnects(t *testing.T) {
 	}
 }
 
-func TestServiceAutoAssignSkipsUnavailableWorkers(t *testing.T) {
+func TestServiceAutoAssignAllowsWorkersWithRunningTasks(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())
 	targetProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Target", GitURL: "git://target"})
@@ -253,8 +256,7 @@ func TestServiceAutoAssignSkipsUnavailableWorkers(t *testing.T) {
 	unsupported, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-unsupported", Name: "Unsupported", SupportedAgents: []domain.AgentType{domain.AgentClaude}, WorkDir: "/tmp"})
 	wrongProject, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-wrong-project", Name: "Wrong Project", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{otherProject.ID}})
 	occupied, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-occupied", Name: "Occupied", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp"})
-	valid, _ := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-valid", Name: "Valid", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{targetProject.ID}})
-	for _, workerID := range []string{unsupported.ID, wrongProject.ID, occupied.ID, valid.ID} {
+	for _, workerID := range []string{unsupported.ID, wrongProject.ID, occupied.ID} {
 		if _, err := service.WorkerConnected(ctx, workerID); err != nil {
 			t.Fatal(err)
 		}
@@ -270,6 +272,9 @@ func TestServiceAutoAssignSkipsUnavailableWorkers(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, otherTask.ID, occupied.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := service.StartTask(ctx, otherTask.ID); err != nil {
+		t.Fatal(err)
+	}
 	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "Needs Worker", ProjectID: targetProject.ID, AgentType: domain.AgentCodex})
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +283,7 @@ func TestServiceAutoAssignSkipsUnavailableWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTask returned error: %v", err)
 	}
-	if started.WorkerID != valid.ID {
-		t.Fatalf("worker id = %q, want %q", started.WorkerID, valid.ID)
+	if started.WorkerID != occupied.ID {
+		t.Fatalf("worker id = %q, want %q", started.WorkerID, occupied.ID)
 	}
 }

@@ -329,7 +329,7 @@ type Worker struct {
 	ProjectBindingMode WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIds    []string                 `json:"boundProjectIds"`
 	AgentRuntimeEnv    []*WorkerAgentRuntimeEnv `json:"agentRuntimeEnv"`
-	CurrentTaskID      *string                  `json:"currentTaskId,omitempty"`
+	CurrentTaskIds     []string                 `json:"currentTaskIds"`
 	LastHeartbeatAt    *time.Time               `json:"lastHeartbeatAt,omitempty"`
 	Version            int                      `json:"version"`
 	CreatedAt          time.Time                `json:"createdAt"`

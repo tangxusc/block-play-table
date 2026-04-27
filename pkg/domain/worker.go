@@ -35,7 +35,7 @@ type Worker struct {
 	ProjectBindingMode WorkerProjectBindingMode `json:"projectBindingMode"`
 	BoundProjectIDs    []string                 `json:"boundProjectIds"`
 	AgentRuntimeEnv    []WorkerAgentRuntimeEnv  `json:"agentRuntimeEnv"`
-	CurrentTaskID      string                   `json:"currentTaskId,omitempty"`
+	CurrentTaskIDs     []string                 `json:"currentTaskIds"`
 	LastHeartbeatAt    *time.Time               `json:"lastHeartbeatAt,omitempty"`
 	Version            int                      `json:"version"`
 	CreatedAt          time.Time                `json:"createdAt"`
@@ -222,7 +222,7 @@ func (w *Worker) ShareAcrossAllProjects(now time.Time) {
 }
 
 func (w *Worker) CanAcceptTask(agent AgentType, projectID string) bool {
-	if w.Status != WorkerOnline || w.CurrentTaskID != "" {
+	if w.Status != WorkerOnline {
 		return false
 	}
 	if !slices.Contains(w.SupportedAgents, agent) {
@@ -232,20 +232,26 @@ func (w *Worker) CanAcceptTask(agent AgentType, projectID string) bool {
 }
 
 func (w *Worker) AssignTask(taskID string, now time.Time) error {
-	if w.CurrentTaskID != "" && w.CurrentTaskID != taskID {
-		return fmt.Errorf("%w: worker already has task %s", ErrConflict, w.CurrentTaskID)
+	if err := requireNonBlank("task id", taskID); err != nil {
+		return err
 	}
-	w.CurrentTaskID = taskID
+	if slices.Contains(w.CurrentTaskIDs, taskID) {
+		return nil
+	}
+	w.CurrentTaskIDs = append(w.CurrentTaskIDs, taskID)
 	w.touch(now)
 	w.addEvent("WorkerTaskAssigned", map[string]any{"taskId": taskID}, now)
 	return nil
 }
 
-func (w *Worker) ReleaseTask(now time.Time) {
-	released := w.CurrentTaskID
-	w.CurrentTaskID = ""
+func (w *Worker) ReleaseTask(taskID string, now time.Time) {
+	index := slices.Index(w.CurrentTaskIDs, taskID)
+	if index < 0 {
+		return
+	}
+	w.CurrentTaskIDs = slices.Delete(w.CurrentTaskIDs, index, index+1)
 	w.touch(now)
-	w.addEvent("WorkerTaskReleased", map[string]any{"taskId": released}, now)
+	w.addEvent("WorkerTaskReleased", map[string]any{"taskId": taskID}, now)
 }
 
 func (w *Worker) Delete(now time.Time) {

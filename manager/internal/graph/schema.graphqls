@@ -169,7 +169,7 @@ type Worker {
   projectBindingMode: WorkerProjectBindingMode!
   boundProjectIds: [ID!]!
   agentRuntimeEnv: [WorkerAgentRuntimeEnv!]!
-  currentTaskId: ID
+  currentTaskIds: [ID!]!
   lastHeartbeatAt: Time
   version: Int!
   createdAt: Time!

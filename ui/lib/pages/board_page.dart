@@ -655,7 +655,6 @@ bool _workerAllowsProject(WorkerItem worker, String? projectId) {
 
 bool _workerAvailableForProject(WorkerItem worker, String? projectId) {
   return worker.status == 'ONLINE' &&
-      (worker.currentTaskId ?? '').isEmpty &&
       worker.supportedAgents.isNotEmpty &&
       _workerAllowsProject(worker, projectId);
 }
@@ -2494,19 +2493,12 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   Future<void> _assign() async {
     final task = _lastDetail?.task ?? widget.task;
     final currentWorkerId = task.workerId ?? '';
-    final allowCurrentAssignmentUpdate =
-        task.status == 'ASSIGNED' && currentWorkerId.isNotEmpty;
     final candidates = widget.boardData.workers.where((worker) {
       final supports = task.agentType.isEmpty ||
           worker.supportedAgents.contains(task.agentType);
       final projectMatches = worker.projectBindingMode == 'ALL_PROJECTS' ||
           worker.boundProjectIds.contains(task.projectId);
-      final idle = (worker.currentTaskId ?? '').isEmpty;
-      final currentAssignment = allowCurrentAssignmentUpdate &&
-          worker.id == currentWorkerId &&
-          worker.currentTaskId == task.id;
       return worker.status == 'ONLINE' &&
-          (idle || currentAssignment) &&
           supports &&
           worker.supportedAgents.isNotEmpty &&
           projectMatches;

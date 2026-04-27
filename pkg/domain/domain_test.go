@@ -67,10 +67,10 @@ func TestTaskAssignWorkerStoresAndValidatesAgentConfig(t *testing.T) {
 	config := AgentExecutionConfig{
 		WorkMode: AgentWorkModeImplement,
 		Codex: CodexExecutionConfig{
-			Model:            "gpt-5.4",
-			ReasoningEffort:  CodexReasoningHigh,
-			SandboxMode:      CodexSandboxWorkspaceWrite,
-			ApprovalPolicy:   CodexApprovalNever,
+			Model:           "gpt-5.4",
+			ReasoningEffort: CodexReasoningHigh,
+			SandboxMode:     CodexSandboxWorkspaceWrite,
+			ApprovalPolicy:  CodexApprovalNever,
 		},
 	}
 	if err := task.AssignWorkerWithAgentConfig("worker-1", AgentCodex, &config, now); err != nil {
@@ -157,7 +157,7 @@ func TestTaskDisplayDatesDefaultExplicitUpdateAndValidation(t *testing.T) {
 	}
 }
 
-func TestWorkerCanAcceptTaskHonorsStatusAgentProjectAndOccupancy(t *testing.T) {
+func TestWorkerCanAcceptTaskHonorsStatusAgentAndProject(t *testing.T) {
 	worker, err := NewWorker(NewWorkerInput{
 		ID:                 "worker-1",
 		Name:               "local",
@@ -184,10 +184,10 @@ func TestWorkerCanAcceptTaskHonorsStatusAgentProjectAndOccupancy(t *testing.T) {
 	if err := worker.AssignTask("task-1", time.Now()); err != nil {
 		t.Fatalf("AssignTask returned error: %v", err)
 	}
-	if worker.CanAcceptTask(AgentCodex, "project-1") {
-		t.Fatalf("worker with current task should not be assignable")
+	if !worker.CanAcceptTask(AgentCodex, "project-1") {
+		t.Fatalf("worker with current tasks should still be assignable")
 	}
-	worker.ReleaseTask(time.Now())
+	worker.ReleaseTask("task-1", time.Now())
 	worker.ShareAcrossAllProjects(time.Now())
 	if !worker.CanAcceptTask(AgentCodex, "project-2") {
 		t.Fatalf("ALL_PROJECTS worker should accept any project")
