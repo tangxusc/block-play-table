@@ -63,6 +63,14 @@ class ApiClient {
               status
               tasks {
                 id title description status projectId agentType baseBranch
+                agentConfig {
+                  workMode
+                  codex {
+                    model reasoningEffort sandboxMode approvalPolicy
+                    fullAuto bypassApprovalsAndSandbox
+                  }
+                  claude { model effort permissionMode }
+                }
                 workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
               }
             }
@@ -72,11 +80,27 @@ class ApiClient {
               status
               task {
                 id title description status projectId agentType baseBranch
+                agentConfig {
+                  workMode
+                  codex {
+                    model reasoningEffort sandboxMode approvalPolicy
+                    fullAuto bypassApprovalsAndSandbox
+                  }
+                  claude { model effort permissionMode }
+                }
                 workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
               }
             }
             tasks {
               id title description status projectId agentType baseBranch
+              agentConfig {
+                workMode
+                codex {
+                  model reasoningEffort sandboxMode approvalPolicy
+                  fullAuto bypassApprovalsAndSandbox
+                }
+                claude { model effort permissionMode }
+              }
               workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
             }
           }
@@ -162,6 +186,14 @@ class ApiClient {
         query Task($id: ID!) {
           task(id: $id) {
             id title description status projectId agentType baseBranch
+            agentConfig {
+              workMode
+              codex {
+                model reasoningEffort sandboxMode approvalPolicy
+                fullAuto bypassApprovalsAndSandbox
+              }
+              claude { model effort permissionMode }
+            }
             workerId worktreePath agentSessionId preCommands postCommands result startDate endDate createdAt updatedAt
           }
         }
@@ -302,6 +334,7 @@ class ApiClient {
     required String projectId,
     String? workerId,
     String? agentType,
+    AgentExecutionConfigItem? agentConfig,
     String baseBranch = 'main',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
@@ -314,6 +347,10 @@ class ApiClient {
       'projectId': projectId,
       if ((workerId ?? '').isNotEmpty) 'workerId': workerId,
       if ((agentType ?? '').isNotEmpty) 'agentType': agentType,
+      if ((agentType ?? '').isNotEmpty &&
+          agentConfig != null &&
+          !agentConfig.isEmpty)
+        'agentConfig': agentConfig.toGraphQLInput(agentType!),
       'baseBranch': baseBranch,
       'preCommands': preCommands,
       'postCommands': postCommands,
@@ -356,11 +393,15 @@ class ApiClient {
     String taskId,
     String workerId, {
     String? agentType,
+    AgentExecutionConfigItem? agentConfig,
   }) {
+    final selectedAgent = agentType ?? '';
     final input = {
       'taskId': taskId,
       'workerId': workerId,
-      if ((agentType ?? '').isNotEmpty) 'agentType': agentType,
+      if (selectedAgent.isNotEmpty) 'agentType': selectedAgent,
+      if (agentConfig != null)
+        'agentConfig': agentConfig.toGraphQLInput(selectedAgent),
     };
     return graphQL(
       r'''

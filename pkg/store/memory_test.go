@@ -38,6 +38,10 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 		t.Fatalf("NewTask returned error: %v", err)
 	}
 	task.AgentSessionID = "session-memory"
+	task.AgentConfig = domain.AgentExecutionConfig{
+		WorkMode: domain.AgentWorkModePlan,
+		Codex:    domain.CodexExecutionConfig{Model: "gpt-5.4"},
+	}
 
 	if err := s.SaveProject(ctx, project); err != nil {
 		t.Fatalf("SaveProject returned error: %v", err)
@@ -59,7 +63,7 @@ func TestMemoryStorePersistsAggregatesLogsConversationsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Task returned error: %v", err)
 	}
-	if loaded.Title != "Task" || loaded.AgentSessionID != "session-memory" || !loaded.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !loaded.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
+	if loaded.Title != "Task" || loaded.AgentSessionID != "session-memory" || loaded.AgentConfig.Codex.Model != "gpt-5.4" || !loaded.StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !loaded.EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("loaded task = %+v", loaded)
 	}
 	logs, err := s.TaskLogs(ctx, task.ID)

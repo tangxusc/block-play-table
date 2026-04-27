@@ -458,10 +458,11 @@ func (a *SessionCommandAgent) Run(ctx context.Context, input AgentInput, emit fu
 	var args []string
 	switch a.agentType {
 	case domain.AgentCodex:
-		args = []string{"exec", "--skip-git-repo-check", "--json", prompt}
+		args = append(codexConfigArgs(input.Task.AgentConfig.Codex), "exec", "--skip-git-repo-check", "--json", prompt)
 	case domain.AgentClaude:
 		sessionID = a.newSessionID()
-		args = []string{"-p", "--output-format=stream-json", "--verbose", "--session-id", sessionID, prompt}
+		args = append([]string{"-p"}, claudeConfigArgs(input.Task.AgentConfig.Claude)...)
+		args = append(args, "--output-format=stream-json", "--verbose", "--session-id", sessionID, prompt)
 	default:
 		return fmt.Errorf("session command agent does not support %s", a.agentType)
 	}
@@ -478,9 +479,10 @@ func (a *SessionCommandAgent) Continue(ctx context.Context, input AgentContinuat
 	var args []string
 	switch a.agentType {
 	case domain.AgentCodex:
-		args = []string{"exec", "resume", "--skip-git-repo-check", "--json", input.AgentSessionID, input.Message}
+		args = append(codexConfigArgs(input.Task.AgentConfig.Codex), "exec", "resume", "--skip-git-repo-check", "--json", input.AgentSessionID, input.Message)
 	case domain.AgentClaude:
-		args = []string{"-p", "--output-format=stream-json", "--verbose", "--resume", input.AgentSessionID, input.Message}
+		args = append([]string{"-p"}, claudeConfigArgs(input.Task.AgentConfig.Claude)...)
+		args = append(args, "--output-format=stream-json", "--verbose", "--resume", input.AgentSessionID, input.Message)
 	default:
 		return fmt.Errorf("session command agent does not support %s", a.agentType)
 	}
@@ -567,7 +569,60 @@ func promptForTask(task protocol.TaskPayload) string {
 	if strings.TrimSpace(prompt) == "" {
 		prompt = "Complete task " + task.ID
 	}
+	if prefix := workModePromptPrefix(task.AgentConfig.WorkMode); prefix != "" {
+		prompt = prefix + "\n\n" + prompt
+	}
 	return prompt
+}
+
+func codexConfigArgs(config domain.CodexExecutionConfig) []string {
+	var args []string
+	if config.Model != "" {
+		args = append(args, "--model", config.Model)
+	}
+	if config.ReasoningEffort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+string(config.ReasoningEffort))
+	}
+	if config.SandboxMode != "" {
+		args = append(args, "--sandbox", string(config.SandboxMode))
+	}
+	if config.ApprovalPolicy != "" {
+		args = append(args, "--ask-for-approval", string(config.ApprovalPolicy))
+	}
+	if config.FullAuto {
+		args = append(args, "--full-auto")
+	}
+	if config.BypassApprovalsAndSandbox {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	return args
+}
+
+func claudeConfigArgs(config domain.ClaudeExecutionConfig) []string {
+	var args []string
+	if config.Model != "" {
+		args = append(args, "--model", config.Model)
+	}
+	if config.Effort != "" {
+		args = append(args, "--effort", string(config.Effort))
+	}
+	if config.PermissionMode != "" {
+		args = append(args, "--permission-mode", string(config.PermissionMode))
+	}
+	return args
+}
+
+func workModePromptPrefix(mode domain.AgentWorkMode) string {
+	switch mode {
+	case domain.AgentWorkModePlan:
+		return "Work mode: plan. Analyze the task and produce a concrete implementation plan before making changes."
+	case domain.AgentWorkModeImplement:
+		return "Work mode: implement. Complete the requested implementation and verify the result."
+	case domain.AgentWorkModeReview:
+		return "Work mode: review. Inspect the relevant code and report findings with evidence."
+	default:
+		return ""
+	}
 }
 
 func parseAgentJSONLine(line string) (string, string) {

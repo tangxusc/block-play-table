@@ -182,6 +182,52 @@ func TestCodexCommandAgentCapturesSessionAndResumes(t *testing.T) {
 	}
 }
 
+func TestCodexCommandAgentAppliesExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args.txt")
+	agentPath := filepath.Join(root, "fake-codex-config")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+argsFile+"'\nprintf '%s\\n' '{\"session_id\":\"codex-session\",\"message\":\"configured reply\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newCodexAgent(agentPath)
+
+	task := protocol.TaskPayload{
+		ID:    "task-1",
+		Title: "configured prompt",
+		AgentConfig: domain.AgentExecutionConfig{
+			WorkMode: domain.AgentWorkModeImplement,
+			Codex: domain.CodexExecutionConfig{
+				Model:           "gpt-5.4",
+				ReasoningEffort: domain.CodexReasoningHigh,
+				SandboxMode:     domain.CodexSandboxWorkspaceWrite,
+				ApprovalPolicy:  domain.CodexApprovalNever,
+				FullAuto:        true,
+			},
+		},
+	}
+	if err := agent.Run(context.Background(), AgentInput{Task: task, WorktreeDir: root}, func(event AgentEvent) {}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"--model\ngpt-5.4\n",
+		"-c\nmodel_reasoning_effort=high\n",
+		"--sandbox\nworkspace-write\n",
+		"--ask-for-approval\nnever\n",
+		"--full-auto\n",
+		"exec\n--skip-git-repo-check\n--json\n",
+		"Work mode: implement. Complete the requested implementation and verify the result.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("codex configured args missing %q in %q", want, got)
+		}
+	}
+}
+
 func TestParseAgentJSONLineReadsCodexThreadAndAgentMessage(t *testing.T) {
 	sessionID, message := parseAgentJSONLine(`{"type":"thread.started","thread_id":"codex-thread"}`)
 	if sessionID != "codex-thread" || message != "" {
@@ -237,6 +283,47 @@ func TestClaudeCommandAgentUsesGeneratedSessionAndResumes(t *testing.T) {
 	}
 	if got := string(args); !strings.Contains(got, "-p\n--output-format=stream-json\n--verbose\n--resume\nclaude-session\nfollow up\n") {
 		t.Fatalf("claude resume args = %q", got)
+	}
+}
+
+func TestClaudeCommandAgentAppliesExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args.txt")
+	agentPath := filepath.Join(root, "fake-claude-config")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+argsFile+"'\nprintf '%s\\n' '{\"type\":\"assistant\",\"session_id\":\"claude-session\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"configured reply\"}]}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newClaudeAgent(agentPath, func() string { return "claude-session" })
+	task := protocol.TaskPayload{
+		ID:    "task-1",
+		Title: "configured prompt",
+		AgentConfig: domain.AgentExecutionConfig{
+			WorkMode: domain.AgentWorkModeReview,
+			Claude: domain.ClaudeExecutionConfig{
+				Model:          "sonnet",
+				Effort:         domain.ClaudeEffortMax,
+				PermissionMode: domain.ClaudePermissionPlan,
+			},
+		},
+	}
+	if err := agent.Run(context.Background(), AgentInput{Task: task, WorktreeDir: root}, func(event AgentEvent) {}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"-p\n--model\nsonnet\n",
+		"--effort\nmax\n",
+		"--permission-mode\nplan\n",
+		"--output-format=stream-json\n--verbose\n--session-id\nclaude-session\n",
+		"Work mode: review. Inspect the relevant code and report findings with evidence.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("claude configured args missing %q in %q", want, got)
+		}
 	}
 }
 

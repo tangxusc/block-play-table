@@ -64,6 +64,7 @@ TaskItem _task(String id, String status) => TaskItem(
       status: status,
       projectId: 'project-1',
       agentType: 'codex',
+      agentConfig: const AgentExecutionConfigItem(),
       baseBranch: 'main',
       preCommands: const [],
       postCommands: const [],

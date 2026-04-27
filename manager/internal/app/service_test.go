@@ -94,12 +94,28 @@ func TestServiceContinuesCompletedTaskOnOriginalWorker(t *testing.T) {
 	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "T", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
+	config := domain.AgentExecutionConfig{
+		WorkMode: domain.AgentWorkModeImplement,
+		Codex: domain.CodexExecutionConfig{
+			Model:           "gpt-5.4",
+			ReasoningEffort: domain.CodexReasoningHigh,
+			ApprovalPolicy:  domain.CodexApprovalNever,
+		},
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{
+		Title:       "T",
+		ProjectID:   project.ID,
+		WorkerID:    worker.ID,
+		AgentType:   domain.AgentCodex,
+		AgentConfig: &config,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, startPayload, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
+	} else if startPayload.Task.AgentConfig.Codex.Model != "gpt-5.4" {
+		t.Fatalf("start payload agent config = %+v", startPayload.Task.AgentConfig)
 	}
 	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-continue", task.ID, "/tmp/worktree"); err != nil {
 		t.Fatal(err)
@@ -117,6 +133,9 @@ func TestServiceContinuesCompletedTaskOnOriginalWorker(t *testing.T) {
 	}
 	if payload.Task.ID != task.ID || payload.Message != "follow up" || payload.AgentSessionID != "session-1" || payload.WorktreePath != "/tmp/worktree" {
 		t.Fatalf("continue payload = %+v", payload)
+	}
+	if payload.Task.AgentConfig.Codex.Model != "gpt-5.4" || payload.Task.AgentConfig.Codex.ReasoningEffort != domain.CodexReasoningHigh {
+		t.Fatalf("continue payload agent config = %+v", payload.Task.AgentConfig)
 	}
 	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
 	if err != nil {
@@ -267,10 +286,19 @@ func TestServiceCreateTaskWithWorkerAssignsImmediately(t *testing.T) {
 	}
 
 	task, err := service.CreateTask(ctx, CreateTaskInput{
-		Title:      "Assigned on create",
-		ProjectID:  project.ID,
-		WorkerID:   worker.ID,
-		AgentType:  domain.AgentCodex,
+		Title:     "Assigned on create",
+		ProjectID: project.ID,
+		WorkerID:  worker.ID,
+		AgentType: domain.AgentCodex,
+		AgentConfig: &domain.AgentExecutionConfig{
+			WorkMode: domain.AgentWorkModeImplement,
+			Codex: domain.CodexExecutionConfig{
+				Model:           "gpt-5.4",
+				ReasoningEffort: domain.CodexReasoningHigh,
+				SandboxMode:     domain.CodexSandboxWorkspaceWrite,
+				ApprovalPolicy:  domain.CodexApprovalNever,
+			},
+		},
 		BaseBranch: "main",
 	})
 	if err != nil {
@@ -278,6 +306,16 @@ func TestServiceCreateTaskWithWorkerAssignsImmediately(t *testing.T) {
 	}
 	if task.Status != domain.TaskAssigned || task.WorkerID != worker.ID {
 		t.Fatalf("task assignment = status %s worker %q, want ASSIGNED %q", task.Status, task.WorkerID, worker.ID)
+	}
+	if task.AgentConfig.Codex.Model != "gpt-5.4" || task.AgentConfig.Codex.ReasoningEffort != domain.CodexReasoningHigh {
+		t.Fatalf("task agent config = %+v", task.AgentConfig)
+	}
+	_, payload, err := service.StartTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("StartTask returned error: %v", err)
+	}
+	if payload.Task.AgentConfig.Codex.Model != "gpt-5.4" || payload.Task.AgentConfig.WorkMode != domain.AgentWorkModeImplement {
+		t.Fatalf("start payload agent config = %+v", payload.Task.AgentConfig)
 	}
 	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
 	if err != nil {
@@ -360,12 +398,22 @@ func TestServiceAssignsAgentlessTaskWithAgent(t *testing.T) {
 		t.Fatalf("CreateTask returned error: %v", err)
 	}
 
-	assigned, err := service.AssignWorker(ctx, task.ID, worker.ID, domain.AgentClaude)
+	assigned, err := service.AssignWorkerWithConfig(ctx, task.ID, worker.ID, &domain.AgentExecutionConfig{
+		WorkMode: domain.AgentWorkModePlan,
+		Claude: domain.ClaudeExecutionConfig{
+			Model:          "sonnet",
+			Effort:         domain.ClaudeEffortHigh,
+			PermissionMode: domain.ClaudePermissionPlan,
+		},
+	}, domain.AgentClaude)
 	if err != nil {
 		t.Fatalf("AssignWorker returned error: %v", err)
 	}
 	if assigned.Status != domain.TaskAssigned || assigned.AgentType != domain.AgentClaude {
 		t.Fatalf("assigned task = status %s agent %q, want ASSIGNED claude", assigned.Status, assigned.AgentType)
+	}
+	if assigned.AgentConfig.Claude.Model != "sonnet" || assigned.AgentConfig.Claude.PermissionMode != domain.ClaudePermissionPlan {
+		t.Fatalf("assigned agent config = %+v", assigned.AgentConfig)
 	}
 }
 

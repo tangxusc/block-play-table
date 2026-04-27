@@ -55,13 +55,14 @@ type TaskContinuePayload struct {
 }
 
 type TaskPayload struct {
-	ID           string           `json:"id"`
-	Title        string           `json:"title"`
-	Description  string           `json:"description"`
-	AgentType    domain.AgentType `json:"agentType"`
-	BaseBranch   string           `json:"baseBranch"`
-	PreCommands  []string         `json:"preCommands"`
-	PostCommands []string         `json:"postCommands"`
+	ID           string                      `json:"id"`
+	Title        string                      `json:"title"`
+	Description  string                      `json:"description"`
+	AgentType    domain.AgentType            `json:"agentType"`
+	AgentConfig  domain.AgentExecutionConfig `json:"agentConfig,omitempty"`
+	BaseBranch   string                      `json:"baseBranch"`
+	PreCommands  []string                    `json:"preCommands"`
+	PostCommands []string                    `json:"postCommands"`
 }
 
 type ProjectPayload struct {

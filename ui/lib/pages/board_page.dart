@@ -578,6 +578,73 @@ WorkerItem? _workerById(List<WorkerItem> workers, String workerId) {
   return null;
 }
 
+List<Widget> _agentConfigDetailWidgets(TaskItem task) {
+  final config = task.agentConfig;
+  if (config.isEmpty) {
+    return const [];
+  }
+  final widgets = <Widget>[];
+  if (config.workMode.isNotEmpty) {
+    widgets.add(
+      DetailText(icon: Icons.rule_folder_outlined, text: _enumLabel(config.workMode)),
+    );
+  }
+  if (task.agentType == 'codex') {
+    final codex = config.codex;
+    if (codex.model.isNotEmpty) {
+      widgets.add(DetailText(icon: Icons.smart_toy_outlined, text: codex.model));
+    }
+    if (codex.reasoningEffort.isNotEmpty) {
+      widgets.add(
+        DetailText(
+          icon: Icons.psychology_alt_outlined,
+          text: _enumLabel(codex.reasoningEffort),
+        ),
+      );
+    }
+    if (codex.sandboxMode.isNotEmpty) {
+      widgets.add(
+        DetailText(icon: Icons.inventory_2_outlined, text: _enumLabel(codex.sandboxMode)),
+      );
+    }
+    if (codex.approvalPolicy.isNotEmpty) {
+      widgets.add(
+        DetailText(icon: Icons.verified_user_outlined, text: _enumLabel(codex.approvalPolicy)),
+      );
+    }
+    if (codex.fullAuto) {
+      widgets.add(const DetailText(icon: Icons.auto_mode, text: 'Full auto'));
+    }
+    if (codex.bypassApprovalsAndSandbox) {
+      widgets.add(
+        const DetailText(
+          icon: Icons.warning_amber_outlined,
+          text: 'Bypass approvals and sandbox',
+        ),
+      );
+    }
+  } else if (task.agentType == 'claude') {
+    final claude = config.claude;
+    if (claude.model.isNotEmpty) {
+      widgets.add(DetailText(icon: Icons.smart_toy_outlined, text: claude.model));
+    }
+    if (claude.effort.isNotEmpty) {
+      widgets.add(
+        DetailText(icon: Icons.psychology_alt_outlined, text: _enumLabel(claude.effort)),
+      );
+    }
+    if (claude.permissionMode.isNotEmpty) {
+      widgets.add(
+        DetailText(
+          icon: Icons.verified_user_outlined,
+          text: _enumLabel(claude.permissionMode),
+        ),
+      );
+    }
+  }
+  return widgets;
+}
+
 bool _workerAllowsProject(WorkerItem worker, String? projectId) {
   if (projectId == null) {
     return false;
@@ -598,6 +665,303 @@ String _agentLabel(String agent) => switch (agent) {
       'claude' => 'Claude',
       _ => agent,
     };
+
+String _enumLabel(String value) {
+  if (value.isEmpty) {
+    return 'Default';
+  }
+  return value
+      .split('_')
+      .where((part) => part.isNotEmpty)
+      .map(
+        (part) =>
+            part.substring(0, 1).toUpperCase() +
+            part.substring(1).toLowerCase(),
+      )
+      .join(' ');
+}
+
+class _AgentConfigDraft {
+  _AgentConfigDraft({
+    required AgentExecutionConfigItem config,
+  })  : workMode = config.workMode,
+        codexModel = TextEditingController(text: config.codex.model),
+        codexReasoningEffort = config.codex.reasoningEffort,
+        codexSandboxMode = config.codex.sandboxMode,
+        codexApprovalPolicy = config.codex.approvalPolicy,
+        codexFullAuto = config.codex.fullAuto,
+        codexBypassApprovalsAndSandbox =
+            config.codex.bypassApprovalsAndSandbox,
+        claudeModel = TextEditingController(text: config.claude.model),
+        claudeEffort = config.claude.effort,
+        claudePermissionMode = config.claude.permissionMode;
+
+  factory _AgentConfigDraft.empty() => _AgentConfigDraft(
+        config: const AgentExecutionConfigItem(),
+      );
+
+  factory _AgentConfigDraft.fromTask(TaskItem? task) => _AgentConfigDraft(
+        config: task?.agentConfig ?? const AgentExecutionConfigItem(),
+      );
+
+  String workMode;
+  final TextEditingController codexModel;
+  String codexReasoningEffort;
+  String codexSandboxMode;
+  String codexApprovalPolicy;
+  bool codexFullAuto;
+  bool codexBypassApprovalsAndSandbox;
+  final TextEditingController claudeModel;
+  String claudeEffort;
+  String claudePermissionMode;
+
+  AgentExecutionConfigItem toConfig(String agentType) =>
+      AgentExecutionConfigItem(
+        workMode: workMode,
+        codex: agentType == 'codex'
+            ? CodexExecutionConfigItem(
+                model: codexModel.text.trim(),
+                reasoningEffort: codexReasoningEffort,
+                sandboxMode: codexSandboxMode,
+                approvalPolicy: codexApprovalPolicy,
+                fullAuto: codexFullAuto,
+                bypassApprovalsAndSandbox: codexBypassApprovalsAndSandbox,
+              )
+            : const CodexExecutionConfigItem(),
+        claude: agentType == 'claude'
+            ? ClaudeExecutionConfigItem(
+                model: claudeModel.text.trim(),
+                effort: claudeEffort,
+                permissionMode: claudePermissionMode,
+              )
+            : const ClaudeExecutionConfigItem(),
+      );
+
+  void dispose() {
+    codexModel.dispose();
+    claudeModel.dispose();
+  }
+}
+
+class _AgentConfigFields extends StatelessWidget {
+  const _AgentConfigFields({
+    required this.draft,
+    required this.agentType,
+    required this.onChanged,
+  });
+
+  final _AgentConfigDraft draft;
+  final String agentType;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[
+      _AgentConfigDropdown(
+        label: 'Work mode',
+        value: draft.workMode,
+        options: const {
+          '': 'Default',
+          'PLAN': 'Plan',
+          'IMPLEMENT': 'Implement',
+          'REVIEW': 'Review',
+        },
+        onChanged: (value) {
+          draft.workMode = value;
+          onChanged();
+        },
+      ),
+      if (agentType == 'codex') ...[
+        TextField(
+          controller: draft.codexModel,
+          decoration: const InputDecoration(labelText: 'Codex model'),
+          onChanged: (_) => onChanged(),
+        ),
+        _AgentConfigDropdown(
+          label: 'Reasoning effort',
+          value: draft.codexReasoningEffort,
+          options: const {
+            '': 'Default',
+            'MINIMAL': 'Minimal',
+            'LOW': 'Low',
+            'MEDIUM': 'Medium',
+            'HIGH': 'High',
+            'XHIGH': 'XHigh',
+          },
+          onChanged: (value) {
+            draft.codexReasoningEffort = value;
+            onChanged();
+          },
+        ),
+        _AgentConfigDropdown(
+          label: 'Sandbox',
+          value: draft.codexSandboxMode,
+          options: const {
+            '': 'Default',
+            'READ_ONLY': 'Read only',
+            'WORKSPACE_WRITE': 'Workspace write',
+            'DANGER_FULL_ACCESS': 'Danger full access',
+          },
+          onChanged: (value) {
+            draft.codexSandboxMode = value;
+            onChanged();
+          },
+        ),
+        _AgentConfigDropdown(
+          label: 'Approval',
+          value: draft.codexApprovalPolicy,
+          options: const {
+            '': 'Default',
+            'UNTRUSTED': 'Untrusted',
+            'ON_FAILURE': 'On failure',
+            'ON_REQUEST': 'On request',
+            'NEVER': 'Never',
+          },
+          onChanged: (value) {
+            draft.codexApprovalPolicy = value;
+            onChanged();
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Full auto'),
+          value: draft.codexFullAuto,
+          onChanged: (value) {
+            draft.codexFullAuto = value;
+            onChanged();
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Bypass approvals and sandbox'),
+          value: draft.codexBypassApprovalsAndSandbox,
+          onChanged: (value) {
+            draft.codexBypassApprovalsAndSandbox = value;
+            onChanged();
+          },
+        ),
+      ] else if (agentType == 'claude') ...[
+        TextField(
+          controller: draft.claudeModel,
+          decoration: const InputDecoration(labelText: 'Claude model'),
+          onChanged: (_) => onChanged(),
+        ),
+        _AgentConfigDropdown(
+          label: 'Effort',
+          value: draft.claudeEffort,
+          options: const {
+            '': 'Default',
+            'LOW': 'Low',
+            'MEDIUM': 'Medium',
+            'HIGH': 'High',
+            'XHIGH': 'XHigh',
+            'MAX': 'Max',
+          },
+          onChanged: (value) {
+            draft.claudeEffort = value;
+            onChanged();
+          },
+        ),
+        _AgentConfigDropdown(
+          label: 'Permission mode',
+          value: draft.claudePermissionMode,
+          options: const {
+            '': 'Default',
+            'ACCEPT_EDITS': 'Accept edits',
+            'AUTO': 'Auto',
+            'BYPASS_PERMISSIONS': 'Bypass permissions',
+            'DEFAULT': 'Default',
+            'DONT_ASK': "Don't ask",
+            'PLAN': 'Plan',
+          },
+          onChanged: (value) {
+            draft.claudePermissionMode = value;
+            onChanged();
+          },
+        ),
+      ],
+    ];
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Agent CLI settings',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: children
+                  .map(
+                    (child) => SizedBox(
+                      width: child is SwitchListTile ? 300 : 210,
+                      child: child,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentConfigDropdown extends StatelessWidget {
+  const _AgentConfigDropdown({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final Map<String, String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      isExpanded: true,
+      value: options.containsKey(value) ? value : '',
+      decoration: InputDecoration(labelText: label),
+      items: options.entries
+          .map(
+            (entry) => DropdownMenuItem(
+              value: entry.key,
+              child: Text(
+                entry.value,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: (value) => onChanged(value ?? ''),
+    );
+  }
+}
+
+class _AssignWorkerSelection {
+  const _AssignWorkerSelection({
+    required this.workerId,
+    required this.agentType,
+    required this.agentConfig,
+  });
+
+  final String workerId;
+  final String agentType;
+  final AgentExecutionConfigItem agentConfig;
+}
 
 DateTime _todayTaskDate() {
   final now = DateTime.now();
@@ -1653,6 +2017,7 @@ Future<bool?> showTaskFormDialog(
   String selectedWorkerId = task?.workerId ?? '';
   String? selectedAgent =
       (task?.agentType ?? '').isEmpty ? null : task!.agentType;
+  final configDraft = _AgentConfigDraft.fromTask(task);
 
   List<WorkerItem> availableWorkers() => data.workers
       .where((worker) => _workerAvailableForProject(worker, projectId))
@@ -1825,6 +2190,14 @@ Future<bool?> showTaskFormDialog(
                       onSelectionChanged: (values) =>
                           setState(() => selectedAgent = values.first),
                     ),
+                    if (selectedAgent != null) ...[
+                      const SizedBox(height: 12),
+                      _AgentConfigFields(
+                        draft: configDraft,
+                        agentType: selectedAgent!,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 12),
                   TextField(
@@ -1863,6 +2236,9 @@ Future<bool?> showTaskFormDialog(
                               ? null
                               : selectedWorkerId,
                           agentType: selectedAgent,
+                          agentConfig: selectedAgent == null
+                              ? null
+                              : configDraft.toConfig(selectedAgent!),
                           baseBranch: baseBranch.text.trim().isEmpty
                               ? 'main'
                               : baseBranch.text.trim(),
@@ -1880,6 +2256,7 @@ Future<bool?> showTaskFormDialog(
                             status: task.status,
                             projectId: projectId!,
                             agentType: selectedAgent ?? '',
+                            agentConfig: task.agentConfig,
                             baseBranch: baseBranch.text.trim().isEmpty
                                 ? 'main'
                                 : baseBranch.text.trim(),
@@ -2111,13 +2488,21 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   }
 
   Future<void> _assign() async {
+    final task = _lastDetail?.task ?? widget.task;
+    final currentWorkerId = task.workerId ?? '';
+    final allowCurrentAssignmentUpdate =
+        task.status == 'ASSIGNED' && currentWorkerId.isNotEmpty;
     final candidates = widget.boardData.workers.where((worker) {
-      final supports = widget.task.agentType.isEmpty ||
-          worker.supportedAgents.contains(widget.task.agentType);
+      final supports = task.agentType.isEmpty ||
+          worker.supportedAgents.contains(task.agentType);
       final projectMatches = worker.projectBindingMode == 'ALL_PROJECTS' ||
-          worker.boundProjectIds.contains(widget.task.projectId);
+          worker.boundProjectIds.contains(task.projectId);
+      final idle = (worker.currentTaskId ?? '').isEmpty;
+      final currentAssignment = allowCurrentAssignmentUpdate &&
+          worker.id == currentWorkerId &&
+          worker.currentTaskId == task.id;
       return worker.status == 'ONLINE' &&
-          (worker.currentTaskId ?? '').isEmpty &&
+          (idle || currentAssignment) &&
           supports &&
           worker.supportedAgents.isNotEmpty &&
           projectMatches;
@@ -2125,11 +2510,15 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     if (candidates.isEmpty) {
       return;
     }
-    String selected = candidates.first.id;
-    String selectedAgent = widget.task.agentType.isEmpty
+    String selected = currentWorkerId.isNotEmpty &&
+            candidates.any((worker) => worker.id == currentWorkerId)
+        ? currentWorkerId
+        : candidates.first.id;
+    String selectedAgent = task.agentType.isEmpty
         ? candidates.first.supportedAgents.first
-        : widget.task.agentType;
-    final workerId = await showDialog<String>(
+        : task.agentType;
+    final configDraft = _AgentConfigDraft.fromTask(task);
+    final selection = await showDialog<_AssignWorkerSelection>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
@@ -2139,51 +2528,79 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
           }
           return AlertDialog(
             title: const Text('Assign worker'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  value: selected,
-                  decoration: const InputDecoration(labelText: 'Worker'),
-                  items: candidates
-                      .map(
-                        (worker) => DropdownMenuItem(
-                          value: worker.id,
-                          child: Text(worker.name),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => setState(() {
-                    selected = value ?? selected;
-                    final worker =
-                        _workerById(candidates, selected) ?? candidates.first;
-                    selectedAgent = widget.task.agentType.isEmpty
-                        ? worker.supportedAgents.first
-                        : widget.task.agentType;
-                  }),
-                ),
-                if (widget.task.agentType.isEmpty) ...[
-                  const SizedBox(height: 12),
-                  SegmentedButton<String>(
-                    segments: worker.supportedAgents
-                        .map(
-                          (agent) => ButtonSegment(
-                            value: agent,
-                            icon: Icon(
-                              agent == 'claude'
-                                  ? Icons.chat_bubble_outline
-                                  : Icons.terminal,
+            content: SizedBox(
+              width: 620,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selected,
+                      decoration: const InputDecoration(labelText: 'Worker'),
+                      items: candidates
+                          .map(
+                            (worker) => DropdownMenuItem(
+                              value: worker.id,
+                              child: Text(worker.name),
                             ),
-                            label: Text(_agentLabel(agent)),
-                          ),
-                        )
-                        .toList(),
-                    selected: {selectedAgent},
-                    onSelectionChanged: (values) =>
-                        setState(() => selectedAgent = values.first),
-                  ),
-                ],
-              ],
+                          )
+                          .toList(),
+                      onChanged: (value) => setState(() {
+                        selected = value ?? selected;
+                        final worker = _workerById(candidates, selected) ??
+                            candidates.first;
+                        final agentOptions = task.agentType.isEmpty
+                            ? worker.supportedAgents
+                            : worker.supportedAgents
+                                .where((agent) => agent == task.agentType)
+                                .toList();
+                        selectedAgent = agentOptions.isEmpty
+                            ? task.agentType
+                            : agentOptions.first;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    Builder(
+                      builder: (context) {
+                        final agentOptions = task.agentType.isEmpty
+                            ? worker.supportedAgents
+                            : worker.supportedAgents
+                                .where((agent) => agent == task.agentType)
+                                .toList();
+                        final visibleAgents = agentOptions.isEmpty
+                            ? <String>[selectedAgent]
+                            : agentOptions;
+                        return SegmentedButton<String>(
+                          segments: visibleAgents
+                              .map(
+                                (agent) => ButtonSegment(
+                                  value: agent,
+                                  icon: Icon(
+                                    agent == 'claude'
+                                        ? Icons.chat_bubble_outline
+                                        : Icons.terminal,
+                                  ),
+                                  label: Text(_agentLabel(agent)),
+                                ),
+                              )
+                              .toList(),
+                          selected: {selectedAgent},
+                          onSelectionChanged: task.agentType.isEmpty
+                              ? (values) =>
+                                  setState(() => selectedAgent = values.first)
+                              : null,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _AgentConfigFields(
+                      draft: configDraft,
+                      agentType: selectedAgent,
+                      onChanged: () => setState(() {}),
+                    ),
+                  ],
+                ),
+              ),
             ),
             actions: [
               TextButton(
@@ -2191,7 +2608,13 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(selected),
+                onPressed: () => Navigator.of(context).pop(
+                  _AssignWorkerSelection(
+                    workerId: selected,
+                    agentType: selectedAgent,
+                    agentConfig: configDraft.toConfig(selectedAgent),
+                  ),
+                ),
                 child: const Text('Assign'),
               ),
             ],
@@ -2199,14 +2622,15 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
         },
       ),
     );
-    if (workerId == null) {
+    if (selection == null) {
       return;
     }
     await _run(
       () => widget.apiClient.assignWorker(
-        widget.task.id!,
-        workerId,
-        agentType: widget.task.agentType.isEmpty ? selectedAgent : null,
+        task.id!,
+        selection.workerId,
+        agentType: selection.agentType,
+        agentConfig: selection.agentConfig,
       ),
     );
   }
@@ -2241,6 +2665,7 @@ class _TaskDetailBody extends StatelessWidget {
               ),
               if ((task.workerId ?? '').isNotEmpty)
                 DetailText(icon: Icons.memory, text: task.workerId!),
+              ..._agentConfigDetailWidgets(task),
             ],
           ),
           const SizedBox(height: 16),

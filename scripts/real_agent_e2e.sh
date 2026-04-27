@@ -39,6 +39,8 @@ import urllib.request
 manager_url = os.environ["MANAGER_URL"]
 graphql_url = manager_url + "/graphql"
 worker_id = os.environ["WORKER_ID"]
+codex_model = os.environ.get("REAL_AGENT_CODEX_MODEL", "").strip()
+claude_model = os.environ.get("REAL_AGENT_CLAUDE_MODEL", "").strip()
 
 
 def graphql(query, variables=None):
@@ -143,6 +145,65 @@ def verify_artifacts(task_id, expected_text):
         raise RuntimeError(f"task {task_id} missing events {missing}, got {sorted(event_types)}")
 
 
+def agent_config(agent):
+    if agent == "codex":
+        config = {
+            "workMode": "IMPLEMENT",
+            "codex": {
+                "reasoningEffort": "LOW",
+                "sandboxMode": "WORKSPACE_WRITE",
+                "approvalPolicy": "NEVER",
+            },
+        }
+        if codex_model:
+            config["codex"]["model"] = codex_model
+        return config
+    if agent == "claude":
+        config = {
+            "workMode": "IMPLEMENT",
+            "claude": {
+                "effort": "LOW",
+                "permissionMode": "DEFAULT",
+            },
+        }
+        if claude_model:
+            config["claude"]["model"] = claude_model
+        return config
+    raise ValueError(agent)
+
+
+def verify_agent_config(task_id, agent):
+    data = graphql(
+        """
+        query TaskConfig($id: ID!) {
+          task(id: $id) {
+            agentConfig {
+              workMode
+              codex { model reasoningEffort sandboxMode approvalPolicy }
+              claude { model effort permissionMode }
+            }
+          }
+        }
+        """,
+        {"id": task_id},
+    )
+    config = data["task"]["agentConfig"]
+    if config["workMode"] != "IMPLEMENT":
+        raise RuntimeError(f"task {task_id} workMode = {config['workMode']!r}")
+    if agent == "codex":
+        codex = config["codex"]
+        if codex["reasoningEffort"] != "LOW" or codex["sandboxMode"] != "WORKSPACE_WRITE" or codex["approvalPolicy"] != "NEVER":
+            raise RuntimeError(f"task {task_id} codex config = {codex}")
+        if codex_model and codex.get("model") != codex_model:
+            raise RuntimeError(f"task {task_id} codex model = {codex.get('model')!r}")
+    if agent == "claude":
+        claude = config["claude"]
+        if claude["effort"] != "LOW" or claude["permissionMode"] != "DEFAULT":
+            raise RuntimeError(f"task {task_id} claude config = {claude}")
+        if claude_model and claude.get("model") != claude_model:
+            raise RuntimeError(f"task {task_id} claude model = {claude.get('model')!r}")
+
+
 def run_agent(project_id, agent):
     suffix = f"{agent}-{int(time.time() * 1000)}"
     first = f"BPT_{agent.upper()}_FIRST_{suffix}"
@@ -156,10 +217,12 @@ def run_agent(project_id, agent):
                 "projectId": project_id,
                 "workerId": worker_id,
                 "agentType": agent,
+                "agentConfig": agent_config(agent),
                 "baseBranch": "main",
             }
         },
     )["createTask"]
+    verify_agent_config(task["id"], agent)
     graphql("mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id } }", {"taskId": task["id"]})
     completed = wait_for_completed(task["id"], first)
     if not completed.get("worktreePath") or not os.path.isdir(completed["worktreePath"]):

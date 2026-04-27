@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT NOT NULL REFERENCES projects(id),
   worker_id TEXT,
   agent_type TEXT NOT NULL,
+  agent_config TEXT NOT NULL DEFAULT '{}',
   base_branch TEXT NOT NULL,
   worktree_path TEXT,
   agent_session_id TEXT,

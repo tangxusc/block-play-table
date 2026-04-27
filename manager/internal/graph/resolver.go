@@ -57,6 +57,7 @@ func toModelTask(task *domain.Task) *model.Task {
 		ProjectID:      task.ProjectID,
 		WorkerID:       optionalString(task.WorkerID),
 		AgentType:      agentType,
+		AgentConfig:    toModelAgentExecutionConfig(task.AgentConfig),
 		BaseBranch:     task.BaseBranch,
 		WorktreePath:   optionalString(task.WorktreePath),
 		AgentSessionID: optionalString(task.AgentSessionID),
@@ -69,6 +70,85 @@ func toModelTask(task *domain.Task) *model.Task {
 		CreatedAt:      task.CreatedAt,
 		UpdatedAt:      task.UpdatedAt,
 	}
+}
+
+func toModelAgentExecutionConfig(config domain.AgentExecutionConfig) *model.AgentExecutionConfig {
+	out := &model.AgentExecutionConfig{}
+	if config.WorkMode != "" {
+		mode := toModelAgentWorkMode(config.WorkMode)
+		out.WorkMode = &mode
+	}
+	if !config.Codex.Empty() {
+		out.Codex = &model.CodexExecutionConfig{
+			Model:                     optionalString(config.Codex.Model),
+			FullAuto:                  config.Codex.FullAuto,
+			BypassApprovalsAndSandbox: config.Codex.BypassApprovalsAndSandbox,
+		}
+		if config.Codex.ReasoningEffort != "" {
+			value := toModelCodexReasoningEffort(config.Codex.ReasoningEffort)
+			out.Codex.ReasoningEffort = &value
+		}
+		if config.Codex.SandboxMode != "" {
+			value := toModelCodexSandboxMode(config.Codex.SandboxMode)
+			out.Codex.SandboxMode = &value
+		}
+		if config.Codex.ApprovalPolicy != "" {
+			value := toModelCodexApprovalPolicy(config.Codex.ApprovalPolicy)
+			out.Codex.ApprovalPolicy = &value
+		}
+	}
+	if !config.Claude.Empty() {
+		out.Claude = &model.ClaudeExecutionConfig{
+			Model: optionalString(config.Claude.Model),
+		}
+		if config.Claude.Effort != "" {
+			value := toModelClaudeEffort(config.Claude.Effort)
+			out.Claude.Effort = &value
+		}
+		if config.Claude.PermissionMode != "" {
+			value := toModelClaudePermissionMode(config.Claude.PermissionMode)
+			out.Claude.PermissionMode = &value
+		}
+	}
+	return out
+}
+
+func fromAgentExecutionConfigInput(input *model.AgentExecutionConfigInput) *domain.AgentExecutionConfig {
+	if input == nil {
+		return nil
+	}
+	config := domain.AgentExecutionConfig{}
+	if input.WorkMode != nil {
+		config.WorkMode = fromModelAgentWorkMode(*input.WorkMode)
+	}
+	if input.Codex != nil {
+		config.Codex.Model = valueOrEmpty(input.Codex.Model)
+		if input.Codex.ReasoningEffort != nil {
+			config.Codex.ReasoningEffort = fromModelCodexReasoningEffort(*input.Codex.ReasoningEffort)
+		}
+		if input.Codex.SandboxMode != nil {
+			config.Codex.SandboxMode = fromModelCodexSandboxMode(*input.Codex.SandboxMode)
+		}
+		if input.Codex.ApprovalPolicy != nil {
+			config.Codex.ApprovalPolicy = fromModelCodexApprovalPolicy(*input.Codex.ApprovalPolicy)
+		}
+		if input.Codex.FullAuto != nil {
+			config.Codex.FullAuto = *input.Codex.FullAuto
+		}
+		if input.Codex.BypassApprovalsAndSandbox != nil {
+			config.Codex.BypassApprovalsAndSandbox = *input.Codex.BypassApprovalsAndSandbox
+		}
+	}
+	if input.Claude != nil {
+		config.Claude.Model = valueOrEmpty(input.Claude.Model)
+		if input.Claude.Effort != nil {
+			config.Claude.Effort = fromModelClaudeEffort(*input.Claude.Effort)
+		}
+		if input.Claude.PermissionMode != nil {
+			config.Claude.PermissionMode = fromModelClaudePermissionMode(*input.Claude.PermissionMode)
+		}
+	}
+	return &config
 }
 
 func modelTaskDisplayDate(value time.Time) time.Time {
@@ -305,6 +385,170 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func toModelAgentWorkMode(value domain.AgentWorkMode) model.AgentWorkMode {
+	switch value {
+	case domain.AgentWorkModePlan:
+		return model.AgentWorkModePlan
+	case domain.AgentWorkModeReview:
+		return model.AgentWorkModeReview
+	default:
+		return model.AgentWorkModeImplement
+	}
+}
+
+func fromModelAgentWorkMode(value model.AgentWorkMode) domain.AgentWorkMode {
+	switch value {
+	case model.AgentWorkModePlan:
+		return domain.AgentWorkModePlan
+	case model.AgentWorkModeReview:
+		return domain.AgentWorkModeReview
+	default:
+		return domain.AgentWorkModeImplement
+	}
+}
+
+func toModelCodexReasoningEffort(value domain.CodexReasoningEffort) model.CodexReasoningEffort {
+	switch value {
+	case domain.CodexReasoningMinimal:
+		return model.CodexReasoningEffortMinimal
+	case domain.CodexReasoningLow:
+		return model.CodexReasoningEffortLow
+	case domain.CodexReasoningHigh:
+		return model.CodexReasoningEffortHigh
+	case domain.CodexReasoningXHigh:
+		return model.CodexReasoningEffortXhigh
+	default:
+		return model.CodexReasoningEffortMedium
+	}
+}
+
+func fromModelCodexReasoningEffort(value model.CodexReasoningEffort) domain.CodexReasoningEffort {
+	switch value {
+	case model.CodexReasoningEffortMinimal:
+		return domain.CodexReasoningMinimal
+	case model.CodexReasoningEffortLow:
+		return domain.CodexReasoningLow
+	case model.CodexReasoningEffortHigh:
+		return domain.CodexReasoningHigh
+	case model.CodexReasoningEffortXhigh:
+		return domain.CodexReasoningXHigh
+	default:
+		return domain.CodexReasoningMedium
+	}
+}
+
+func toModelCodexSandboxMode(value domain.CodexSandboxMode) model.CodexSandboxMode {
+	switch value {
+	case domain.CodexSandboxReadOnly:
+		return model.CodexSandboxModeReadOnly
+	case domain.CodexSandboxDangerFullAccess:
+		return model.CodexSandboxModeDangerFullAccess
+	default:
+		return model.CodexSandboxModeWorkspaceWrite
+	}
+}
+
+func fromModelCodexSandboxMode(value model.CodexSandboxMode) domain.CodexSandboxMode {
+	switch value {
+	case model.CodexSandboxModeReadOnly:
+		return domain.CodexSandboxReadOnly
+	case model.CodexSandboxModeDangerFullAccess:
+		return domain.CodexSandboxDangerFullAccess
+	default:
+		return domain.CodexSandboxWorkspaceWrite
+	}
+}
+
+func toModelCodexApprovalPolicy(value domain.CodexApprovalPolicy) model.CodexApprovalPolicy {
+	switch value {
+	case domain.CodexApprovalUntrusted:
+		return model.CodexApprovalPolicyUntrusted
+	case domain.CodexApprovalOnFailure:
+		return model.CodexApprovalPolicyOnFailure
+	case domain.CodexApprovalNever:
+		return model.CodexApprovalPolicyNever
+	default:
+		return model.CodexApprovalPolicyOnRequest
+	}
+}
+
+func fromModelCodexApprovalPolicy(value model.CodexApprovalPolicy) domain.CodexApprovalPolicy {
+	switch value {
+	case model.CodexApprovalPolicyUntrusted:
+		return domain.CodexApprovalUntrusted
+	case model.CodexApprovalPolicyOnFailure:
+		return domain.CodexApprovalOnFailure
+	case model.CodexApprovalPolicyNever:
+		return domain.CodexApprovalNever
+	default:
+		return domain.CodexApprovalOnRequest
+	}
+}
+
+func toModelClaudeEffort(value domain.ClaudeEffort) model.ClaudeEffort {
+	switch value {
+	case domain.ClaudeEffortLow:
+		return model.ClaudeEffortLow
+	case domain.ClaudeEffortHigh:
+		return model.ClaudeEffortHigh
+	case domain.ClaudeEffortXHigh:
+		return model.ClaudeEffortXhigh
+	case domain.ClaudeEffortMax:
+		return model.ClaudeEffortMax
+	default:
+		return model.ClaudeEffortMedium
+	}
+}
+
+func fromModelClaudeEffort(value model.ClaudeEffort) domain.ClaudeEffort {
+	switch value {
+	case model.ClaudeEffortLow:
+		return domain.ClaudeEffortLow
+	case model.ClaudeEffortHigh:
+		return domain.ClaudeEffortHigh
+	case model.ClaudeEffortXhigh:
+		return domain.ClaudeEffortXHigh
+	case model.ClaudeEffortMax:
+		return domain.ClaudeEffortMax
+	default:
+		return domain.ClaudeEffortMedium
+	}
+}
+
+func toModelClaudePermissionMode(value domain.ClaudePermissionMode) model.ClaudePermissionMode {
+	switch value {
+	case domain.ClaudePermissionAcceptEdits:
+		return model.ClaudePermissionModeAcceptEdits
+	case domain.ClaudePermissionAuto:
+		return model.ClaudePermissionModeAuto
+	case domain.ClaudePermissionBypassPermissions:
+		return model.ClaudePermissionModeBypassPermissions
+	case domain.ClaudePermissionDontAsk:
+		return model.ClaudePermissionModeDontAsk
+	case domain.ClaudePermissionPlan:
+		return model.ClaudePermissionModePlan
+	default:
+		return model.ClaudePermissionModeDefault
+	}
+}
+
+func fromModelClaudePermissionMode(value model.ClaudePermissionMode) domain.ClaudePermissionMode {
+	switch value {
+	case model.ClaudePermissionModeAcceptEdits:
+		return domain.ClaudePermissionAcceptEdits
+	case model.ClaudePermissionModeAuto:
+		return domain.ClaudePermissionAuto
+	case model.ClaudePermissionModeBypassPermissions:
+		return domain.ClaudePermissionBypassPermissions
+	case model.ClaudePermissionModeDontAsk:
+		return domain.ClaudePermissionDontAsk
+	case model.ClaudePermissionModePlan:
+		return domain.ClaudePermissionPlan
+	default:
+		return domain.ClaudePermissionDefault
+	}
 }
 
 func eventPayloadString(event domain.DomainEvent, key string) string {

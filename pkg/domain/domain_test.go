@@ -52,6 +52,44 @@ func TestTaskLifecycleEmitsEventsAndRejectsInvalidTransitions(t *testing.T) {
 	}
 }
 
+func TestTaskAssignWorkerStoresAndValidatesAgentConfig(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task, err := NewTask(NewTaskInput{
+		ID:        "task-config",
+		Title:     "Config",
+		ProjectID: "project-1",
+		AgentType: AgentCodex,
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("NewTask returned error: %v", err)
+	}
+	config := AgentExecutionConfig{
+		WorkMode: AgentWorkModeImplement,
+		Codex: CodexExecutionConfig{
+			Model:            "gpt-5.4",
+			ReasoningEffort:  CodexReasoningHigh,
+			SandboxMode:      CodexSandboxWorkspaceWrite,
+			ApprovalPolicy:   CodexApprovalNever,
+		},
+	}
+	if err := task.AssignWorkerWithAgentConfig("worker-1", AgentCodex, &config, now); err != nil {
+		t.Fatalf("AssignWorkerWithAgentConfig returned error: %v", err)
+	}
+	if task.AgentConfig.Codex.Model != "gpt-5.4" || task.AgentConfig.WorkMode != AgentWorkModeImplement {
+		t.Fatalf("agent config = %+v", task.AgentConfig)
+	}
+
+	claudeConfig := AgentExecutionConfig{Claude: ClaudeExecutionConfig{Model: "sonnet"}}
+	if err := task.AssignWorkerWithAgentConfig("worker-1", AgentCodex, &claudeConfig, now); err == nil {
+		t.Fatal("codex task should reject claude config")
+	}
+	badConfig := AgentExecutionConfig{Codex: CodexExecutionConfig{ReasoningEffort: CodexReasoningEffort("extreme")}}
+	if err := task.AssignWorkerWithAgentConfig("worker-1", AgentCodex, &badConfig, now); err == nil {
+		t.Fatal("task should reject invalid codex reasoning effort")
+	}
+}
+
 func TestTaskDisplayDatesDefaultExplicitUpdateAndValidation(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 30, 0, 0, time.UTC)
 	defaultDate := time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC)

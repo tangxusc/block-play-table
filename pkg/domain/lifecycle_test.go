@@ -13,7 +13,14 @@ func TestTaskInterruptArchiveWaitingAndConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = task.PullEvents()
-	if err := task.AssignWorker("worker-1", now); err != nil {
+	if err := task.AssignWorkerWithAgentConfig("worker-1", AgentClaude, &AgentExecutionConfig{
+		WorkMode: AgentWorkModeImplement,
+		Claude: ClaudeExecutionConfig{
+			Model:          "sonnet",
+			Effort:         ClaudeEffortHigh,
+			PermissionMode: ClaudePermissionDefault,
+		},
+	}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := task.Start(now); err != nil {
@@ -197,7 +204,7 @@ func TestTaskUpdateRetryResultFailureAndRestoreEvents(t *testing.T) {
 	if err := task.Retry(now); err != nil {
 		t.Fatalf("Retry returned error: %v", err)
 	}
-	if task.Status != TaskCreated || task.WorkerID != "" || task.WorktreePath != "" || task.Result != "" {
+	if task.Status != TaskCreated || task.WorkerID != "" || !task.AgentConfig.Empty() || task.WorktreePath != "" || task.Result != "" {
 		t.Fatalf("retried task = %+v", task)
 	}
 	if err := task.Retry(now); !errors.Is(err, ErrInvalidTransition) {

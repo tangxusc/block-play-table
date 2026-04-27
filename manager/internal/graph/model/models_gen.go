@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+type AgentExecutionConfig struct {
+	WorkMode *AgentWorkMode         `json:"workMode,omitempty"`
+	Codex    *CodexExecutionConfig  `json:"codex,omitempty"`
+	Claude   *ClaudeExecutionConfig `json:"claude,omitempty"`
+}
+
+type AgentExecutionConfigInput struct {
+	WorkMode *AgentWorkMode              `json:"workMode,omitempty"`
+	Codex    *CodexExecutionConfigInput  `json:"codex,omitempty"`
+	Claude   *ClaudeExecutionConfigInput `json:"claude,omitempty"`
+}
+
 type AgentRuntimeEnvVar struct {
 	Key         string  `json:"key"`
 	ValueMasked string  `json:"valueMasked"`
@@ -27,9 +39,10 @@ type AgentRuntimeEnvVarInput struct {
 }
 
 type AssignWorkerInput struct {
-	TaskID    string     `json:"taskId"`
-	WorkerID  string     `json:"workerId"`
-	AgentType *AgentType `json:"agentType,omitempty"`
+	TaskID      string                     `json:"taskId"`
+	WorkerID    string                     `json:"workerId"`
+	AgentType   *AgentType                 `json:"agentType,omitempty"`
+	AgentConfig *AgentExecutionConfigInput `json:"agentConfig,omitempty"`
 }
 
 type Board struct {
@@ -55,6 +68,36 @@ type BoardColumn struct {
 	Tasks  []*Task    `json:"tasks"`
 }
 
+type ClaudeExecutionConfig struct {
+	Model          *string               `json:"model,omitempty"`
+	Effort         *ClaudeEffort         `json:"effort,omitempty"`
+	PermissionMode *ClaudePermissionMode `json:"permissionMode,omitempty"`
+}
+
+type ClaudeExecutionConfigInput struct {
+	Model          *string               `json:"model,omitempty"`
+	Effort         *ClaudeEffort         `json:"effort,omitempty"`
+	PermissionMode *ClaudePermissionMode `json:"permissionMode,omitempty"`
+}
+
+type CodexExecutionConfig struct {
+	Model                     *string               `json:"model,omitempty"`
+	ReasoningEffort           *CodexReasoningEffort `json:"reasoningEffort,omitempty"`
+	SandboxMode               *CodexSandboxMode     `json:"sandboxMode,omitempty"`
+	ApprovalPolicy            *CodexApprovalPolicy  `json:"approvalPolicy,omitempty"`
+	FullAuto                  bool                  `json:"fullAuto"`
+	BypassApprovalsAndSandbox bool                  `json:"bypassApprovalsAndSandbox"`
+}
+
+type CodexExecutionConfigInput struct {
+	Model                     *string               `json:"model,omitempty"`
+	ReasoningEffort           *CodexReasoningEffort `json:"reasoningEffort,omitempty"`
+	SandboxMode               *CodexSandboxMode     `json:"sandboxMode,omitempty"`
+	ApprovalPolicy            *CodexApprovalPolicy  `json:"approvalPolicy,omitempty"`
+	FullAuto                  *bool                 `json:"fullAuto,omitempty"`
+	BypassApprovalsAndSandbox *bool                 `json:"bypassApprovalsAndSandbox,omitempty"`
+}
+
 type ContinueTaskInput struct {
 	TaskID  string `json:"taskId"`
 	Message string `json:"message"`
@@ -77,16 +120,17 @@ type CreateProjectInput struct {
 }
 
 type CreateTaskInput struct {
-	Title        string     `json:"title"`
-	Description  *string    `json:"description,omitempty"`
-	ProjectID    string     `json:"projectId"`
-	WorkerID     *string    `json:"workerId,omitempty"`
-	AgentType    *AgentType `json:"agentType,omitempty"`
-	BaseBranch   *string    `json:"baseBranch,omitempty"`
-	PreCommands  []string   `json:"preCommands,omitempty"`
-	PostCommands []string   `json:"postCommands,omitempty"`
-	StartDate    *time.Time `json:"startDate,omitempty"`
-	EndDate      *time.Time `json:"endDate,omitempty"`
+	Title        string                     `json:"title"`
+	Description  *string                    `json:"description,omitempty"`
+	ProjectID    string                     `json:"projectId"`
+	WorkerID     *string                    `json:"workerId,omitempty"`
+	AgentType    *AgentType                 `json:"agentType,omitempty"`
+	AgentConfig  *AgentExecutionConfigInput `json:"agentConfig,omitempty"`
+	BaseBranch   *string                    `json:"baseBranch,omitempty"`
+	PreCommands  []string                   `json:"preCommands,omitempty"`
+	PostCommands []string                   `json:"postCommands,omitempty"`
+	StartDate    *time.Time                 `json:"startDate,omitempty"`
+	EndDate      *time.Time                 `json:"endDate,omitempty"`
 }
 
 type CreateWorkerInput struct {
@@ -193,24 +237,25 @@ type Subscription struct {
 }
 
 type Task struct {
-	ID             string     `json:"id"`
-	Title          string     `json:"title"`
-	Description    string     `json:"description"`
-	Status         TaskStatus `json:"status"`
-	ProjectID      string     `json:"projectId"`
-	WorkerID       *string    `json:"workerId,omitempty"`
-	AgentType      *AgentType `json:"agentType,omitempty"`
-	BaseBranch     string     `json:"baseBranch"`
-	WorktreePath   *string    `json:"worktreePath,omitempty"`
-	AgentSessionID *string    `json:"agentSessionId,omitempty"`
-	PreCommands    []string   `json:"preCommands"`
-	PostCommands   []string   `json:"postCommands"`
-	Result         *string    `json:"result,omitempty"`
-	StartDate      time.Time  `json:"startDate"`
-	EndDate        time.Time  `json:"endDate"`
-	Version        int        `json:"version"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID             string                `json:"id"`
+	Title          string                `json:"title"`
+	Description    string                `json:"description"`
+	Status         TaskStatus            `json:"status"`
+	ProjectID      string                `json:"projectId"`
+	WorkerID       *string               `json:"workerId,omitempty"`
+	AgentType      *AgentType            `json:"agentType,omitempty"`
+	AgentConfig    *AgentExecutionConfig `json:"agentConfig"`
+	BaseBranch     string                `json:"baseBranch"`
+	WorktreePath   *string               `json:"worktreePath,omitempty"`
+	AgentSessionID *string               `json:"agentSessionId,omitempty"`
+	PreCommands    []string              `json:"preCommands"`
+	PostCommands   []string              `json:"postCommands"`
+	Result         *string               `json:"result,omitempty"`
+	StartDate      time.Time             `json:"startDate"`
+	EndDate        time.Time             `json:"endDate"`
+	Version        int                   `json:"version"`
+	CreatedAt      time.Time             `json:"createdAt"`
+	UpdatedAt      time.Time             `json:"updatedAt"`
 }
 
 type TaskConnection struct {
@@ -363,6 +408,63 @@ func (e AgentType) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type AgentWorkMode string
+
+const (
+	AgentWorkModePlan      AgentWorkMode = "PLAN"
+	AgentWorkModeImplement AgentWorkMode = "IMPLEMENT"
+	AgentWorkModeReview    AgentWorkMode = "REVIEW"
+)
+
+var AllAgentWorkMode = []AgentWorkMode{
+	AgentWorkModePlan,
+	AgentWorkModeImplement,
+	AgentWorkModeReview,
+}
+
+func (e AgentWorkMode) IsValid() bool {
+	switch e {
+	case AgentWorkModePlan, AgentWorkModeImplement, AgentWorkModeReview:
+		return true
+	}
+	return false
+}
+
+func (e AgentWorkMode) String() string {
+	return string(e)
+}
+
+func (e *AgentWorkMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = AgentWorkMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid AgentWorkMode", str)
+	}
+	return nil
+}
+
+func (e AgentWorkMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *AgentWorkMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e AgentWorkMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type BoardType string
 
 const (
@@ -415,6 +517,307 @@ func (e *BoardType) UnmarshalJSON(b []byte) error {
 }
 
 func (e BoardType) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type ClaudeEffort string
+
+const (
+	ClaudeEffortLow    ClaudeEffort = "LOW"
+	ClaudeEffortMedium ClaudeEffort = "MEDIUM"
+	ClaudeEffortHigh   ClaudeEffort = "HIGH"
+	ClaudeEffortXhigh  ClaudeEffort = "XHIGH"
+	ClaudeEffortMax    ClaudeEffort = "MAX"
+)
+
+var AllClaudeEffort = []ClaudeEffort{
+	ClaudeEffortLow,
+	ClaudeEffortMedium,
+	ClaudeEffortHigh,
+	ClaudeEffortXhigh,
+	ClaudeEffortMax,
+}
+
+func (e ClaudeEffort) IsValid() bool {
+	switch e {
+	case ClaudeEffortLow, ClaudeEffortMedium, ClaudeEffortHigh, ClaudeEffortXhigh, ClaudeEffortMax:
+		return true
+	}
+	return false
+}
+
+func (e ClaudeEffort) String() string {
+	return string(e)
+}
+
+func (e *ClaudeEffort) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ClaudeEffort(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ClaudeEffort", str)
+	}
+	return nil
+}
+
+func (e ClaudeEffort) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *ClaudeEffort) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e ClaudeEffort) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type ClaudePermissionMode string
+
+const (
+	ClaudePermissionModeAcceptEdits       ClaudePermissionMode = "ACCEPT_EDITS"
+	ClaudePermissionModeAuto              ClaudePermissionMode = "AUTO"
+	ClaudePermissionModeBypassPermissions ClaudePermissionMode = "BYPASS_PERMISSIONS"
+	ClaudePermissionModeDefault           ClaudePermissionMode = "DEFAULT"
+	ClaudePermissionModeDontAsk           ClaudePermissionMode = "DONT_ASK"
+	ClaudePermissionModePlan              ClaudePermissionMode = "PLAN"
+)
+
+var AllClaudePermissionMode = []ClaudePermissionMode{
+	ClaudePermissionModeAcceptEdits,
+	ClaudePermissionModeAuto,
+	ClaudePermissionModeBypassPermissions,
+	ClaudePermissionModeDefault,
+	ClaudePermissionModeDontAsk,
+	ClaudePermissionModePlan,
+}
+
+func (e ClaudePermissionMode) IsValid() bool {
+	switch e {
+	case ClaudePermissionModeAcceptEdits, ClaudePermissionModeAuto, ClaudePermissionModeBypassPermissions, ClaudePermissionModeDefault, ClaudePermissionModeDontAsk, ClaudePermissionModePlan:
+		return true
+	}
+	return false
+}
+
+func (e ClaudePermissionMode) String() string {
+	return string(e)
+}
+
+func (e *ClaudePermissionMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ClaudePermissionMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ClaudePermissionMode", str)
+	}
+	return nil
+}
+
+func (e ClaudePermissionMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *ClaudePermissionMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e ClaudePermissionMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CodexApprovalPolicy string
+
+const (
+	CodexApprovalPolicyUntrusted CodexApprovalPolicy = "UNTRUSTED"
+	CodexApprovalPolicyOnFailure CodexApprovalPolicy = "ON_FAILURE"
+	CodexApprovalPolicyOnRequest CodexApprovalPolicy = "ON_REQUEST"
+	CodexApprovalPolicyNever     CodexApprovalPolicy = "NEVER"
+)
+
+var AllCodexApprovalPolicy = []CodexApprovalPolicy{
+	CodexApprovalPolicyUntrusted,
+	CodexApprovalPolicyOnFailure,
+	CodexApprovalPolicyOnRequest,
+	CodexApprovalPolicyNever,
+}
+
+func (e CodexApprovalPolicy) IsValid() bool {
+	switch e {
+	case CodexApprovalPolicyUntrusted, CodexApprovalPolicyOnFailure, CodexApprovalPolicyOnRequest, CodexApprovalPolicyNever:
+		return true
+	}
+	return false
+}
+
+func (e CodexApprovalPolicy) String() string {
+	return string(e)
+}
+
+func (e *CodexApprovalPolicy) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CodexApprovalPolicy(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CodexApprovalPolicy", str)
+	}
+	return nil
+}
+
+func (e CodexApprovalPolicy) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CodexApprovalPolicy) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CodexApprovalPolicy) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CodexReasoningEffort string
+
+const (
+	CodexReasoningEffortMinimal CodexReasoningEffort = "MINIMAL"
+	CodexReasoningEffortLow     CodexReasoningEffort = "LOW"
+	CodexReasoningEffortMedium  CodexReasoningEffort = "MEDIUM"
+	CodexReasoningEffortHigh    CodexReasoningEffort = "HIGH"
+	CodexReasoningEffortXhigh   CodexReasoningEffort = "XHIGH"
+)
+
+var AllCodexReasoningEffort = []CodexReasoningEffort{
+	CodexReasoningEffortMinimal,
+	CodexReasoningEffortLow,
+	CodexReasoningEffortMedium,
+	CodexReasoningEffortHigh,
+	CodexReasoningEffortXhigh,
+}
+
+func (e CodexReasoningEffort) IsValid() bool {
+	switch e {
+	case CodexReasoningEffortMinimal, CodexReasoningEffortLow, CodexReasoningEffortMedium, CodexReasoningEffortHigh, CodexReasoningEffortXhigh:
+		return true
+	}
+	return false
+}
+
+func (e CodexReasoningEffort) String() string {
+	return string(e)
+}
+
+func (e *CodexReasoningEffort) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CodexReasoningEffort(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CodexReasoningEffort", str)
+	}
+	return nil
+}
+
+func (e CodexReasoningEffort) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CodexReasoningEffort) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CodexReasoningEffort) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CodexSandboxMode string
+
+const (
+	CodexSandboxModeReadOnly         CodexSandboxMode = "READ_ONLY"
+	CodexSandboxModeWorkspaceWrite   CodexSandboxMode = "WORKSPACE_WRITE"
+	CodexSandboxModeDangerFullAccess CodexSandboxMode = "DANGER_FULL_ACCESS"
+)
+
+var AllCodexSandboxMode = []CodexSandboxMode{
+	CodexSandboxModeReadOnly,
+	CodexSandboxModeWorkspaceWrite,
+	CodexSandboxModeDangerFullAccess,
+}
+
+func (e CodexSandboxMode) IsValid() bool {
+	switch e {
+	case CodexSandboxModeReadOnly, CodexSandboxModeWorkspaceWrite, CodexSandboxModeDangerFullAccess:
+		return true
+	}
+	return false
+}
+
+func (e CodexSandboxMode) String() string {
+	return string(e)
+}
+
+func (e *CodexSandboxMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CodexSandboxMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CodexSandboxMode", str)
+	}
+	return nil
+}
+
+func (e CodexSandboxMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CodexSandboxMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CodexSandboxMode) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

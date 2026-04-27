@@ -10,6 +10,7 @@
 
 - 验证 Project、Worker、Task、Settings、Board 等核心对象可以通过 UI/API 完成主要工作流。
 - 验证 Manager GraphQL 与 Worker WebSocket 的协议交互、状态流转、日志、会话、结果和领域事件持久化。
+- 验证任务分配时的 Agent CLI 运行配置会保存、展示，并随 `TASK_START` / `TASK_CONTINUE` 下发给 Worker。
 - 验证 Flutter Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
 - 验证真实 Codex/Claude CLI 在发布前可以通过 Worker 执行固定任务，并产出可追踪结果。
 
@@ -30,7 +31,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、日志、会话、领域事件和 Calendar 日/周/月/年视图。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -84,6 +85,8 @@ make clean-local
 | `DB_DSN` | SQLite 默认 `./data/manager.db` | Manager 数据源地址；PostgreSQL 模式必须显式提供 |
 | `GO_BIN` | `go` | `scripts/real_agent_e2e.sh` 用于启动 Manager/Worker 的 Go 命令 |
 | `WORKER_DIR` | `./worker-data-real-e2e` | 真实 Agent E2E 使用的 Worker 工作目录 |
+| `REAL_AGENT_CODEX_MODEL` | 空 | 真实 Agent E2E 可选 Codex `agentConfig.codex.model`；为空时不传模型名，避免依赖特定模型可用性 |
+| `REAL_AGENT_CLAUDE_MODEL` | 空 | 真实 Agent E2E 可选 Claude `agentConfig.claude.model`；为空时不传模型名，避免依赖特定模型可用性 |
 
 与 Worker 本体相关的常用变量还包括 `MANAGER_WS_URL`、`WORKER_ID`、`WORKER_NAME`、`WORKER_WORK_DIR`、`WORKER_SUPPORTED_AGENTS`、`WORKER_PROJECT_BINDING_MODE`、`WORKER_BOUND_PROJECT_IDS`。
 
@@ -112,6 +115,7 @@ make e2e GO=go GO_TEST_ENV='env -u GOROOT'
 - `TestTrustedManagerWorkerFlow` 通过。
 - GraphQL 创建 Project/Task 成功。
 - Worker WebSocket 收到 `TASK_START`。
+- `TASK_START` / `TASK_CONTINUE` 中的 `payload.task.agentConfig` 与分配时选择的模型、思考深度、工作模式和权限配置一致。
 - Manager 接收 Worker 运行事件后，将任务推进到 `COMPLETED`。
 - `taskLogs` 能查询到 Worker 日志。
 
@@ -192,6 +196,7 @@ npm run e2e:real-agents
 
 - Codex 任务：`agentType=codex`，使用固定测试仓库或本地 fixture，要求 Worker 创建 worktree、执行前置命令、运行 `codex exec`、写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
 - Claude 任务：`agentType=claude`，使用同一类固定输入，要求 Worker 创建 worktree、执行前置命令、运行 `claude -p`、写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
+- 默认脚本会给两类任务传非空 `agentConfig`：Codex 覆盖 `reasoningEffort` 和权限/沙箱相关字段；Claude 覆盖 `effort` 和 `permissionMode`。模型字段可通过 `REAL_AGENT_CODEX_MODEL` / `REAL_AGENT_CLAUDE_MODEL` 显式开启，以避免默认测试依赖特定模型名可用性。空配置兼容路径由 L1/L2 与单元测试覆盖。
 
 验收查询应确认：
 
@@ -224,9 +229,12 @@ npm run e2e:real-agents
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |
 | Task | 创建未分配、无 Agent 的任务 | L1/L2 | [待补齐] |
 | Task | 创建指定 Worker 与 Agent 的任务后状态为 `ASSIGNED` | L2 | [已实现] |
+| Task | 创建任务同时选择 Worker 时保存 Agent CLI 运行配置 | L1/L2 | [已实现] |
+| Task | `assignWorker` 写入 Codex/Claude 配置并在任务详情展示 | L1/L2 | [已实现] |
 | Task | 创建任务时保存并展示开始/结束日期，默认当天且不影响启动执行 | L1/L2 | [已实现] |
 | Task | 自动分配只选择在线、空闲、支持 Agent、允许 Project 的 Worker | L1/L2 | [待补齐] |
 | Task | 启动已分配任务，Manager 向 Worker 下发 `TASK_START` | L1/L2 | [已实现] |
+| Task | `TASK_START` 和 `TASK_CONTINUE` 下发同一份 `agentConfig` | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_ACCEPTED` 后保持启动流程可追踪 | L2 | [已实现] |
 | Task | Worker 上报 `TASK_STARTED` 后任务进入 `RUNNING` 并记录 worktree | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_LOG` 后日志可在 API/UI 查询 | L1/L2 | [已实现] |
@@ -238,6 +246,7 @@ npm run e2e:real-agents
 | Task | 中断运行中任务，下发 `TASK_INTERRUPT`，Worker 上报 `TASK_INTERRUPTED` | L1/L2 | [待补齐] |
 | Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
 | Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [待补齐] |
+| Task | 重试后清空旧 Worker 绑定和 `agentConfig`，自动分配使用空配置 | L1 | [已实现] |
 | Task | Created/Completed/Failed/Interrupted 任务可归档并进入完成列 | L2 | [已实现] |
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
 | UI | Flutter Web 首屏可加载并显示 `flutter-view` | L2 | [已实现] |
@@ -254,8 +263,8 @@ npm run e2e:real-agents
 | Storage | PostgreSQL 模式应用迁移并通过 readiness | L1/L2 | [待补齐] |
 | Storage | 领域事件可按 aggregateId/aggregateType/eventType 过滤 | L1/L2 | [待补齐] |
 | Storage | Outbox message 可查询 pending/published 状态 | L1/L2 | [待补齐] |
-| Real Agent | Codex CLI 完成固定 fixture 任务 | L3 | [发布必跑] |
-| Real Agent | Claude CLI 完成固定 fixture 任务 | L3 | [发布必跑] |
+| Real Agent | Codex CLI 完成固定 fixture 任务，并覆盖 `--model`、推理深度、sandbox/approval 参数构造 | L3 | [发布必跑] |
+| Real Agent | Claude CLI 完成固定 fixture 任务，并覆盖 `--model`、`--effort`、`--permission-mode` 参数构造 | L3 | [发布必跑] |
 | Real Agent | 前置命令失败时任务失败并记录 stderr | L3 | [待补齐] |
 | Real Agent | 后置命令失败时任务失败并记录 stderr | L3 | [待补齐] |
 | Real Agent | Agent 输出中的敏感 env var 值被遮蔽 | L3 | [待补齐] |
@@ -296,7 +305,7 @@ npm run e2e:real-agents
    GO_BIN=go WORKER_DIR=./worker-data-real-e2e npm run e2e:real-agents
    ```
 
-   在脚本启动 Manager/Worker 后，分别创建 `agentType=codex` 和 `agentType=claude` 的固定任务，并按 L3 验收查询确认两条任务完成。
+   在脚本启动 Manager/Worker 后，分别创建 `agentType=codex` 和 `agentType=claude` 的固定任务；默认携带非空 `agentConfig`，并按 L3 验收查询确认任务完成。
 
 6. 关闭本地栈：
 

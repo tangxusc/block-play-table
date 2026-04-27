@@ -59,6 +59,18 @@ Manager endpoints:
 - `GET /worker/ws`
 - `GET /subscriptions`
 
+## Agent CLI Run Configuration
+
+Tasks can be created without Agent CLI parameters. Parameters are written only when assigning a Worker, including the create-task path that selects a Worker immediately. Assigned-but-not-started tasks can be assigned again to update the same task-level `agentConfig`.
+
+Supported fields are typed by Agent instead of free-form JSON:
+
+- Common `workMode`: `plan`, `implement`, or `review`; Worker turns this into a stable prompt prefix.
+- Codex: `model`, `reasoningEffort`, `sandboxMode`, `approvalPolicy`, `fullAuto`, and `bypassApprovalsAndSandbox`.
+- Claude: `model`, `effort`, and `permissionMode`.
+
+Default empty config keeps the existing CLI behavior. Codex still runs `codex exec --skip-git-repo-check --json <prompt>` unless config is set, then maps to `--model`, `-c model_reasoning_effort=...`, `--sandbox`, `--ask-for-approval`, `--full-auto`, and the bypass flag. Claude still runs `claude -p --output-format=stream-json --verbose ...` unless config is set, then maps to `--model`, `--effort`, and `--permission-mode`.
+
 ## Docker Compose
 
 Local SQLite mode:
@@ -127,6 +139,7 @@ Real Agent E2E is a release gate and must cover both Codex and Claude. The Worke
 - Claude: `claude -p`
 
 The helper script checks both CLIs and starts Manager/Worker in trusted mode. After it starts, create and verify one fixed `agentType=codex` task and one fixed `agentType=claude` task through UI, GraphQL, or an automated API flow. See [`docs/e2e-testing.md`](docs/e2e-testing.md) for the full acceptance criteria.
+By default the script passes non-empty `agentConfig` without model names; set `REAL_AGENT_CODEX_MODEL` or `REAL_AGENT_CLAUDE_MODEL` to verify explicit model CLI arguments in your environment.
 
 ```bash
 GO_BIN=/Users/tangxu/sdk/go1.16rc1/bin/go \

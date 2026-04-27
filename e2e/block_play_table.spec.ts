@@ -7,7 +7,9 @@ const managerWorkerWs =
   process.env.BPT_MANAGER_WS_URL ||
   managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
 const managerWorkerToken =
-  process.env.BPT_MANAGER_WS_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
+  process.env.BPT_MANAGER_WS_TOKEN ||
+  process.env.WORKER_TOKEN ||
+  "dev-worker-token";
 
 async function graphQL(
   request,
@@ -66,7 +68,9 @@ async function fillFlutterTextField(page, input, value: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     await input.click();
     await page.waitForTimeout(100);
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+A" : "Control+A",
+    );
     await page.keyboard.press("Backspace");
     await page.waitForTimeout(100);
     await input.type(value, { delay: 20 });
@@ -94,6 +98,7 @@ function connectWorkerEvents(
   workerId: string,
   taskId: string,
   expectedEnv: Record<string, string> = {},
+  expectedAgentConfig: Record<string, unknown> = {},
 ) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
@@ -120,7 +125,11 @@ function connectWorkerEvents(
   };
   const ready = new Promise<void>((resolve, reject) => {
     ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener("error", () => reject(new Error("worker websocket failed")), { once: true });
+    ws.addEventListener(
+      "error",
+      () => reject(new Error("worker websocket failed")),
+      { once: true },
+    );
   });
   const done = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -131,6 +140,11 @@ function connectWorkerEvents(
       const envelope = JSON.parse(String(message.data));
       if (envelope.type !== "TASK_START") {
         return;
+      }
+      if (Object.keys(expectedAgentConfig).length > 0) {
+        expect(envelope.payload?.task?.agentConfig).toMatchObject(
+          expectedAgentConfig,
+        );
       }
       const runtimeEnv = envelope.payload?.agentRuntimeEnv || [];
       for (const [key, value] of Object.entries(expectedEnv)) {
@@ -175,15 +189,23 @@ function connectWorkerEvents(
         resolve();
       }, 250);
     });
-    ws.addEventListener("error", () => {
-      clearTimeout(timeout);
-      reject(new Error("worker websocket failed"));
-    }, { once: true });
+    ws.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timeout);
+        reject(new Error("worker websocket failed"));
+      },
+      { once: true },
+    );
   });
   return { ready, done };
 }
 
-function connectWorkerForContinuation(workerId: string, taskId: string) {
+function connectWorkerForContinuation(
+  workerId: string,
+  taskId: string,
+  expectedAgentConfig: Record<string, unknown> = {},
+) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
   if (managerWorkerToken) {
@@ -209,14 +231,26 @@ function connectWorkerForContinuation(workerId: string, taskId: string) {
   };
   const ready = new Promise<void>((resolve, reject) => {
     ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener("error", () => reject(new Error("worker websocket failed")), { once: true });
+    ws.addEventListener(
+      "error",
+      () => reject(new Error("worker websocket failed")),
+      { once: true },
+    );
   });
   const firstDone = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("timed out waiting for TASK_START")), 5000);
+    const timeout = setTimeout(
+      () => reject(new Error("timed out waiting for TASK_START")),
+      5000,
+    );
     ws.addEventListener("message", (message) => {
       const envelope = JSON.parse(String(message.data));
       if (envelope.type !== "TASK_START") {
         return;
+      }
+      if (Object.keys(expectedAgentConfig).length > 0) {
+        expect(envelope.payload?.task?.agentConfig).toMatchObject(
+          expectedAgentConfig,
+        );
       }
       send(`accepted-first-${taskId}`, "TASK_ACCEPTED");
       send(`started-first-${taskId}`, "TASK_STARTED", {
@@ -239,15 +273,25 @@ function connectWorkerForContinuation(workerId: string, taskId: string) {
     });
   });
   const continued = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("timed out waiting for TASK_CONTINUE")), 15000);
+    const timeout = setTimeout(
+      () => reject(new Error("timed out waiting for TASK_CONTINUE")),
+      15000,
+    );
     ws.addEventListener("message", (message) => {
       const envelope = JSON.parse(String(message.data));
       if (envelope.type !== "TASK_CONTINUE") {
         return;
       }
+      if (Object.keys(expectedAgentConfig).length > 0) {
+        expect(envelope.payload?.task?.agentConfig).toMatchObject(
+          expectedAgentConfig,
+        );
+      }
       expect(envelope.payload.agentSessionId).toBe("session-1");
       expect(envelope.payload.message).toBe("follow up from ui");
-      expect(envelope.payload.worktreePath).toBe("/tmp/e2e-continuation-worktree");
+      expect(envelope.payload.worktreePath).toBe(
+        "/tmp/e2e-continuation-worktree",
+      );
       send(`accepted-continue-${taskId}`, "TASK_ACCEPTED");
       send(`started-continue-${taskId}`, "TASK_STARTED", {
         taskId,
@@ -293,6 +337,16 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   const workerName = `E2E Worker ${suffix}`;
   const taskStartDate = "2026-05-01T00:00:00Z";
   const taskEndDate = "2026-05-03T00:00:00Z";
+  const expectedCodexPayloadConfig = {
+    workMode: "implement",
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+      fullAuto: true,
+    },
+  };
 
   const createdProject = await graphQL(
     request,
@@ -343,10 +397,10 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
       );
       return Object.fromEntries(
         data.worker.agentRuntimeEnv.map(
-          (group: { agentType: string; vars: Array<{ key: string; valueMasked: string }> }) => [
-            group.agentType,
-            group.vars,
-          ],
+          (group: {
+            agentType: string;
+            vars: Array<{ key: string; valueMasked: string }>;
+          }) => [group.agentType, group.vars],
         ),
       );
     })
@@ -357,13 +411,35 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
 
   const createdTask = await graphQL(
     request,
-    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status startDate endDate } }",
+    `mutation CreateTask($input: CreateTaskInput!) {
+      createTask(input: $input) {
+        id
+        title
+        status
+        startDate
+        endDate
+        agentConfig {
+          workMode
+          codex { model reasoningEffort sandboxMode approvalPolicy fullAuto }
+        }
+      }
+    }`,
     {
       input: {
         title: taskTitle,
         projectId: project.id,
         workerId,
         agentType: "codex",
+        agentConfig: {
+          workMode: "IMPLEMENT",
+          codex: {
+            model: "gpt-5.4",
+            reasoningEffort: "HIGH",
+            sandboxMode: "WORKSPACE_WRITE",
+            approvalPolicy: "NEVER",
+            fullAuto: true,
+          },
+        },
         baseBranch: "main",
         startDate: taskStartDate,
         endDate: taskEndDate,
@@ -373,6 +449,16 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   expect(createdTask.createTask.status).toBe("ASSIGNED");
   expect(createdTask.createTask.startDate).toBe(taskStartDate);
   expect(createdTask.createTask.endDate).toBe(taskEndDate);
+  expect(createdTask.createTask.agentConfig).toMatchObject({
+    workMode: "IMPLEMENT",
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "HIGH",
+      sandboxMode: "WORKSPACE_WRITE",
+      approvalPolicy: "NEVER",
+      fullAuto: true,
+    },
+  });
 
   await expect
     .poll(async () => {
@@ -381,7 +467,12 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
         "query { tasks { nodes { title status startDate endDate } } }",
       );
       return data.tasks.nodes.some(
-        (task: { title: string; status: string; startDate: string; endDate: string }) =>
+        (task: {
+          title: string;
+          status: string;
+          startDate: string;
+          endDate: string;
+        }) =>
           task.title === taskTitle &&
           task.status === "ASSIGNED" &&
           task.startDate === taskStartDate &&
@@ -394,14 +485,24 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     "query { tasks { nodes { id title status startDate endDate } } }",
   );
   const task = tasks.tasks.nodes.find(
-    (item: { id: string; title: string; status: string; startDate: string; endDate: string }) =>
-      item.title === taskTitle,
+    (item: {
+      id: string;
+      title: string;
+      status: string;
+      startDate: string;
+      endDate: string;
+    }) => item.title === taskTitle,
   );
   expect(task).toBeTruthy();
 
-  const workerSocket = connectWorkerEvents(workerId, task.id, {
-    BPT_E2E_AGENT_ENV: "codex-value",
-  });
+  const workerSocket = connectWorkerEvents(
+    workerId,
+    task.id,
+    {
+      BPT_E2E_AGENT_ENV: "codex-value",
+    },
+    expectedCodexPayloadConfig,
+  );
   await workerSocket.ready;
   await graphQL(
     request,
@@ -467,16 +568,22 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await expect(calendarSearch).toBeVisible();
   await fillFlutterTextField(page, calendarSearch, taskTitle);
   await expect(page.getByText("May 2026")).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(taskTitle) })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(taskTitle) }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Week", exact: true }).click();
   await expect(page.getByText("Apr 27, 2026 - May 3, 2026")).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(taskTitle) })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(taskTitle) }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Day", exact: true }).click();
   await expect(page.getByText("May 1, 2026")).toBeVisible();
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.getByRole("button", { name: "Year", exact: true }).click();
   await expect(page.getByText("2026", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(taskTitle) })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(taskTitle) }),
+  ).toBeVisible();
   await openTaskFromList(page, taskTitle);
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -497,6 +604,14 @@ test("task detail continues a completed task with the same agent session", async
   const projectName = `E2E Continue Project ${suffix}`;
   const taskTitle = `E2E Continue Task ${suffix}`;
   const workerId = `worker-e2e-continue-${suffix}`;
+  const expectedContinuationConfig = {
+    workMode: "review",
+    codex: {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      approvalPolicy: "on-request",
+    },
+  };
 
   const createdProject = await graphQL(
     request,
@@ -535,13 +650,25 @@ test("task detail continues a completed task with the same agent session", async
         projectId: project.id,
         workerId,
         agentType: "codex",
+        agentConfig: {
+          workMode: "REVIEW",
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "MEDIUM",
+            approvalPolicy: "ON_REQUEST",
+          },
+        },
         baseBranch: "main",
       },
     },
   );
   const taskId = createdTask.createTask.id;
 
-  const workerSocket = connectWorkerForContinuation(workerId, taskId);
+  const workerSocket = connectWorkerForContinuation(
+    workerId,
+    taskId,
+    expectedContinuationConfig,
+  );
   await workerSocket.ready;
   await graphQL(
     request,
@@ -602,9 +729,15 @@ test("task detail continues a completed task with the same agent session", async
         agentSessionId: "session-1",
       },
       messages: expect.arrayContaining([
-        expect.objectContaining({ role: "assistant", content: "first agent response" }),
+        expect.objectContaining({
+          role: "assistant",
+          content: "first agent response",
+        }),
         expect.objectContaining({ role: "user", content: "follow up from ui" }),
-        expect.objectContaining({ role: "assistant", content: "second agent response" }),
+        expect.objectContaining({
+          role: "assistant",
+          content: "second agent response",
+        }),
       ]),
     });
 });

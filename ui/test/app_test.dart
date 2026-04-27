@@ -341,6 +341,10 @@ void main() {
 
     expect(find.text('Codex'), findsOneWidget);
     expect(find.text('Claude'), findsNothing);
+    expect(find.text('Agent CLI settings'), findsOneWidget);
+    expect(find.text('Work mode'), findsOneWidget);
+    expect(find.text('Codex model'), findsOneWidget);
+    expect(find.text('Reasoning effort'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
@@ -348,6 +352,26 @@ void main() {
     expect(apiClient.createdTaskTitle, 'Worker task');
     expect(apiClient.createdTaskWorkerId, 'worker-1');
     expect(apiClient.createdTaskAgentType, 'codex');
+    expect(apiClient.createdTaskAgentConfig, isNotNull);
+  });
+
+  testWidgets('assign dialog shows agent config for typed tasks', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Assign'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Assign worker'), findsOneWidget);
+    expect(find.text('Codex'), findsOneWidget);
+    expect(find.text('Agent CLI settings'), findsOneWidget);
+    expect(find.text('Codex model'), findsOneWidget);
+    expect(find.text('Reasoning effort'), findsOneWidget);
   });
 
   testWidgets('projects and workers create and edit through dialogs', (
@@ -657,6 +681,7 @@ class FakeApiClient extends ApiClient {
   String? createdTaskTitle;
   String? createdTaskWorkerId;
   String? createdTaskAgentType;
+  AgentExecutionConfigItem? createdTaskAgentConfig;
   String? createdTaskStartDate;
   String? createdTaskEndDate;
   String? continuedTaskId;
@@ -734,6 +759,7 @@ class FakeApiClient extends ApiClient {
     required String projectId,
     String? workerId,
     String? agentType,
+    AgentExecutionConfigItem? agentConfig,
     String baseBranch = 'main',
     List<String> preCommands = const [],
     List<String> postCommands = const [],
@@ -743,6 +769,7 @@ class FakeApiClient extends ApiClient {
     createdTaskTitle = title;
     createdTaskWorkerId = workerId;
     createdTaskAgentType = agentType;
+    createdTaskAgentConfig = agentConfig;
     createdTaskStartDate = startDate;
     createdTaskEndDate = endDate;
   }
@@ -845,6 +872,7 @@ final _task = TaskItem(
   status: 'CREATED',
   projectId: _project.id,
   agentType: 'codex',
+  agentConfig: const AgentExecutionConfigItem(),
   baseBranch: 'main',
   preCommands: const [],
   postCommands: const [],
@@ -869,6 +897,7 @@ TaskItem _taskWith({
       status: status ?? _task.status,
       projectId: _task.projectId,
       agentType: _task.agentType,
+      agentConfig: _task.agentConfig,
       baseBranch: _task.baseBranch,
       preCommands: _task.preCommands,
       postCommands: _task.postCommands,
@@ -889,6 +918,7 @@ final _completedTask = TaskItem(
   status: 'COMPLETED',
   projectId: _project.id,
   agentType: 'codex',
+  agentConfig: const AgentExecutionConfigItem(),
   baseBranch: 'main',
   preCommands: const [],
   postCommands: const [],

@@ -113,6 +113,7 @@ class TaskItem {
     required this.status,
     required this.projectId,
     required this.agentType,
+    required this.agentConfig,
     required this.baseBranch,
     required this.preCommands,
     required this.postCommands,
@@ -133,6 +134,9 @@ class TaskItem {
     status: json['status'] as String? ?? '',
     projectId: json['projectId'] as String? ?? '',
     agentType: json['agentType'] as String? ?? '',
+    agentConfig: AgentExecutionConfigItem.fromJson(
+      json['agentConfig'] as Map<String, dynamic>? ?? const {},
+    ),
     baseBranch: json['baseBranch'] as String? ?? 'main',
     preCommands: stringList(json['preCommands']),
     postCommands: stringList(json['postCommands']),
@@ -157,6 +161,7 @@ class TaskItem {
   final String status;
   final String projectId;
   final String agentType;
+  final AgentExecutionConfigItem agentConfig;
   final String baseBranch;
   final List<String> preCommands;
   final List<String> postCommands;
@@ -168,6 +173,118 @@ class TaskItem {
   final String? worktreePath;
   final String? agentSessionId;
   final String? result;
+}
+
+class AgentExecutionConfigItem {
+  const AgentExecutionConfigItem({
+    this.workMode = '',
+    this.codex = const CodexExecutionConfigItem(),
+    this.claude = const ClaudeExecutionConfigItem(),
+  });
+
+  factory AgentExecutionConfigItem.fromJson(Map<String, dynamic> json) =>
+      AgentExecutionConfigItem(
+        workMode: json['workMode'] as String? ?? '',
+        codex: CodexExecutionConfigItem.fromJson(
+          json['codex'] as Map<String, dynamic>? ?? const {},
+        ),
+        claude: ClaudeExecutionConfigItem.fromJson(
+          json['claude'] as Map<String, dynamic>? ?? const {},
+        ),
+      );
+
+  final String workMode;
+  final CodexExecutionConfigItem codex;
+  final ClaudeExecutionConfigItem claude;
+
+  bool get isEmpty => workMode.isEmpty && codex.isEmpty && claude.isEmpty;
+
+  Map<String, dynamic> toGraphQLInput(String agentType) {
+    final input = <String, dynamic>{};
+    if (workMode.isNotEmpty) {
+      input['workMode'] = workMode;
+    }
+    if (agentType == 'codex') {
+      input['codex'] = codex.toGraphQLInput();
+    } else if (agentType == 'claude') {
+      input['claude'] = claude.toGraphQLInput();
+    }
+    return input;
+  }
+}
+
+class CodexExecutionConfigItem {
+  const CodexExecutionConfigItem({
+    this.model = '',
+    this.reasoningEffort = '',
+    this.sandboxMode = '',
+    this.approvalPolicy = '',
+    this.fullAuto = false,
+    this.bypassApprovalsAndSandbox = false,
+  });
+
+  factory CodexExecutionConfigItem.fromJson(Map<String, dynamic> json) =>
+      CodexExecutionConfigItem(
+        model: json['model'] as String? ?? '',
+        reasoningEffort: json['reasoningEffort'] as String? ?? '',
+        sandboxMode: json['sandboxMode'] as String? ?? '',
+        approvalPolicy: json['approvalPolicy'] as String? ?? '',
+        fullAuto: json['fullAuto'] as bool? ?? false,
+        bypassApprovalsAndSandbox:
+            json['bypassApprovalsAndSandbox'] as bool? ?? false,
+      );
+
+  final String model;
+  final String reasoningEffort;
+  final String sandboxMode;
+  final String approvalPolicy;
+  final bool fullAuto;
+  final bool bypassApprovalsAndSandbox;
+
+  bool get isEmpty =>
+      model.isEmpty &&
+      reasoningEffort.isEmpty &&
+      sandboxMode.isEmpty &&
+      approvalPolicy.isEmpty &&
+      !fullAuto &&
+      !bypassApprovalsAndSandbox;
+
+  Map<String, dynamic> toGraphQLInput() => {
+        if (model.trim().isNotEmpty) 'model': model.trim(),
+        if (reasoningEffort.isNotEmpty) 'reasoningEffort': reasoningEffort,
+        if (sandboxMode.isNotEmpty) 'sandboxMode': sandboxMode,
+        if (approvalPolicy.isNotEmpty) 'approvalPolicy': approvalPolicy,
+        'fullAuto': fullAuto,
+        'bypassApprovalsAndSandbox': bypassApprovalsAndSandbox,
+      };
+}
+
+class ClaudeExecutionConfigItem {
+  const ClaudeExecutionConfigItem({
+    this.model = '',
+    this.effort = '',
+    this.permissionMode = '',
+  });
+
+  factory ClaudeExecutionConfigItem.fromJson(Map<String, dynamic> json) =>
+      ClaudeExecutionConfigItem(
+        model: json['model'] as String? ?? '',
+        effort: json['effort'] as String? ?? '',
+        permissionMode: json['permissionMode'] as String? ?? '',
+      );
+
+  final String model;
+  final String effort;
+  final String permissionMode;
+
+  bool get isEmpty =>
+      model.isEmpty && effort.isEmpty && permissionMode.isEmpty;
+
+  Map<String, dynamic> toGraphQLInput() => {
+        if (model.trim().isNotEmpty) 'model': model.trim(),
+        if (effort.isNotEmpty) 'effort': effort,
+        if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
+      };
 }
 
 class TaskDetailData {

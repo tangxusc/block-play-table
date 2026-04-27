@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,25 +21,218 @@ const (
 	TaskArchived     TaskStatus = "ARCHIVED"
 )
 
+type AgentWorkMode string
+
+const (
+	AgentWorkModePlan      AgentWorkMode = "plan"
+	AgentWorkModeImplement AgentWorkMode = "implement"
+	AgentWorkModeReview    AgentWorkMode = "review"
+)
+
+func (m AgentWorkMode) Valid() bool {
+	return m == "" || m == AgentWorkModePlan || m == AgentWorkModeImplement || m == AgentWorkModeReview
+}
+
+type CodexReasoningEffort string
+
+const (
+	CodexReasoningMinimal CodexReasoningEffort = "minimal"
+	CodexReasoningLow     CodexReasoningEffort = "low"
+	CodexReasoningMedium  CodexReasoningEffort = "medium"
+	CodexReasoningHigh    CodexReasoningEffort = "high"
+	CodexReasoningXHigh   CodexReasoningEffort = "xhigh"
+)
+
+func (e CodexReasoningEffort) Valid() bool {
+	return e == "" || e == CodexReasoningMinimal || e == CodexReasoningLow || e == CodexReasoningMedium || e == CodexReasoningHigh || e == CodexReasoningXHigh
+}
+
+type CodexSandboxMode string
+
+const (
+	CodexSandboxReadOnly         CodexSandboxMode = "read-only"
+	CodexSandboxWorkspaceWrite   CodexSandboxMode = "workspace-write"
+	CodexSandboxDangerFullAccess CodexSandboxMode = "danger-full-access"
+)
+
+func (m CodexSandboxMode) Valid() bool {
+	return m == "" || m == CodexSandboxReadOnly || m == CodexSandboxWorkspaceWrite || m == CodexSandboxDangerFullAccess
+}
+
+type CodexApprovalPolicy string
+
+const (
+	CodexApprovalUntrusted CodexApprovalPolicy = "untrusted"
+	CodexApprovalOnFailure CodexApprovalPolicy = "on-failure"
+	CodexApprovalOnRequest CodexApprovalPolicy = "on-request"
+	CodexApprovalNever     CodexApprovalPolicy = "never"
+)
+
+func (p CodexApprovalPolicy) Valid() bool {
+	return p == "" || p == CodexApprovalUntrusted || p == CodexApprovalOnFailure || p == CodexApprovalOnRequest || p == CodexApprovalNever
+}
+
+type ClaudeEffort string
+
+const (
+	ClaudeEffortLow    ClaudeEffort = "low"
+	ClaudeEffortMedium ClaudeEffort = "medium"
+	ClaudeEffortHigh   ClaudeEffort = "high"
+	ClaudeEffortXHigh  ClaudeEffort = "xhigh"
+	ClaudeEffortMax    ClaudeEffort = "max"
+)
+
+func (e ClaudeEffort) Valid() bool {
+	return e == "" || e == ClaudeEffortLow || e == ClaudeEffortMedium || e == ClaudeEffortHigh || e == ClaudeEffortXHigh || e == ClaudeEffortMax
+}
+
+type ClaudePermissionMode string
+
+const (
+	ClaudePermissionAcceptEdits       ClaudePermissionMode = "acceptEdits"
+	ClaudePermissionAuto              ClaudePermissionMode = "auto"
+	ClaudePermissionBypassPermissions ClaudePermissionMode = "bypassPermissions"
+	ClaudePermissionDefault           ClaudePermissionMode = "default"
+	ClaudePermissionDontAsk           ClaudePermissionMode = "dontAsk"
+	ClaudePermissionPlan              ClaudePermissionMode = "plan"
+)
+
+func (m ClaudePermissionMode) Valid() bool {
+	return m == "" || m == ClaudePermissionAcceptEdits || m == ClaudePermissionAuto || m == ClaudePermissionBypassPermissions || m == ClaudePermissionDefault || m == ClaudePermissionDontAsk || m == ClaudePermissionPlan
+}
+
+type AgentExecutionConfig struct {
+	WorkMode AgentWorkMode         `json:"workMode,omitempty"`
+	Codex    CodexExecutionConfig  `json:"codex,omitempty"`
+	Claude   ClaudeExecutionConfig `json:"claude,omitempty"`
+}
+
+type CodexExecutionConfig struct {
+	Model                     string               `json:"model,omitempty"`
+	ReasoningEffort           CodexReasoningEffort `json:"reasoningEffort,omitempty"`
+	SandboxMode               CodexSandboxMode     `json:"sandboxMode,omitempty"`
+	ApprovalPolicy            CodexApprovalPolicy  `json:"approvalPolicy,omitempty"`
+	FullAuto                  bool                 `json:"fullAuto,omitempty"`
+	BypassApprovalsAndSandbox bool                 `json:"bypassApprovalsAndSandbox,omitempty"`
+}
+
+type ClaudeExecutionConfig struct {
+	Model          string               `json:"model,omitempty"`
+	Effort         ClaudeEffort         `json:"effort,omitempty"`
+	PermissionMode ClaudePermissionMode `json:"permissionMode,omitempty"`
+}
+
+func (c AgentExecutionConfig) Empty() bool {
+	return c.WorkMode == "" && c.Codex.Empty() && c.Claude.Empty()
+}
+
+func (c AgentExecutionConfig) NormalizedForAgent(agent AgentType) (AgentExecutionConfig, error) {
+	normalized := c
+	normalized.WorkMode = AgentWorkMode(strings.TrimSpace(string(normalized.WorkMode)))
+	normalized.Codex = normalized.Codex.normalized()
+	normalized.Claude = normalized.Claude.normalized()
+	if err := normalized.ValidateForAgent(agent); err != nil {
+		return AgentExecutionConfig{}, err
+	}
+	if agent != AgentCodex {
+		normalized.Codex = CodexExecutionConfig{}
+	}
+	if agent != AgentClaude {
+		normalized.Claude = ClaudeExecutionConfig{}
+	}
+	return normalized, nil
+}
+
+func (c AgentExecutionConfig) ValidateForAgent(agent AgentType) error {
+	if !c.WorkMode.Valid() {
+		return fmt.Errorf("unsupported agent work mode %q", c.WorkMode)
+	}
+	if !agent.Valid() {
+		return fmt.Errorf("unsupported agent type %q", agent)
+	}
+	if !c.Codex.Empty() && agent != AgentCodex {
+		return fmt.Errorf("%w: codex config cannot be used with agent %s", ErrConflict, agent)
+	}
+	if !c.Claude.Empty() && agent != AgentClaude {
+		return fmt.Errorf("%w: claude config cannot be used with agent %s", ErrConflict, agent)
+	}
+	if agent == AgentCodex {
+		return c.Codex.validate()
+	}
+	return c.Claude.validate()
+}
+
+func (c CodexExecutionConfig) Empty() bool {
+	return strings.TrimSpace(c.Model) == "" &&
+		c.ReasoningEffort == "" &&
+		c.SandboxMode == "" &&
+		c.ApprovalPolicy == "" &&
+		!c.FullAuto &&
+		!c.BypassApprovalsAndSandbox
+}
+
+func (c CodexExecutionConfig) normalized() CodexExecutionConfig {
+	c.Model = strings.TrimSpace(c.Model)
+	c.ReasoningEffort = CodexReasoningEffort(strings.TrimSpace(string(c.ReasoningEffort)))
+	c.SandboxMode = CodexSandboxMode(strings.TrimSpace(string(c.SandboxMode)))
+	c.ApprovalPolicy = CodexApprovalPolicy(strings.TrimSpace(string(c.ApprovalPolicy)))
+	return c
+}
+
+func (c CodexExecutionConfig) validate() error {
+	if !c.ReasoningEffort.Valid() {
+		return fmt.Errorf("unsupported codex reasoning effort %q", c.ReasoningEffort)
+	}
+	if !c.SandboxMode.Valid() {
+		return fmt.Errorf("unsupported codex sandbox mode %q", c.SandboxMode)
+	}
+	if !c.ApprovalPolicy.Valid() {
+		return fmt.Errorf("unsupported codex approval policy %q", c.ApprovalPolicy)
+	}
+	return nil
+}
+
+func (c ClaudeExecutionConfig) Empty() bool {
+	return strings.TrimSpace(c.Model) == "" && c.Effort == "" && c.PermissionMode == ""
+}
+
+func (c ClaudeExecutionConfig) normalized() ClaudeExecutionConfig {
+	c.Model = strings.TrimSpace(c.Model)
+	c.Effort = ClaudeEffort(strings.TrimSpace(string(c.Effort)))
+	c.PermissionMode = ClaudePermissionMode(strings.TrimSpace(string(c.PermissionMode)))
+	return c
+}
+
+func (c ClaudeExecutionConfig) validate() error {
+	if !c.Effort.Valid() {
+		return fmt.Errorf("unsupported claude effort %q", c.Effort)
+	}
+	if !c.PermissionMode.Valid() {
+		return fmt.Errorf("unsupported claude permission mode %q", c.PermissionMode)
+	}
+	return nil
+}
+
 type Task struct {
-	ID             string     `json:"id"`
-	Title          string     `json:"title"`
-	Description    string     `json:"description"`
-	Status         TaskStatus `json:"status"`
-	ProjectID      string     `json:"projectId"`
-	WorkerID       string     `json:"workerId,omitempty"`
-	AgentType      AgentType  `json:"agentType"`
-	BaseBranch     string     `json:"baseBranch"`
-	WorktreePath   string     `json:"worktreePath,omitempty"`
-	AgentSessionID string     `json:"agentSessionId,omitempty"`
-	PreCommands    []string   `json:"preCommands"`
-	PostCommands   []string   `json:"postCommands"`
-	Result         string     `json:"result,omitempty"`
-	StartDate      time.Time  `json:"startDate"`
-	EndDate        time.Time  `json:"endDate"`
-	Version        int        `json:"version"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID             string               `json:"id"`
+	Title          string               `json:"title"`
+	Description    string               `json:"description"`
+	Status         TaskStatus           `json:"status"`
+	ProjectID      string               `json:"projectId"`
+	WorkerID       string               `json:"workerId,omitempty"`
+	AgentType      AgentType            `json:"agentType"`
+	AgentConfig    AgentExecutionConfig `json:"agentConfig"`
+	BaseBranch     string               `json:"baseBranch"`
+	WorktreePath   string               `json:"worktreePath,omitempty"`
+	AgentSessionID string               `json:"agentSessionId,omitempty"`
+	PreCommands    []string             `json:"preCommands"`
+	PostCommands   []string             `json:"postCommands"`
+	Result         string               `json:"result,omitempty"`
+	StartDate      time.Time            `json:"startDate"`
+	EndDate        time.Time            `json:"endDate"`
+	Version        int                  `json:"version"`
+	CreatedAt      time.Time            `json:"createdAt"`
+	UpdatedAt      time.Time            `json:"updatedAt"`
 
 	pendingEvents []DomainEvent
 }
@@ -103,6 +297,10 @@ func (t *Task) AssignWorker(workerID string, now time.Time) error {
 }
 
 func (t *Task) AssignWorkerWithAgent(workerID string, agent AgentType, now time.Time) error {
+	return t.AssignWorkerWithAgentConfig(workerID, agent, nil, now)
+}
+
+func (t *Task) AssignWorkerWithAgentConfig(workerID string, agent AgentType, config *AgentExecutionConfig, now time.Time) error {
 	if t.Status != TaskCreated && t.Status != TaskAssigned {
 		return fmt.Errorf("%w: assign worker from %s", ErrInvalidTransition, t.Status)
 	}
@@ -117,10 +315,22 @@ func (t *Task) AssignWorkerWithAgent(workerID string, agent AgentType, now time.
 	} else if agent != "" && agent != t.AgentType {
 		return fmt.Errorf("%w: task agent %s does not match assignment agent %s", ErrConflict, t.AgentType, agent)
 	}
+	if config != nil {
+		normalized, err := config.NormalizedForAgent(t.AgentType)
+		if err != nil {
+			return err
+		}
+		t.AgentConfig = normalized
+	} else if err := t.AgentConfig.ValidateForAgent(t.AgentType); err != nil {
+		return err
+	}
 	t.WorkerID = workerID
 	payload := map[string]any{"workerId": workerID}
 	if t.AgentType != "" {
 		payload["agentType"] = t.AgentType
+	}
+	if config != nil && !t.AgentConfig.Empty() {
+		payload["agentConfig"] = t.AgentConfig
 	}
 	t.transition(TaskAssigned, now, "TaskAssigned", payload)
 	return nil
@@ -153,6 +363,11 @@ func (t *Task) Update(input NewTaskInput) error {
 	if err := validateTaskDisplayDates(startDate, endDate); err != nil {
 		return err
 	}
+	if !t.AgentConfig.Empty() {
+		if err := t.AgentConfig.ValidateForAgent(input.AgentType); err != nil {
+			return err
+		}
+	}
 	t.Title = input.Title
 	t.Description = input.Description
 	t.ProjectID = input.ProjectID
@@ -180,6 +395,7 @@ func (t *Task) Retry(now time.Time) error {
 	case TaskCompleted, TaskFailed, TaskInterrupted:
 		t.Status = TaskCreated
 		t.WorkerID = ""
+		t.AgentConfig = AgentExecutionConfig{}
 		t.WorktreePath = ""
 		t.AgentSessionID = ""
 		t.Result = ""

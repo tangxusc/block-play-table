@@ -38,8 +38,9 @@ Manager 采用 DDD 设计，`domain` 是系统核心，领域事件是一等公�
 7. Worker 将命令输出、AI 对话、任务状态和最终结果实时上报给 Manager。
 8. Manager 将领域事件、任务日志、AI 对话和任务状态持久化。
 9. Worker 支持按 Agent 类型配置 Agent 运行时环境变量，任务启动时只下发被分配 Worker 上对应 Agent 的启用变量。
-10. 用户界面通过 GraphQL Query / Mutation / Subscription 与 Manager 交互。
-11. 系统支持本地轻量部署和团队服务端部署。
+10. 任务分配 Worker 时可携带任务级 Agent CLI 运行参数，用于固定模型、思考深度、工作模式和权限模式。
+11. 用户界面通过 GraphQL Query / Mutation / Subscription 与 Manager 交互。
+12. 系统支持本地轻量部署和团队服务端部署。
 
 ### 2.2 业务角色
 
@@ -179,6 +180,31 @@ Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent �
 
 调度时必须同时满足 Worker 在线、`currentTaskId` 为空、支持目标 Agent、Project 绑定范围匹配。
 
+### 3.3.1 任务级 Agent CLI 运行配置
+
+`agentConfig` 属于任务分配结果，不属于 Worker 全局配置，也不属于 Project。字段按 Agent 类型建模，避免把 CLI 参数作为自由 JSON 下发：
+
+| 字段 | 说明 |
+| --- | --- |
+| `workMode` | 可选，`plan` / `implement` / `review`；只影响 Worker 注入的 prompt 前缀，不等同 CLI 权限 |
+| `codex.model` | 可选，自由文本模型名 |
+| `codex.reasoningEffort` | 可选，`minimal` / `low` / `medium` / `high` / `xhigh` |
+| `codex.sandboxMode` | 可选，`read-only` / `workspace-write` / `danger-full-access` |
+| `codex.approvalPolicy` | 可选，`untrusted` / `on-failure` / `on-request` / `never` |
+| `codex.fullAuto` | 可选，映射 Codex `--full-auto` |
+| `codex.bypassApprovalsAndSandbox` | 可选，映射 Codex 危险绕过参数 |
+| `claude.model` | 可选，自由文本模型名 |
+| `claude.effort` | 可选，`low` / `medium` / `high` / `xhigh` / `max` |
+| `claude.permissionMode` | 可选，映射 Claude `--permission-mode` |
+
+兼容策略：
+
+1. 所有新增 GraphQL 输入字段均可选，旧客户端不传配置时保持旧行为。
+2. 未分配任务不保存 `agentConfig`；创建任务时同时选择 Worker 视为一次分配，可以保存配置。
+3. `updateTask` 不直接编辑 `agentConfig`，重新分配或更新已分配未启动任务时通过 `assignWorker` 写入。
+4. Codex 任务不能携带 Claude 配置，Claude 任务不能携带 Codex 配置。
+5. 后续新增 Agent CLI 时按 `AgentType + typed config + adapter 参数构造器` 扩展。
+
 ### 3.4 任务管理
 
 任务是系统的核心业务对象。
@@ -193,14 +219,15 @@ Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent �
 6. Git Worktree 路径。
 7. Agent 会话 ID。
 8. 选择的 Agent 类型，例如 `codex`、`claude`。
-9. 绑定的 Worker。
-10. 前置命令。
-11. 后置命令。
-12. 任务状态。
-13. 执行日志。
-14. AI 对话记录。
-15. 任务结果。
-16. 创建时间和更新时间。
+9. Agent CLI 运行配置 `agentConfig`，仅在分配 Worker 或创建任务同时选择 Worker 时写入。
+10. 绑定的 Worker。
+11. 前置命令。
+12. 后置命令。
+13. 任务状态。
+14. 执行日志。
+15. AI 对话记录。
+16. 任务结果。
+17. 创建时间和更新时间。
 
 任务不保存 Git 仓库信息。Git URL、默认分支和 worktree 命名前缀都从 Project 获取，任务只引用 `projectId` 并保存本次执行生成的 `worktreePath`。
 
@@ -367,12 +394,16 @@ sequenceDiagram
 6. Manager 返回任务 ID。
 7. UI 跳转到任务详情页或看板页。
 
+如果创建任务时同时选择 Worker，该操作等同一次分配，可以携带 `agentConfig`。未选择 Worker 的任务不能写入 `agentConfig`，保持未分配任务不绑定具体 Agent CLI 参数。
+
 ### 4.3 分配 Worker 流程
 
 Worker 分配支持两种模式：
 
 1. 手动分配：用户选择具体 Worker。
 2. 自动分配：Manager 根据调度策略选择 Worker。
+
+手动分配可以携带 `agentConfig`，包括重新打开已分配但未启动任务的分配弹窗更新当前 Worker 的配置。自动分配使用空 `agentConfig`，沿用 Worker 本机 CLI 默认模型和默认权限。
 
 自动分配策略：
 
@@ -427,11 +458,13 @@ Worker 执行步骤：
 4. 创建 Git Worktree。
 5. 注入当前 Worker 配置中的 Agent 运行时环境变量。
 6. 执行任务前置命令。
-7. 启动 Codex / Claude。
-8. 读取 stdout、stderr、AI 对话、工具调用和状态变化。
-9. 通过 WebSocket 上报执行事件。
-10. Agent 完成后执行后置命令。
-11. 上报 `TASK_COMPLETED` 或 `TASK_FAILED`。
+7. 根据任务 `agentConfig.workMode` 生成稳定 prompt 前缀。
+8. 根据任务 `agentConfig` 构造 Codex / Claude CLI 参数。
+9. 启动 Codex / Claude。
+10. 读取 stdout、stderr、AI 对话、工具调用和状态变化。
+11. 通过 WebSocket 上报执行事件。
+12. Agent 完成后执行后置命令。
+13. 上报 `TASK_COMPLETED` 或 `TASK_FAILED`。
 
 ### 4.6 中断任务流程
 
@@ -507,6 +540,7 @@ Task
 - projectId
 - workerId
 - agentType
+- agentConfig
 - baseBranch
 - worktreePath
 - agentSessionId
@@ -912,6 +946,15 @@ Agent 类型：
 1. `codex`
 2. `claude`
 
+CLI 参数映射：
+
+| Agent | 默认命令 | 非空配置映射 |
+| --- | --- | --- |
+| Codex | `codex exec --skip-git-repo-check --json <prompt>` | `model -> --model`；`reasoningEffort -> -c model_reasoning_effort=...`；`sandboxMode -> --sandbox`；`approvalPolicy -> --ask-for-approval`；`fullAuto -> --full-auto`；`bypassApprovalsAndSandbox -> --dangerously-bypass-approvals-and-sandbox` |
+| Claude | `claude -p --output-format=stream-json --verbose ... <prompt>` | `model -> --model`；`effort -> --effort`；`permissionMode -> --permission-mode` |
+
+空配置不追加这些参数，保持本机 CLI 默认模型、推理深度和权限行为。继续任务时使用同一 `agentConfig`，避免会话前后模型或权限漂移。
+
 统一 Agent 事件：
 
 ```text
@@ -947,6 +990,7 @@ type Task {
   projectId: ID!
   workerId: ID
   agentType: AgentType
+  agentConfig: AgentExecutionConfig!
   baseBranch: String!
   worktreePath: String
   agentSessionId: String
@@ -958,6 +1002,27 @@ type Task {
   version: Int!
   createdAt: Time!
   updatedAt: Time!
+}
+
+type AgentExecutionConfig {
+  workMode: AgentWorkMode
+  codex: CodexExecutionConfig
+  claude: ClaudeExecutionConfig
+}
+
+type CodexExecutionConfig {
+  model: String
+  reasoningEffort: CodexReasoningEffort
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  fullAuto: Boolean!
+  bypassApprovalsAndSandbox: Boolean!
+}
+
+type ClaudeExecutionConfig {
+  model: String
+  effort: ClaudeEffort
+  permissionMode: ClaudePermissionMode
 }
 
 type Project {
@@ -1022,11 +1087,40 @@ input CreateTaskInput {
   projectId: ID!
   workerId: ID
   agentType: AgentType
+  agentConfig: AgentExecutionConfigInput
   baseBranch: String
   preCommands: [String!]
   postCommands: [String!]
   startDate: Time
   endDate: Time
+}
+
+input AssignWorkerInput {
+  taskId: ID!
+  workerId: ID!
+  agentType: AgentType
+  agentConfig: AgentExecutionConfigInput
+}
+
+input AgentExecutionConfigInput {
+  workMode: AgentWorkMode
+  codex: CodexExecutionConfigInput
+  claude: ClaudeExecutionConfigInput
+}
+
+input CodexExecutionConfigInput {
+  model: String
+  reasoningEffort: CodexReasoningEffort
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  fullAuto: Boolean
+  bypassApprovalsAndSandbox: Boolean
+}
+
+input ClaudeExecutionConfigInput {
+  model: String
+  effort: ClaudeEffort
+  permissionMode: ClaudePermissionMode
 }
 
 input UpdateTaskInput {
@@ -1174,8 +1268,8 @@ Worker -> Manager
 
 | 消息类型 | 说明 |
 | --- | --- |
-| `TASK_START` | 启动任务，payload 包含任务信息、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
-| `TASK_CONTINUE` | 继续已完成任务的 Agent 会话，payload 包含会话 ID、用户追加消息、worktree 路径和同一来源的运行时环境变量 |
+| `TASK_START` | 启动任务，payload 包含任务信息、任务级 Agent CLI 配置、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
+| `TASK_CONTINUE` | 继续已完成任务的 Agent 会话，payload 包含同一任务级 Agent CLI 配置、会话 ID、用户追加消息、worktree 路径和同一来源的运行时环境变量 |
 | `TASK_INTERRUPT` | 中断任务 |
 | `TASK_CANCEL` | 取消任务 |
 | `WORKER_CONFIG_UPDATE` | 更新 Worker 配置 |
@@ -1190,6 +1284,16 @@ Worker -> Manager
     "title": "实现任务功能",
     "description": "根据需求完成代码修改",
     "agentType": "codex",
+    "agentConfig": {
+      "workMode": "implement",
+      "codex": {
+        "model": "gpt-5.4",
+        "reasoningEffort": "high",
+        "sandboxMode": "workspace-write",
+        "approvalPolicy": "never",
+        "fullAuto": true
+      }
+    },
     "baseBranch": "main"
   },
   "project": {
@@ -1208,7 +1312,7 @@ Worker -> Manager
 }
 ```
 
-说明：`agentRuntimeEnv` 来自被分配 Worker 的配置，并且只包含当前任务 Agent 类型下已启用的变量。`value` 在 UI 和 API 展示时必须脱敏；下发给 Worker 执行任务时必须是可用明文值，因此生产环境必须使用 `wss` 并限制 Worker Token 权限。
+说明：`agentConfig` 来自任务分配动作，`TASK_START` 和 `TASK_CONTINUE` 使用同一份配置。`agentRuntimeEnv` 来自被分配 Worker 的配置，并且只包含当前任务 Agent 类型下已启用的变量。`value` 在 UI 和 API 展示时必须脱敏；下发给 Worker 执行任务时必须是可用明文值，因此生产环境必须使用 `wss` 并限制 Worker Token 权限。
 
 ### 9.4 Worker 上报 Manager 的消息
 
@@ -1257,6 +1361,7 @@ PostgreSQL Implementation
 | `project_id` | string | Project ID |
 | `worker_id` | string | Worker ID |
 | `agent_type` | string | Agent 类型 |
+| `agent_config` | text/json | 任务级 Agent CLI 运行配置，默认为 `{}` |
 | `base_branch` | string | 基础分支 |
 | `worktree_path` | string | Worktree 路径 |
 | `agent_session_id` | string | Agent 会话 ID，用于继续已完成任务的会话 |

@@ -38,6 +38,12 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	AgentExecutionConfig struct {
+		Claude   func(childComplexity int) int
+		Codex    func(childComplexity int) int
+		WorkMode func(childComplexity int) int
+	}
+
 	AgentRuntimeEnvVar struct {
 		Description func(childComplexity int) int
 		Enabled     func(childComplexity int) int
@@ -67,6 +73,21 @@ type ComplexityRoot struct {
 		Status func(childComplexity int) int
 		Tasks  func(childComplexity int) int
 		Title  func(childComplexity int) int
+	}
+
+	ClaudeExecutionConfig struct {
+		Effort         func(childComplexity int) int
+		Model          func(childComplexity int) int
+		PermissionMode func(childComplexity int) int
+	}
+
+	CodexExecutionConfig struct {
+		ApprovalPolicy            func(childComplexity int) int
+		BypassApprovalsAndSandbox func(childComplexity int) int
+		FullAuto                  func(childComplexity int) int
+		Model                     func(childComplexity int) int
+		ReasoningEffort           func(childComplexity int) int
+		SandboxMode               func(childComplexity int) int
 	}
 
 	ConversationMessage struct {
@@ -172,6 +193,7 @@ type ComplexityRoot struct {
 	}
 
 	Task struct {
+		AgentConfig    func(childComplexity int) int
 		AgentSessionID func(childComplexity int) int
 		AgentType      func(childComplexity int) int
 		BaseBranch     func(childComplexity int) int
@@ -287,6 +309,25 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	ec := newExecutionContext(nil, e, nil)
 	_ = ec
 	switch typeName + "." + field {
+
+	case "AgentExecutionConfig.claude":
+		if e.ComplexityRoot.AgentExecutionConfig.Claude == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AgentExecutionConfig.Claude(childComplexity), true
+	case "AgentExecutionConfig.codex":
+		if e.ComplexityRoot.AgentExecutionConfig.Codex == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AgentExecutionConfig.Codex(childComplexity), true
+	case "AgentExecutionConfig.workMode":
+		if e.ComplexityRoot.AgentExecutionConfig.WorkMode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AgentExecutionConfig.WorkMode(childComplexity), true
 
 	case "AgentRuntimeEnvVar.description":
 		if e.ComplexityRoot.AgentRuntimeEnvVar.Description == nil {
@@ -405,6 +446,62 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.BoardColumn.Title(childComplexity), true
+
+	case "ClaudeExecutionConfig.effort":
+		if e.ComplexityRoot.ClaudeExecutionConfig.Effort == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ClaudeExecutionConfig.Effort(childComplexity), true
+	case "ClaudeExecutionConfig.model":
+		if e.ComplexityRoot.ClaudeExecutionConfig.Model == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ClaudeExecutionConfig.Model(childComplexity), true
+	case "ClaudeExecutionConfig.permissionMode":
+		if e.ComplexityRoot.ClaudeExecutionConfig.PermissionMode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ClaudeExecutionConfig.PermissionMode(childComplexity), true
+
+	case "CodexExecutionConfig.approvalPolicy":
+		if e.ComplexityRoot.CodexExecutionConfig.ApprovalPolicy == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.ApprovalPolicy(childComplexity), true
+	case "CodexExecutionConfig.bypassApprovalsAndSandbox":
+		if e.ComplexityRoot.CodexExecutionConfig.BypassApprovalsAndSandbox == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.BypassApprovalsAndSandbox(childComplexity), true
+	case "CodexExecutionConfig.fullAuto":
+		if e.ComplexityRoot.CodexExecutionConfig.FullAuto == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.FullAuto(childComplexity), true
+	case "CodexExecutionConfig.model":
+		if e.ComplexityRoot.CodexExecutionConfig.Model == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.Model(childComplexity), true
+	case "CodexExecutionConfig.reasoningEffort":
+		if e.ComplexityRoot.CodexExecutionConfig.ReasoningEffort == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.ReasoningEffort(childComplexity), true
+	case "CodexExecutionConfig.sandboxMode":
+		if e.ComplexityRoot.CodexExecutionConfig.SandboxMode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CodexExecutionConfig.SandboxMode(childComplexity), true
 
 	case "ConversationMessage.content":
 		if e.ComplexityRoot.ConversationMessage.Content == nil {
@@ -1051,6 +1148,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Subscription.WorkerUpdated(childComplexity, args["workerId"].(*string)), true
 
+	case "Task.agentConfig":
+		if e.ComplexityRoot.Task.AgentConfig == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Task.AgentConfig(childComplexity), true
 	case "Task.agentSessionId":
 		if e.ComplexityRoot.Task.AgentSessionID == nil {
 			break
@@ -1316,8 +1419,11 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := newExecutionContext(opCtx, e, make(chan graphql.DeferredResult))
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputAgentExecutionConfigInput,
 		ec.unmarshalInputAgentRuntimeEnvVarInput,
 		ec.unmarshalInputAssignWorkerInput,
+		ec.unmarshalInputClaudeExecutionConfigInput,
+		ec.unmarshalInputCodexExecutionConfigInput,
 		ec.unmarshalInputContinueTaskInput,
 		ec.unmarshalInputCreateProjectInput,
 		ec.unmarshalInputCreateTaskInput,
@@ -1976,6 +2082,115 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 
 // region    **************************** field.gotpl *****************************
 
+func (ec *executionContext) _AgentExecutionConfig_workMode(ctx context.Context, field graphql.CollectedField, obj *model.AgentExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AgentExecutionConfig_workMode,
+		func(ctx context.Context) (any, error) {
+			return obj.WorkMode, nil
+		},
+		nil,
+		ec.marshalOAgentWorkMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentWorkMode,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_AgentExecutionConfig_workMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AgentExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type AgentWorkMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AgentExecutionConfig_codex(ctx context.Context, field graphql.CollectedField, obj *model.AgentExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AgentExecutionConfig_codex,
+		func(ctx context.Context) (any, error) {
+			return obj.Codex, nil
+		},
+		nil,
+		ec.marshalOCodexExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexExecutionConfig,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_AgentExecutionConfig_codex(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AgentExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "model":
+				return ec.fieldContext_CodexExecutionConfig_model(ctx, field)
+			case "reasoningEffort":
+				return ec.fieldContext_CodexExecutionConfig_reasoningEffort(ctx, field)
+			case "sandboxMode":
+				return ec.fieldContext_CodexExecutionConfig_sandboxMode(ctx, field)
+			case "approvalPolicy":
+				return ec.fieldContext_CodexExecutionConfig_approvalPolicy(ctx, field)
+			case "fullAuto":
+				return ec.fieldContext_CodexExecutionConfig_fullAuto(ctx, field)
+			case "bypassApprovalsAndSandbox":
+				return ec.fieldContext_CodexExecutionConfig_bypassApprovalsAndSandbox(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CodexExecutionConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AgentExecutionConfig_claude(ctx context.Context, field graphql.CollectedField, obj *model.AgentExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AgentExecutionConfig_claude,
+		func(ctx context.Context) (any, error) {
+			return obj.Claude, nil
+		},
+		nil,
+		ec.marshalOClaudeExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeExecutionConfig,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_AgentExecutionConfig_claude(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AgentExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "model":
+				return ec.fieldContext_ClaudeExecutionConfig_model(ctx, field)
+			case "effort":
+				return ec.fieldContext_ClaudeExecutionConfig_effort(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_ClaudeExecutionConfig_permissionMode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ClaudeExecutionConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _AgentRuntimeEnvVar_key(ctx context.Context, field graphql.CollectedField, obj *model.AgentRuntimeEnvVar) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2324,6 +2539,8 @@ func (ec *executionContext) fieldContext_Board_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -2420,6 +2637,8 @@ func (ec *executionContext) fieldContext_BoardCalendarItem_task(_ context.Contex
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -2632,6 +2851,8 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -2656,6 +2877,267 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_updatedAt(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Task", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ClaudeExecutionConfig_model(ctx context.Context, field graphql.CollectedField, obj *model.ClaudeExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ClaudeExecutionConfig_model,
+		func(ctx context.Context) (any, error) {
+			return obj.Model, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ClaudeExecutionConfig_model(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ClaudeExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ClaudeExecutionConfig_effort(ctx context.Context, field graphql.CollectedField, obj *model.ClaudeExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ClaudeExecutionConfig_effort,
+		func(ctx context.Context) (any, error) {
+			return obj.Effort, nil
+		},
+		nil,
+		ec.marshalOClaudeEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeEffort,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ClaudeExecutionConfig_effort(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ClaudeExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ClaudeEffort does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ClaudeExecutionConfig_permissionMode(ctx context.Context, field graphql.CollectedField, obj *model.ClaudeExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ClaudeExecutionConfig_permissionMode,
+		func(ctx context.Context) (any, error) {
+			return obj.PermissionMode, nil
+		},
+		nil,
+		ec.marshalOClaudePermissionMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudePermissionMode,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ClaudeExecutionConfig_permissionMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ClaudeExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ClaudePermissionMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_model(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_model,
+		func(ctx context.Context) (any, error) {
+			return obj.Model, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_model(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_reasoningEffort(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_reasoningEffort,
+		func(ctx context.Context) (any, error) {
+			return obj.ReasoningEffort, nil
+		},
+		nil,
+		ec.marshalOCodexReasoningEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexReasoningEffort,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_reasoningEffort(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type CodexReasoningEffort does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_sandboxMode(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_sandboxMode,
+		func(ctx context.Context) (any, error) {
+			return obj.SandboxMode, nil
+		},
+		nil,
+		ec.marshalOCodexSandboxMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexSandboxMode,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_sandboxMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type CodexSandboxMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_approvalPolicy(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_approvalPolicy,
+		func(ctx context.Context) (any, error) {
+			return obj.ApprovalPolicy, nil
+		},
+		nil,
+		ec.marshalOCodexApprovalPolicy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexApprovalPolicy,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_approvalPolicy(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type CodexApprovalPolicy does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_fullAuto(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_fullAuto,
+		func(ctx context.Context) (any, error) {
+			return obj.FullAuto, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_fullAuto(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CodexExecutionConfig_bypassApprovalsAndSandbox(ctx context.Context, field graphql.CollectedField, obj *model.CodexExecutionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CodexExecutionConfig_bypassApprovalsAndSandbox,
+		func(ctx context.Context) (any, error) {
+			return obj.BypassApprovalsAndSandbox, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CodexExecutionConfig_bypassApprovalsAndSandbox(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CodexExecutionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3199,6 +3681,8 @@ func (ec *executionContext) fieldContext_Mutation_createTask(ctx context.Context
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3278,6 +3762,8 @@ func (ec *executionContext) fieldContext_Mutation_updateTask(ctx context.Context
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3357,6 +3843,8 @@ func (ec *executionContext) fieldContext_Mutation_assignWorker(ctx context.Conte
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3436,6 +3924,8 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3515,6 +4005,8 @@ func (ec *executionContext) fieldContext_Mutation_continueTask(ctx context.Conte
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3594,6 +4086,8 @@ func (ec *executionContext) fieldContext_Mutation_interruptTask(ctx context.Cont
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3673,6 +4167,8 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -3752,6 +4248,8 @@ func (ec *executionContext) fieldContext_Mutation_retryTask(ctx context.Context,
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -4974,6 +5472,8 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -5100,6 +5600,8 @@ func (ec *executionContext) fieldContext_Query_taskList(ctx context.Context, fie
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -6565,6 +7067,43 @@ func (ec *executionContext) fieldContext_Task_agentType(_ context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Task_agentConfig(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_agentConfig,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentConfig, nil
+		},
+		nil,
+		ec.marshalNAgentExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentExecutionConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_agentConfig(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "workMode":
+				return ec.fieldContext_AgentExecutionConfig_workMode(ctx, field)
+			case "codex":
+				return ec.fieldContext_AgentExecutionConfig_codex(ctx, field)
+			case "claude":
+				return ec.fieldContext_AgentExecutionConfig_claude(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type AgentExecutionConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Task_baseBranch(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6922,6 +7461,8 @@ func (ec *executionContext) fieldContext_TaskConnection_nodes(_ context.Context,
 				return ec.fieldContext_Task_workerId(ctx, field)
 			case "agentType":
 				return ec.fieldContext_Task_agentType(ctx, field)
+			case "agentConfig":
+				return ec.fieldContext_Task_agentConfig(ctx, field)
 			case "baseBranch":
 				return ec.fieldContext_Task_baseBranch(ctx, field)
 			case "worktreePath":
@@ -9088,6 +9629,50 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputAgentExecutionConfigInput(ctx context.Context, obj any) (model.AgentExecutionConfigInput, error) {
+	var it model.AgentExecutionConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"workMode", "codex", "claude"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "workMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workMode"))
+			data, err := ec.unmarshalOAgentWorkMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentWorkMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WorkMode = data
+		case "codex":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("codex"))
+			data, err := ec.unmarshalOCodexExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexExecutionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Codex = data
+		case "claude":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("claude"))
+			data, err := ec.unmarshalOClaudeExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeExecutionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Claude = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputAgentRuntimeEnvVarInput(ctx context.Context, obj any) (model.AgentRuntimeEnvVarInput, error) {
 	var it model.AgentRuntimeEnvVarInput
 	if obj == nil {
@@ -9157,7 +9742,7 @@ func (ec *executionContext) unmarshalInputAssignWorkerInput(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"taskId", "workerId", "agentType"}
+	fieldsInOrder := [...]string{"taskId", "workerId", "agentType", "agentConfig"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9185,6 +9770,122 @@ func (ec *executionContext) unmarshalInputAssignWorkerInput(ctx context.Context,
 				return it, err
 			}
 			it.AgentType = data
+		case "agentConfig":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentConfig"))
+			data, err := ec.unmarshalOAgentExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentExecutionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentConfig = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputClaudeExecutionConfigInput(ctx context.Context, obj any) (model.ClaudeExecutionConfigInput, error) {
+	var it model.ClaudeExecutionConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"model", "effort", "permissionMode"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "model":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("model"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Model = data
+		case "effort":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("effort"))
+			data, err := ec.unmarshalOClaudeEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeEffort(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Effort = data
+		case "permissionMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("permissionMode"))
+			data, err := ec.unmarshalOClaudePermissionMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudePermissionMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PermissionMode = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCodexExecutionConfigInput(ctx context.Context, obj any) (model.CodexExecutionConfigInput, error) {
+	var it model.CodexExecutionConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"model", "reasoningEffort", "sandboxMode", "approvalPolicy", "fullAuto", "bypassApprovalsAndSandbox"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "model":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("model"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Model = data
+		case "reasoningEffort":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("reasoningEffort"))
+			data, err := ec.unmarshalOCodexReasoningEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexReasoningEffort(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ReasoningEffort = data
+		case "sandboxMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("sandboxMode"))
+			data, err := ec.unmarshalOCodexSandboxMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexSandboxMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.SandboxMode = data
+		case "approvalPolicy":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("approvalPolicy"))
+			data, err := ec.unmarshalOCodexApprovalPolicy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexApprovalPolicy(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ApprovalPolicy = data
+		case "fullAuto":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("fullAuto"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.FullAuto = data
+		case "bypassApprovalsAndSandbox":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bypassApprovalsAndSandbox"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BypassApprovalsAndSandbox = data
 		}
 	}
 	return it, nil
@@ -9289,7 +9990,7 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
+	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "agentConfig", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -9331,6 +10032,13 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.AgentType = data
+		case "agentConfig":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentConfig"))
+			data, err := ec.unmarshalOAgentExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentExecutionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentConfig = data
 		case "baseBranch":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("baseBranch"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -10156,6 +10864,46 @@ func (ec *executionContext) unmarshalInputWorkerFilter(ctx context.Context, obj 
 
 // region    **************************** object.gotpl ****************************
 
+var agentExecutionConfigImplementors = []string{"AgentExecutionConfig"}
+
+func (ec *executionContext) _AgentExecutionConfig(ctx context.Context, sel ast.SelectionSet, obj *model.AgentExecutionConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, agentExecutionConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AgentExecutionConfig")
+		case "workMode":
+			out.Values[i] = ec._AgentExecutionConfig_workMode(ctx, field, obj)
+		case "codex":
+			out.Values[i] = ec._AgentExecutionConfig_codex(ctx, field, obj)
+		case "claude":
+			out.Values[i] = ec._AgentExecutionConfig_claude(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var agentRuntimeEnvVarImplementors = []string{"AgentRuntimeEnvVar"}
 
 func (ec *executionContext) _AgentRuntimeEnvVar(ctx context.Context, sel ast.SelectionSet, obj *model.AgentRuntimeEnvVar) graphql.Marshaler {
@@ -10358,6 +11106,98 @@ func (ec *executionContext) _BoardColumn(ctx context.Context, sel ast.SelectionS
 			}
 		case "tasks":
 			out.Values[i] = ec._BoardColumn_tasks(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var claudeExecutionConfigImplementors = []string{"ClaudeExecutionConfig"}
+
+func (ec *executionContext) _ClaudeExecutionConfig(ctx context.Context, sel ast.SelectionSet, obj *model.ClaudeExecutionConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, claudeExecutionConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ClaudeExecutionConfig")
+		case "model":
+			out.Values[i] = ec._ClaudeExecutionConfig_model(ctx, field, obj)
+		case "effort":
+			out.Values[i] = ec._ClaudeExecutionConfig_effort(ctx, field, obj)
+		case "permissionMode":
+			out.Values[i] = ec._ClaudeExecutionConfig_permissionMode(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var codexExecutionConfigImplementors = []string{"CodexExecutionConfig"}
+
+func (ec *executionContext) _CodexExecutionConfig(ctx context.Context, sel ast.SelectionSet, obj *model.CodexExecutionConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, codexExecutionConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CodexExecutionConfig")
+		case "model":
+			out.Values[i] = ec._CodexExecutionConfig_model(ctx, field, obj)
+		case "reasoningEffort":
+			out.Values[i] = ec._CodexExecutionConfig_reasoningEffort(ctx, field, obj)
+		case "sandboxMode":
+			out.Values[i] = ec._CodexExecutionConfig_sandboxMode(ctx, field, obj)
+		case "approvalPolicy":
+			out.Values[i] = ec._CodexExecutionConfig_approvalPolicy(ctx, field, obj)
+		case "fullAuto":
+			out.Values[i] = ec._CodexExecutionConfig_fullAuto(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "bypassApprovalsAndSandbox":
+			out.Values[i] = ec._CodexExecutionConfig_bypassApprovalsAndSandbox(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -11356,6 +12196,11 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			out.Values[i] = ec._Task_workerId(ctx, field, obj)
 		case "agentType":
 			out.Values[i] = ec._Task_agentType(ctx, field, obj)
+		case "agentConfig":
+			out.Values[i] = ec._Task_agentConfig(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "baseBranch":
 			out.Values[i] = ec._Task_baseBranch(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -12006,6 +12851,16 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 // endregion **************************** object.gotpl ****************************
 
 // region    ***************************** type.gotpl *****************************
+
+func (ec *executionContext) marshalNAgentExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentExecutionConfig(ctx context.Context, sel ast.SelectionSet, v *model.AgentExecutionConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._AgentExecutionConfig(ctx, sel, v)
+}
 
 func (ec *executionContext) marshalNAgentRuntimeEnvVar2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentRuntimeEnvVarᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.AgentRuntimeEnvVar) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
@@ -12822,6 +13677,14 @@ func (ec *executionContext) marshalN__TypeKind2string(ctx context.Context, sel a
 	return res
 }
 
+func (ec *executionContext) unmarshalOAgentExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentExecutionConfigInput(ctx context.Context, v any) (*model.AgentExecutionConfigInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputAgentExecutionConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx context.Context, v any) (*model.AgentType, error) {
 	if v == nil {
 		return nil, nil
@@ -12832,6 +13695,22 @@ func (ec *executionContext) unmarshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblo
 }
 
 func (ec *executionContext) marshalOAgentType2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentType(ctx context.Context, sel ast.SelectionSet, v *model.AgentType) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOAgentWorkMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentWorkMode(ctx context.Context, v any) (*model.AgentWorkMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.AgentWorkMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOAgentWorkMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐAgentWorkMode(ctx context.Context, sel ast.SelectionSet, v *model.AgentWorkMode) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
@@ -12874,6 +13753,116 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	_ = ctx
 	res := graphql.MarshalBoolean(*v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOClaudeEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeEffort(ctx context.Context, v any) (*model.ClaudeEffort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.ClaudeEffort)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOClaudeEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeEffort(ctx context.Context, sel ast.SelectionSet, v *model.ClaudeEffort) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) marshalOClaudeExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeExecutionConfig(ctx context.Context, sel ast.SelectionSet, v *model.ClaudeExecutionConfig) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._ClaudeExecutionConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOClaudeExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudeExecutionConfigInput(ctx context.Context, v any) (*model.ClaudeExecutionConfigInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputClaudeExecutionConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOClaudePermissionMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudePermissionMode(ctx context.Context, v any) (*model.ClaudePermissionMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.ClaudePermissionMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOClaudePermissionMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐClaudePermissionMode(ctx context.Context, sel ast.SelectionSet, v *model.ClaudePermissionMode) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOCodexApprovalPolicy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexApprovalPolicy(ctx context.Context, v any) (*model.CodexApprovalPolicy, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.CodexApprovalPolicy)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOCodexApprovalPolicy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexApprovalPolicy(ctx context.Context, sel ast.SelectionSet, v *model.CodexApprovalPolicy) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) marshalOCodexExecutionConfig2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexExecutionConfig(ctx context.Context, sel ast.SelectionSet, v *model.CodexExecutionConfig) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._CodexExecutionConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOCodexExecutionConfigInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexExecutionConfigInput(ctx context.Context, v any) (*model.CodexExecutionConfigInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputCodexExecutionConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOCodexReasoningEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexReasoningEffort(ctx context.Context, v any) (*model.CodexReasoningEffort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.CodexReasoningEffort)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOCodexReasoningEffort2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexReasoningEffort(ctx context.Context, sel ast.SelectionSet, v *model.CodexReasoningEffort) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOCodexSandboxMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexSandboxMode(ctx context.Context, v any) (*model.CodexSandboxMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.CodexSandboxMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOCodexSandboxMode2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCodexSandboxMode(ctx context.Context, sel ast.SelectionSet, v *model.CodexSandboxMode) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) unmarshalODomainEventFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventFilter(ctx context.Context, v any) (*model.DomainEventFilter, error) {

@@ -35,6 +35,7 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 		ProjectID:    input.ProjectID,
 		WorkerID:     valueOrEmpty(input.WorkerID),
 		AgentType:    agentType,
+		AgentConfig:  fromAgentExecutionConfigInput(input.AgentConfig),
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
@@ -86,7 +87,11 @@ func (r *mutationResolver) AssignWorker(ctx context.Context, input *model.Assign
 	if input != nil && input.AgentType != nil {
 		agentTypes = append(agentTypes, domain.AgentType(*input.AgentType))
 	}
-	task, err := r.Service.AssignWorker(ctx, *taskID, *workerID, agentTypes...)
+	var config *domain.AgentExecutionConfig
+	if input != nil {
+		config = fromAgentExecutionConfigInput(input.AgentConfig)
+	}
+	task, err := r.Service.AssignWorkerWithConfig(ctx, *taskID, *workerID, config, agentTypes...)
 	return toModelTask(task), err
 }
 

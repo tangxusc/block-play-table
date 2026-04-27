@@ -101,6 +101,108 @@ func TestServerGraphQLCreatesAgentlessAndWorkerAssignedTasks(t *testing.T) {
 	}
 }
 
+func TestServerGraphQLWritesAgentConfigOnCreateAndAssign(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "Block Play Table", "gitUrl": "file:///tmp/repo", "defaultBranch": "main", "worktreeNamePrefix": "bpt"},
+	})
+	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
+	postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"id": "worker-create", "name": "create", "supportedAgents": []any{"codex"}, "workDir": "/tmp/create", "projectBindingMode": "ALL_PROJECTS"},
+	})
+	postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"id": "worker-assign", "name": "assign", "supportedAgents": []any{"claude"}, "workDir": "/tmp/assign", "projectBindingMode": "ALL_PROJECTS"},
+	})
+
+	created := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) {
+		createTask(input: $input) {
+			id status agentConfig {
+				workMode
+				codex { model reasoningEffort sandboxMode approvalPolicy fullAuto bypassApprovalsAndSandbox }
+				claude { model }
+			}
+		}
+	}`, map[string]any{
+		"input": map[string]any{
+			"title":     "Created with config",
+			"projectId": projectID,
+			"workerId":  "worker-create",
+			"agentType": "codex",
+			"agentConfig": map[string]any{
+				"workMode": "IMPLEMENT",
+				"codex": map[string]any{
+					"model":                     "gpt-5.4",
+					"reasoningEffort":           "HIGH",
+					"sandboxMode":               "WORKSPACE_WRITE",
+					"approvalPolicy":            "NEVER",
+					"fullAuto":                  true,
+					"bypassApprovalsAndSandbox": false,
+				},
+			},
+		},
+	})
+	createdTask := created["data"].(map[string]any)["createTask"].(map[string]any)
+	createdConfig := createdTask["agentConfig"].(map[string]any)
+	createdCodex := createdConfig["codex"].(map[string]any)
+	if createdConfig["workMode"] != "IMPLEMENT" ||
+		createdCodex["model"] != "gpt-5.4" ||
+		createdCodex["reasoningEffort"] != "HIGH" ||
+		createdCodex["sandboxMode"] != "WORKSPACE_WRITE" ||
+		createdCodex["approvalPolicy"] != "NEVER" ||
+		createdCodex["fullAuto"] != true {
+		t.Fatalf("created agentConfig = %#v", createdConfig)
+	}
+	if createdConfig["claude"] != nil {
+		t.Fatalf("created task should not expose claude config: %#v", createdConfig)
+	}
+
+	agentless := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"title": "Assigned with config", "projectId": projectID},
+	})
+	taskID := agentless["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
+	assigned := postGraphQL(t, server.URL, `mutation AssignWorker($input: AssignWorkerInput!) {
+		assignWorker(input: $input) {
+			id status agentType agentConfig {
+				workMode
+				codex { model }
+				claude { model effort permissionMode }
+			}
+		}
+	}`, map[string]any{
+		"input": map[string]any{
+			"taskId":    taskID,
+			"workerId":  "worker-assign",
+			"agentType": "claude",
+			"agentConfig": map[string]any{
+				"workMode": "PLAN",
+				"claude": map[string]any{
+					"model":          "claude-sonnet-4-5",
+					"effort":         "MAX",
+					"permissionMode": "BYPASS_PERMISSIONS",
+				},
+			},
+		},
+	})
+	assignedTask := assigned["data"].(map[string]any)["assignWorker"].(map[string]any)
+	assignedConfig := assignedTask["agentConfig"].(map[string]any)
+	assignedClaude := assignedConfig["claude"].(map[string]any)
+	if assignedTask["agentType"] != "claude" ||
+		assignedConfig["workMode"] != "PLAN" ||
+		assignedClaude["model"] != "claude-sonnet-4-5" ||
+		assignedClaude["effort"] != "MAX" ||
+		assignedClaude["permissionMode"] != "BYPASS_PERMISSIONS" {
+		t.Fatalf("assigned agentConfig = %#v", assignedTask)
+	}
+	if assignedConfig["codex"] != nil {
+		t.Fatalf("assigned task should not expose codex config: %#v", assignedConfig)
+	}
+}
+
 func TestHealthAndReady(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore())
 	handler := NewServer(service).Handler()

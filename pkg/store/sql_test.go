@@ -51,6 +51,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "004_worker_agent_runtime_env", SQL: migrations.WorkerAgentRuntimeEnvSQL},
 		{Version: "005_task_agent_session", SQL: migrations.TaskAgentSessionSQL},
 		{Version: "006_task_display_dates", SQL: migrations.TaskDisplayDatesSQL},
+		{Version: "007_task_agent_config", SQL: migrations.TaskAgentConfigSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -99,6 +100,13 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if !hasTaskEndDate {
 		t.Fatal("tasks.end_date should exist after versioned migrations")
+	}
+	hasTaskAgentConfig, err := sqliteTableHasColumn(ctx, sqlStore, "tasks", "agent_config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTaskAgentConfig {
+		t.Fatal("tasks.agent_config should exist after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -152,6 +160,14 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.AgentSessionID = "session-list"
+	task.AgentConfig = domain.AgentExecutionConfig{
+		WorkMode: domain.AgentWorkModeImplement,
+		Codex: domain.CodexExecutionConfig{
+			Model:          "gpt-5.4",
+			SandboxMode:    domain.CodexSandboxWorkspaceWrite,
+			ApprovalPolicy: domain.CodexApprovalNever,
+		},
+	}
 	if err := sqlStore.SaveProject(ctx, project); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +183,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if workers, err := sqlStore.Workers(ctx); err != nil || len(workers) != 1 || workers[0].StartupCommand != "boot" || workers[0].LastHeartbeatAt == nil || workers[0].EnabledRuntimeEnv(domain.AgentCodex)[0].Value != "secret" {
 		t.Fatalf("Workers = %+v, %v", workers, err)
 	}
-	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 || tasks[0].AgentSessionID != "session-list" || !tasks[0].StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !tasks[0].EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
+	if tasks, err := sqlStore.Tasks(ctx); err != nil || len(tasks) != 1 || len(tasks[0].PostCommands) != 1 || tasks[0].AgentSessionID != "session-list" || tasks[0].AgentConfig.Codex.Model != "gpt-5.4" || !tasks[0].StartDate.Equal(time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)) || !tasks[0].EndDate.Equal(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("Tasks = %+v, %v", tasks, err)
 	}
 	if err := sqlStore.AppendEvents(ctx, nil); err != nil {

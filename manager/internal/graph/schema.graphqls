@@ -5,6 +5,50 @@ enum AgentType {
   claude
 }
 
+enum AgentWorkMode {
+  PLAN
+  IMPLEMENT
+  REVIEW
+}
+
+enum CodexReasoningEffort {
+  MINIMAL
+  LOW
+  MEDIUM
+  HIGH
+  XHIGH
+}
+
+enum CodexSandboxMode {
+  READ_ONLY
+  WORKSPACE_WRITE
+  DANGER_FULL_ACCESS
+}
+
+enum CodexApprovalPolicy {
+  UNTRUSTED
+  ON_FAILURE
+  ON_REQUEST
+  NEVER
+}
+
+enum ClaudeEffort {
+  LOW
+  MEDIUM
+  HIGH
+  XHIGH
+  MAX
+}
+
+enum ClaudePermissionMode {
+  ACCEPT_EDITS
+  AUTO
+  BYPASS_PERMISSIONS
+  DEFAULT
+  DONT_ASK
+  PLAN
+}
+
 enum TaskStatus {
   CREATED
   ASSIGNED
@@ -45,6 +89,7 @@ type Task {
   projectId: ID!
   workerId: ID
   agentType: AgentType
+  agentConfig: AgentExecutionConfig!
   baseBranch: String!
   worktreePath: String
   agentSessionId: String
@@ -56,6 +101,27 @@ type Task {
   version: Int!
   createdAt: Time!
   updatedAt: Time!
+}
+
+type AgentExecutionConfig {
+  workMode: AgentWorkMode
+  codex: CodexExecutionConfig
+  claude: ClaudeExecutionConfig
+}
+
+type CodexExecutionConfig {
+  model: String
+  reasoningEffort: CodexReasoningEffort
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  fullAuto: Boolean!
+  bypassApprovalsAndSandbox: Boolean!
+}
+
+type ClaudeExecutionConfig {
+  model: String
+  effort: ClaudeEffort
+  permissionMode: ClaudePermissionMode
 }
 
 type TaskConnection {
@@ -216,6 +282,7 @@ input CreateTaskInput {
   projectId: ID!
   workerId: ID
   agentType: AgentType
+  agentConfig: AgentExecutionConfigInput
   baseBranch: String
   preCommands: [String!]
   postCommands: [String!]
@@ -240,6 +307,28 @@ input AssignWorkerInput {
   taskId: ID!
   workerId: ID!
   agentType: AgentType
+  agentConfig: AgentExecutionConfigInput
+}
+
+input AgentExecutionConfigInput {
+  workMode: AgentWorkMode
+  codex: CodexExecutionConfigInput
+  claude: ClaudeExecutionConfigInput
+}
+
+input CodexExecutionConfigInput {
+  model: String
+  reasoningEffort: CodexReasoningEffort
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  fullAuto: Boolean
+  bypassApprovalsAndSandbox: Boolean
+}
+
+input ClaudeExecutionConfigInput {
+  model: String
+  effort: ClaudeEffort
+  permissionMode: ClaudePermissionMode
 }
 
 input StartTaskInput {
