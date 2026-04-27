@@ -37,7 +37,7 @@ Manager 采用 DDD 设计，`domain` 是系统核心，领域事件是一等公�
 6. Worker 创建 Git Worktree，准备任务执行环境，并启动 Codex / Claude 等 Agent。
 7. Worker 将命令输出、AI 对话、任务状态和最终结果实时上报给 Manager。
 8. Manager 将领域事件、任务日志、AI 对话和任务状态持久化。
-9. 系统设置支持配置 Agent 运行时环境变量，并在任务启动时下发给 Worker。
+9. Worker 支持按 Agent 类型配置 Agent 运行时环境变量，任务启动时只下发被分配 Worker 上对应 Agent 的启用变量。
 10. 用户界面通过 GraphQL Query / Mutation / Subscription 与 Manager 交互。
 11. 系统支持本地轻量部署和团队服务端部署。
 
@@ -50,7 +50,7 @@ Manager 采用 DDD 设计，`domain` 是系统核心，领域事件是一等公�
 主要操作：
 
 1. 创建任务。
-2. 设置任务标题、任务描述、Project、目标分支、Agent 类型和执行命令。
+2. 设置任务标题、任务描述、Project、基础分支、Agent 类型和执行命令。
 3. 选择 Worker 或使用 Manager 自动分配 Worker。
 4. 启动任务。
 5. 查看任务状态、日志、AI 对话、执行结果和领域事件。
@@ -84,7 +84,7 @@ Worker 是具体任务执行节点。
 4. 接收 Manager 下发的任务启动、中断、取消等命令。
 5. 根据 Project 的 Git URL 和 worktree 名称前缀创建 Git Worktree。
 6. 初始化任务环境。
-7. 注入系统设置中的 Agent 运行时环境变量。
+7. 注入当前 Worker 配置中的 Agent 运行时环境变量。
 8. 执行前置命令和后置命令。
 9. 启动 Codex / Claude 等 Agent。
 10. 持续读取 Agent 输出。
@@ -104,9 +104,9 @@ Worker 是具体任务执行节点。
 | 任务创建页 | 创建任务，选择 Project、Agent 和 Worker |
 | 任务详情页 | 查看任务基础信息、状态、日志、AI 对话和结果 |
 | 看板页 | 以 Kanban 或日历方式查看任务 |
-| Worker 管理页 | 查看 Worker 列表、状态、能力、当前任务 |
+| Worker 管理页 | 查看 Worker 列表、状态、能力、当前任务和运行时环境变量 |
 | Project 管理页 | 管理项目 Git URL、默认分支、worktree 名称前缀 |
-| 系统设置页 | 管理数据库、Token、安全策略、Agent 运行时环境变量 |
+| 系统设置页 | 管理 Worker 心跳超时、安全策略等系统级配置 |
 
 ### 3.2 Manager 模块
 
@@ -120,8 +120,8 @@ Manager 是系统核心，采用 DDD 架构。
 | Worker Gateway | 管理 Worker WebSocket 连接和消息收发 |
 | Project Application Service | 管理项目 Git URL、默认分支、worktree 命名前缀 |
 | Task Application Service | 编排任务创建、分配、启动、中断和完成 |
-| Worker Application Service | 编排 Worker 注册、心跳、状态变更 |
-| Settings Application Service | 管理系统配置和 Agent 运行时环境变量 |
+| Worker Application Service | 编排 Worker 注册、心跳、状态变更、Project 绑定和 Agent 运行时环境变量 |
+| Settings Application Service | 管理 Worker 心跳超时、安全策略等系统级配置 |
 | Domain Event Store | 持久化领域事件 |
 | Event Bus | 分发领域事件到订阅、WebSocket、异步处理器 |
 | Repository | 屏蔽 SQLite / PostgreSQL 差异 |
@@ -139,8 +139,9 @@ Worker 管理包括：
 6. Worker 支持的 Agent 类型管理。
 7. Worker 工作目录管理。
 8. Worker 可绑定到一个或多个具体 Project，也可以设置为所有 Project 共用。
-9. Worker 当前任务观察。
-10. Worker 异常状态处理。
+9. Worker Agent 运行时环境变量管理，按 Agent 类型分组配置。
+10. Worker 当前任务观察。
+11. Worker 异常状态处理。
 
 Worker 推荐状态：
 
@@ -166,6 +167,16 @@ Worker 与 Project 的绑定模式：
 | `ALL_PROJECTS` | Worker 可执行所有 Project 的任务 |
 | `SPECIFIC_PROJECTS` | Worker 只能执行绑定 Project 的任务 |
 
+Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent 时注入进程环境。环境变量属于具体 Worker，而不是系统设置；同一个 Worker 可以为不同 Agent 类型维护不同变量集合。
+
+环境变量设计规则：
+
+1. 以 `agentType` 分组保存，每个变量包含变量名、变量值、说明、是否启用、是否敏感。
+2. 敏感变量在 UI、API、日志和事件中必须脱敏展示。
+3. 编辑敏感变量时，如果新值为空，表示保留原有值。
+4. Manager 在下发 `TASK_START` 或 `TASK_CONTINUE` 时，只读取被分配 Worker 上匹配任务 Agent 类型的启用变量。
+5. Worker 合并 Manager 下发的运行时变量与本机环境变量后启动 Agent。
+
 调度时必须同时满足 Worker 在线、`currentTaskId` 为空、支持目标 Agent、Project 绑定范围匹配。
 
 ### 3.4 任务管理
@@ -176,11 +187,11 @@ Worker 与 Project 的绑定模式：
 
 1. 任务标题。
 2. 任务描述。
-3. 开始日期和结束日期，仅用于展示。
+3. 开始日期和结束日期，用于任务列表、看板和日历展示，不代表真实执行开始/结束时间。
 4. Project ID。
 5. 基础分支。
-6. 目标分支。
-7. Git Worktree 路径。
+6. Git Worktree 路径。
+7. Agent 会话 ID。
 8. 选择的 Agent 类型，例如 `codex`、`claude`。
 9. 绑定的 Worker。
 10. 前置命令。
@@ -192,6 +203,13 @@ Worker 与 Project 的绑定模式：
 16. 创建时间和更新时间。
 
 任务不保存 Git 仓库信息。Git URL、默认分支和 worktree 命名前缀都从 Project 获取，任务只引用 `projectId` 并保存本次执行生成的 `worktreePath`。
+
+任务开始日期和结束日期的规则：
+
+1. 字段名为 `startDate` 和 `endDate`。
+2. 未传开始/结束日期时，默认使用任务创建当天。
+3. 日期按 UTC 零点保存，用于全天范围展示。
+4. `endDate` 不能早于 `startDate`。
 
 推荐任务状态：
 
@@ -218,8 +236,7 @@ Project 包含：
 2. Git URL。
 3. 默认分支。
 4. Git Worktree 名称前缀。
-5. 初始化命令。
-6. 创建时间和更新时间。
+5. 创建时间和更新时间。
 
 Project 关键规则：
 
@@ -243,24 +260,13 @@ block-play-table-task_01HR9A-04251030
 
 ### 3.6 系统设置
 
-系统设置用于管理跨 Project 的全局运行配置。
+系统设置用于管理 Manager 级别的全局运行配置，不再负责保存 Agent 运行时环境变量。
 
 主要能力：
 
-1. 数据库配置。
-2. 访问 Token 和 Worker Token。
-3. 安全策略。
-4. Agent 运行时环境变量。
-
-Agent 运行时环境变量用于在 Worker 启动 Codex / Claude 等 Agent 时注入进程环境。
-
-环境变量设计规则：
-
-1. 支持设置变量名、变量值、说明、是否启用、是否敏感。
-2. 敏感变量在 UI、日志和事件中必须脱敏展示。
-3. Manager 在下发 `TASK_START` 时将启用的 Agent 环境变量发送给 Worker。
-4. Worker 合并系统环境变量与本机环境变量后启动 Agent。
-5. 环境变量变更应产生领域事件，便于审计。
+1. Worker 心跳超时。
+2. 安全策略。
+3. 未来扩展的 Manager 级别系统配置。
 
 ### 3.7 Workspace 功能取舍
 
@@ -336,7 +342,7 @@ sequenceDiagram
 
     W->>W: 读取 Project Git URL 和 worktree 前缀
     W->>W: 创建 Git Worktree
-    W->>W: 注入 Agent 运行时环境变量
+    W->>W: 注入当前 Worker 的 Agent 运行时环境变量
     W->>W: 初始化环境
     W->>W: 执行前置命令
     W->>A: 启动 Codex / Claude
@@ -355,7 +361,7 @@ sequenceDiagram
 
 1. 用户在 UI 中填写任务标题、描述、开始/结束日期、Project、Agent 类型和命令配置。
 2. UI 调用 Manager 的 `createTask` Mutation。
-3. Manager 创建 `Task` 聚合；未传开始/结束日期时默认使用创建当天。
+3. Manager 创建 `Task` 聚合；未传开始/结束日期时默认使用创建当天，并按 UTC 零点保存。
 4. `Task` 聚合产生 `TaskCreated` 领域事件。
 5. Application Service 在同一事务中保存任务和领域事件。
 6. Manager 返回任务 ID。
@@ -419,15 +425,13 @@ Worker 执行步骤：
 2. 解析任务参数。
 3. 根据任务的 `projectId` 获取 Project 的 Git URL、默认分支和 worktree 名称前缀。
 4. 创建 Git Worktree。
-5. 在 worktree 中切换或创建目标分支。
-6. 注入系统设置中的 Agent 运行时环境变量。
-7. 执行 Project 初始化命令。
-8. 执行任务前置命令。
-9. 启动 Codex / Claude。
-10. 读取 stdout、stderr、AI 对话、工具调用和状态变化。
-11. 通过 WebSocket 上报执行事件。
-12. Agent 完成后执行后置命令。
-13. 上报 `TASK_COMPLETED` 或 `TASK_FAILED`。
+5. 注入当前 Worker 配置中的 Agent 运行时环境变量。
+6. 执行任务前置命令。
+7. 启动 Codex / Claude。
+8. 读取 stdout、stderr、AI 对话、工具调用和状态变化。
+9. 通过 WebSocket 上报执行事件。
+10. Agent 完成后执行后置命令。
+11. 上报 `TASK_COMPLETED` 或 `TASK_FAILED`。
 
 ### 4.6 中断任务流程
 
@@ -505,6 +509,7 @@ Task
 - agentType
 - baseBranch
 - worktreePath
+- agentSessionId
 - preCommands
 - postCommands
 - result
@@ -568,6 +573,7 @@ Worker
 - startupCommand
 - projectBindingMode
 - boundProjectIds
+- agentRuntimeEnv
 - currentTaskId
 - lastHeartbeatAt
 - version
@@ -585,8 +591,25 @@ Worker
 6. `Enable`
 7. `BindProjects`
 8. `ShareAcrossAllProjects`
-9. `AssignTask`
-10. `ReleaseTask`
+9. `UpdateAgentRuntimeEnv`
+10. `AssignTask`
+11. `ReleaseTask`
+
+Agent 运行时环境变量值对象：
+
+```text
+WorkerAgentRuntimeEnv
+- agentType
+- vars
+
+AgentRuntimeEnvVar
+- key
+- value
+- valueMasked
+- description
+- enabled
+- sensitive
+```
 
 ### 5.4 Project 聚合
 
@@ -616,7 +639,7 @@ Project
 
 ### 5.5 Settings 聚合
 
-Settings 表示系统级配置。Agent 运行时环境变量属于系统设置的一部分。
+Settings 表示系统级配置。Agent 运行时环境变量属于 Worker 配置，不属于 Settings。
 
 主要字段：
 
@@ -624,7 +647,6 @@ Settings 表示系统级配置。Agent 运行时环境变量属于系统设置�
 Settings
 - id
 - version
-- agentRuntimeEnvVars
 - workerHeartbeatTimeout
 - securityPolicy
 - createdAt
@@ -633,22 +655,8 @@ Settings
 
 核心行为：
 
-1. `UpdateAgentRuntimeEnvVars`
-2. `EnableAgentRuntimeEnvVar`
-3. `DisableAgentRuntimeEnvVar`
-4. `UpdateWorkerHeartbeatTimeout`
-5. `UpdateSecurityPolicy`
-
-Agent 运行时环境变量值对象：
-
-```text
-AgentRuntimeEnvVar
-- key
-- value
-- description
-- enabled
-- sensitive
-```
+1. `UpdateWorkerHeartbeatTimeout`
+2. `UpdateSecurityPolicy`
 
 ### 5.6 Board 聚合
 
@@ -747,6 +755,7 @@ DomainEvent
 | `TaskFailed` | 任务失败 |
 | `TaskArchived` | 任务已归档 |
 | `WorkerRegistered` | Worker 已注册 |
+| `WorkerUpdated` | Worker 基础信息、Project 绑定或 Agent 运行时环境变量已更新 |
 | `WorkerConnected` | Worker 已连接 |
 | `WorkerHeartbeatReceived` | 收到 Worker 心跳 |
 | `WorkerDisconnected` | Worker 断开 |
@@ -757,7 +766,6 @@ DomainEvent
 | `ProjectCreated` | Project 已创建 |
 | `ProjectUpdated` | Project 已更新 |
 | `ProjectArchived` | Project 已归档 |
-| `AgentRuntimeEnvUpdated` | Agent 运行时环境变量已更新 |
 
 ## 7. 技术架构
 
@@ -967,16 +975,32 @@ type Worker {
   id: ID!
   name: String!
   status: WorkerStatus!
+  capabilities: [KeyValue!]!
   supportedAgents: [AgentType!]!
   workDir: String!
+  startupCommand: String
   projectBindingMode: WorkerProjectBindingMode!
   boundProjectIds: [ID!]!
+  agentRuntimeEnv: [WorkerAgentRuntimeEnv!]!
   currentTaskId: ID
   lastHeartbeatAt: Time
+  version: Int!
+  createdAt: Time!
+  updatedAt: Time!
 }
 
 type Settings {
-  agentRuntimeEnvVars: [AgentRuntimeEnvVar!]!
+  id: ID!
+  version: Int!
+  workerHeartbeatTimeout: String!
+  securityPolicy: String!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type WorkerAgentRuntimeEnv {
+  agentType: AgentType!
+  vars: [AgentRuntimeEnvVar!]!
 }
 
 type AgentRuntimeEnvVar {
@@ -985,6 +1009,79 @@ type AgentRuntimeEnvVar {
   description: String
   enabled: Boolean!
   sensitive: Boolean!
+}
+
+type KeyValue {
+  key: String!
+  value: String!
+}
+
+input CreateTaskInput {
+  title: String!
+  description: String
+  projectId: ID!
+  workerId: ID
+  agentType: AgentType
+  baseBranch: String
+  preCommands: [String!]
+  postCommands: [String!]
+  startDate: Time
+  endDate: Time
+}
+
+input UpdateTaskInput {
+  id: ID!
+  title: String!
+  description: String
+  projectId: ID!
+  agentType: AgentType
+  baseBranch: String
+  preCommands: [String!]
+  postCommands: [String!]
+  startDate: Time
+  endDate: Time
+}
+
+input WorkerAgentRuntimeEnvInput {
+  agentType: AgentType!
+  vars: [AgentRuntimeEnvVarInput!]!
+}
+
+input AgentRuntimeEnvVarInput {
+  key: String!
+  value: String
+  description: String
+  enabled: Boolean!
+  sensitive: Boolean!
+}
+
+input KeyValueInput {
+  key: String!
+  value: String!
+}
+
+input CreateWorkerInput {
+  id: ID
+  name: String!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode
+  boundProjectIds: [ID!]
+  agentRuntimeEnv: [WorkerAgentRuntimeEnvInput!]
+  capabilities: [KeyValueInput!]
+}
+
+input UpdateWorkerInput {
+  id: ID!
+  name: String!
+  supportedAgents: [AgentType!]!
+  workDir: String!
+  startupCommand: String
+  projectBindingMode: WorkerProjectBindingMode!
+  boundProjectIds: [ID!]
+  agentRuntimeEnv: [WorkerAgentRuntimeEnvInput!]
+  capabilities: [KeyValueInput!]
 }
 ```
 
@@ -1027,7 +1124,7 @@ type Mutation {
   updateProject(input: UpdateProjectInput!): Project!
   archiveProject(id: ID!): Project!
 
-  updateAgentRuntimeEnvVars(input: UpdateAgentRuntimeEnvVarsInput!): Settings!
+  updateWorkerHeartbeatTimeout(timeout: String!): Settings!
 }
 ```
 
@@ -1077,7 +1174,8 @@ Worker -> Manager
 
 | 消息类型 | 说明 |
 | --- | --- |
-| `TASK_START` | 启动任务，payload 包含任务信息、Project Git URL、worktree 前缀、Agent 运行时环境变量 |
+| `TASK_START` | 启动任务，payload 包含任务信息、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
+| `TASK_CONTINUE` | 继续已完成任务的 Agent 会话，payload 包含会话 ID、用户追加消息、worktree 路径和同一来源的运行时环境变量 |
 | `TASK_INTERRUPT` | 中断任务 |
 | `TASK_CANCEL` | 取消任务 |
 | `WORKER_CONFIG_UPDATE` | 更新 Worker 配置 |
@@ -1110,7 +1208,7 @@ Worker -> Manager
 }
 ```
 
-说明：`agentRuntimeEnv.value` 在 Manager 存储和 UI 展示时需要加密或脱敏；下发给 Worker 执行任务时必须是可用明文值，因此生产环境必须使用 `wss` 并限制 Worker Token 权限。
+说明：`agentRuntimeEnv` 来自被分配 Worker 的配置，并且只包含当前任务 Agent 类型下已启用的变量。`value` 在 UI 和 API 展示时必须脱敏；下发给 Worker 执行任务时必须是可用明文值，因此生产环境必须使用 `wss` 并限制 Worker Token 权限。
 
 ### 9.4 Worker 上报 Manager 的消息
 
@@ -1161,6 +1259,9 @@ PostgreSQL Implementation
 | `agent_type` | string | Agent 类型 |
 | `base_branch` | string | 基础分支 |
 | `worktree_path` | string | Worktree 路径 |
+| `agent_session_id` | string | Agent 会话 ID，用于继续已完成任务的会话 |
+| `pre_commands` | json/text | 前置命令列表 |
+| `post_commands` | json/text | 后置命令列表 |
 | `result` | json/text | 结果 |
 | `start_date` | datetime | 展示用开始日期，按 UTC 零点保存 |
 | `end_date` | datetime | 展示用结束日期，按 UTC 零点保存 |
@@ -1212,15 +1313,33 @@ PostgreSQL Implementation
 1. 当 Worker 的 `project_binding_mode = ALL_PROJECTS` 时，不需要写入绑定记录。
 2. 当 Worker 的 `project_binding_mode = SPECIFIC_PROJECTS` 时，只能执行绑定表中的 Project 任务。
 
-#### system_agent_env_vars
+#### worker_agent_env_vars
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `worker_id` | string | Worker ID |
+| `agent_type` | string | Agent 类型 |
 | `key` | string | 环境变量名 |
-| `value` | text | 环境变量值，敏感值建议加密存储 |
+| `value` | text | 环境变量值，敏感值建议加密存储，UI/API 展示时必须脱敏 |
 | `description` | text | 说明 |
 | `enabled` | boolean | 是否启用 |
 | `sensitive` | boolean | 是否敏感 |
+| `created_at` | datetime | 创建时间 |
+| `updated_at` | datetime | 更新时间 |
+
+说明：
+
+1. 主键为 `worker_id + agent_type + key`。
+2. 启动或继续任务时，Manager 只下发被分配 Worker 上匹配任务 Agent 类型且已启用的变量。
+
+#### system_settings
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | 固定为 `settings` |
+| `worker_heartbeat_timeout` | string | Worker 心跳超时 |
+| `security_policy` | string | 安全策略 |
+| `version` | integer | 聚合版本 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
 
@@ -1550,20 +1669,11 @@ database:
 worker:
   heartbeat_timeout: "90s"
 
+security:
+  policy: "TRUSTED"
+
 event:
   outbox_enabled: true
-
-agent_runtime_env:
-  - key: "OPENAI_API_KEY"
-    value: "${OPENAI_API_KEY}"
-    enabled: true
-    sensitive: true
-    description: "Codex/OpenAI API key"
-  - key: "ANTHROPIC_API_KEY"
-    value: "${ANTHROPIC_API_KEY}"
-    enabled: true
-    sensitive: true
-    description: "Claude API key"
 ```
 
 PostgreSQL 示例：
@@ -1600,6 +1710,21 @@ worker:
   supported_agents:
     - "codex"
     - "claude"
+  agent_runtime_env:
+    - agent_type: "codex"
+      vars:
+        - key: "OPENAI_API_KEY"
+          value: "${OPENAI_API_KEY}"
+          enabled: true
+          sensitive: true
+          description: "Codex/OpenAI API key"
+    - agent_type: "claude"
+      vars:
+        - key: "ANTHROPIC_API_KEY"
+          value: "${ANTHROPIC_API_KEY}"
+          enabled: true
+          sensitive: true
+          description: "Claude API key"
 ```
 
 ## 15. 推荐开发里程碑
@@ -1625,7 +1750,7 @@ worker:
 2. 支持 Claude。
 3. 支持 Git Worktree。
 4. 支持任务中断。
-5. 支持系统设置中的 Agent 运行时环境变量注入。
+5. 支持 Worker 级 Agent 运行时环境变量注入。
 6. 支持 AI 对话展示。
 7. 支持任务结果上报。
 
@@ -1634,7 +1759,7 @@ worker:
 1. 完成 Task 聚合。
 2. 完成 Worker 聚合。
 3. 完成 Project 聚合。
-4. 完成 Settings 聚合。
+4. 完成 Settings 聚合和 Worker 级 Agent 运行时环境变量。
 5. 完成领域事件表。
 6. 完成 Outbox。
 7. GraphQL Subscription 基于领域事件推送。
