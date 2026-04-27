@@ -585,6 +585,8 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     page.getByRole("button", { name: new RegExp(taskTitle) }),
   ).toBeVisible();
   await openTaskFromList(page, taskTitle);
+  await expect(page.getByText(projectName, { exact: true })).toBeVisible();
+  await expect(page.getByText(project.id, { exact: true })).toHaveCount(0);
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("flutter-view")).toBeVisible();

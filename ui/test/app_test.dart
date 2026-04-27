@@ -494,6 +494,8 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('CREATED'), findsWidgets);
+    expect(find.text(_project.name), findsOneWidget);
+    expect(find.text(_project.id), findsNothing);
     expect(apiClient.detailFetches, 1);
 
     apiClient.completeTaskDetail();

@@ -2414,7 +2414,11 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
             }
             return Stack(
               children: [
-                _TaskDetailBody(detail: detail!, onContinue: _continueTask),
+                _TaskDetailBody(
+                  detail: detail!,
+                  projects: widget.boardData.projects,
+                  onContinue: _continueTask,
+                ),
                 if (snapshot.connectionState != ConnectionState.done)
                   const Positioned(
                     left: 0,
@@ -2637,14 +2641,20 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
 }
 
 class _TaskDetailBody extends StatelessWidget {
-  const _TaskDetailBody({required this.detail, required this.onContinue});
+  const _TaskDetailBody({
+    required this.detail,
+    required this.projects,
+    required this.onContinue,
+  });
 
   final TaskDetailData detail;
+  final List<ProjectItem> projects;
   final Future<void> Function(String message) onContinue;
 
   @override
   Widget build(BuildContext context) {
     final task = detail.task;
+    final projectName = _projectName(projects, task.projectId);
     return DefaultTabController(
       initialIndex: 0,
       length: 3,
@@ -2658,7 +2668,10 @@ class _TaskDetailBody extends StatelessWidget {
               StatusPill(value: task.status),
               if (task.agentType.isNotEmpty)
                 DetailText(icon: Icons.terminal, text: task.agentType),
-              DetailText(icon: Icons.folder_copy, text: task.projectId),
+              DetailText(
+                icon: Icons.folder_copy,
+                text: projectName ?? task.projectId,
+              ),
               DetailText(
                 icon: Icons.date_range,
                 text: _taskDateRangeLabel(task),
