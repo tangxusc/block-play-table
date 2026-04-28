@@ -564,6 +564,49 @@ func TestPrepareWorktreeClonesGitRepository(t *testing.T) {
 	}
 }
 
+func TestPrepareWorktreeReplacesExistingTaskWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	exec := NewExecutor(Config{WorkDir: filepath.Join(root, "worker")})
+	payload := protocol.TaskStartPayload{
+		Task:    protocol.TaskPayload{ID: "task-1"},
+		Project: protocol.ProjectPayload{GitURL: repo, DefaultBranch: "main", WorktreeNamePrefix: "p"},
+	}
+	first, err := exec.prepareWorktree(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("first prepareWorktree returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(first, "dirty.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := exec.prepareWorktree(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("second prepareWorktree returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(second, "dirty.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale file should be removed before retry, stat err = %v", err)
+	}
+	if branch := gitOutput(t, second, "branch", "--show-current"); branch != "task/task-1" {
+		t.Fatalf("worktree branch = %q, want task/task-1", branch)
+	}
+}
+
 func TestResolveGitRefAndRepositoryCacheErrors(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

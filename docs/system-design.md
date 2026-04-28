@@ -315,6 +315,8 @@ block-play-table-task_01HR9A-04251030
 
 在当前设计中，Workspace 应被理解为 Worker 本地运行目录和任务 worktree，不作为用户侧独立管理对象。
 
+同一任务重试时，Manager 会清空任务上的旧 Worker、`worktreePath`、会话和结果；Worker 在创建新 Git worktree 前，会在本地仓库缓存中移除同一 `task/{task_id}` 分支的旧 worktree checkout，然后基于最新 base ref 重建任务 worktree。
+
 ### 3.8 看板管理
 
 看板用于展示任务流转。

@@ -311,6 +311,9 @@ func (e *Executor) prepareWorktree(ctx context.Context, payload protocol.TaskSta
 		if err := runCommand(ctx, cacheDir, nil, "git", "worktree", "prune"); err != nil {
 			return "", err
 		}
+		if err := removeWorktreesForBranch(ctx, cacheDir, branch); err != nil {
+			return "", err
+		}
 		if err := runCommand(ctx, cacheDir, nil, "git", "worktree", "add", "-B", branch, target, resolveGitRef(ctx, cacheDir, base)); err != nil {
 			return "", err
 		}
@@ -843,15 +846,89 @@ func resolveGitRef(ctx context.Context, repoDir, ref string) string {
 	return ref
 }
 
+type gitWorktreeEntry struct {
+	Path   string
+	Branch string
+}
+
+func removeWorktreesForBranch(ctx context.Context, repoDir, branch string) error {
+	out, err := runCommandOutput(ctx, repoDir, nil, "git", "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	targetBranch := "refs/heads/" + branch
+	for _, entry := range parseGitWorktreeList(out) {
+		if entry.Branch != targetBranch {
+			continue
+		}
+		if samePath(entry.Path, repoDir) {
+			return fmt.Errorf("task branch %s is checked out in repository cache %s", branch, repoDir)
+		}
+		if err := runCommand(ctx, repoDir, nil, "git", "worktree", "remove", "--force", entry.Path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parseGitWorktreeList(out []byte) []gitWorktreeEntry {
+	var entries []gitWorktreeEntry
+	var current gitWorktreeEntry
+	flush := func() {
+		if current.Path != "" {
+			entries = append(entries, current)
+		}
+		current = gitWorktreeEntry{}
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			flush()
+			continue
+		}
+		key, value, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "worktree":
+			if current.Path != "" {
+				flush()
+			}
+			current.Path = value
+		case "branch":
+			current.Branch = value
+		}
+	}
+	flush()
+	return entries
+}
+
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	if errA != nil {
+		absA = a
+	}
+	absB, errB := filepath.Abs(b)
+	if errB != nil {
+		absB = b
+	}
+	return filepath.Clean(absA) == filepath.Clean(absB)
+}
+
 func runCommand(ctx context.Context, dir string, env map[string]string, name string, args ...string) error {
+	_, err := runCommandOutput(ctx, dir, env, name, args...)
+	return err
+}
+
+func runCommandOutput(ctx context.Context, dir string, env map[string]string, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = mergeEnv(env)
 	out, err := combinedOutput(ctx, cmd)
 	if err != nil {
-		return fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, string(out))
+		return nil, fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, string(out))
 	}
-	return nil
+	return out, nil
 }
 
 func combinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {

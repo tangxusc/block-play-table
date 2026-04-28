@@ -245,7 +245,7 @@ npm run e2e:real-agents
 | Task | Worker 上报 `TASK_WAITING_INPUT` 后任务进入 `WAITING_INPUT` | L1/L2 | [待补齐] |
 | Task | 中断运行中任务，下发 `TASK_INTERRUPT`，Worker 上报 `TASK_INTERRUPTED` | L1/L2 | [待补齐] |
 | Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
-| Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [待补齐] |
+| Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [部分实现：Worker 同 task 分支 worktree 清理由单元测试覆盖，浏览器主流程待补齐] |
 | Task | 重试后清空旧 Worker 绑定和 `agentConfig`，自动分配使用空配置 | L1 | [已实现] |
 | Task | Created/Completed/Failed/Interrupted 任务可归档并进入完成列 | L2 | [已实现] |
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
