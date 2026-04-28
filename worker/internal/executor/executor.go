@@ -509,7 +509,9 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	sessionID := initialSessionID
-	lastMessage := ""
+	lastConversation := ""
+	finalResult := ""
+	sawConversation := false
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -517,18 +519,22 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 		for scanner.Scan() {
 			line := scanner.Text()
 			emit(AgentEvent{Type: AgentEventStdout, Content: line})
-			parsedSessionID, message := parseAgentJSONLine(line)
+			parsed := parseAgentJSONLine(line)
 			mu.Lock()
-			if parsedSessionID != "" {
-				sessionID = parsedSessionID
+			if parsed.SessionID != "" {
+				sessionID = parsed.SessionID
 			}
 			currentSessionID := sessionID
-			if message != "" {
-				lastMessage = message
+			if parsed.Conversation != "" {
+				lastConversation = parsed.Conversation
+				sawConversation = true
+			}
+			if parsed.FinalResult != "" {
+				finalResult = parsed.FinalResult
 			}
 			mu.Unlock()
-			if message != "" {
-				emit(AgentEvent{Type: AgentEventConversation, Content: message, AgentSessionID: currentSessionID, Metadata: map[string]string{"agentSessionId": currentSessionID}})
+			if parsed.Conversation != "" {
+				emit(AgentEvent{Type: AgentEventConversation, Content: parsed.Conversation, AgentSessionID: currentSessionID, Metadata: map[string]string{"agentSessionId": currentSessionID}})
 			}
 		}
 	}()
@@ -553,11 +559,20 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 	}
 
 	mu.Lock()
-	defer mu.Unlock()
-	if sessionID == "" {
+	completedSessionID := sessionID
+	completedContent := finalResult
+	if completedContent == "" {
+		completedContent = lastConversation
+	}
+	shouldEmitFallbackConversation := !sawConversation && finalResult != ""
+	mu.Unlock()
+	if completedSessionID == "" {
 		return fmt.Errorf("agent session id was not reported")
 	}
-	emit(AgentEvent{Type: AgentEventCompleted, Content: lastMessage, AgentSessionID: sessionID})
+	if shouldEmitFallbackConversation {
+		emit(AgentEvent{Type: AgentEventConversation, Content: completedContent, AgentSessionID: completedSessionID, Metadata: map[string]string{"agentSessionId": completedSessionID}})
+	}
+	emit(AgentEvent{Type: AgentEventCompleted, Content: completedContent, AgentSessionID: completedSessionID})
 	return nil
 }
 
@@ -625,79 +640,87 @@ func workModePromptPrefix(mode domain.AgentWorkMode) string {
 	}
 }
 
-func parseAgentJSONLine(line string) (string, string) {
-	var value any
+type agentLineParse struct {
+	SessionID    string
+	Conversation string
+	FinalResult  string
+}
+
+func parseAgentJSONLine(line string) agentLineParse {
+	var value map[string]any
 	if err := json.Unmarshal([]byte(line), &value); err != nil {
-		return "", ""
+		return agentLineParse{}
 	}
-	return findSessionID(value), findMessageText(value)
-}
-
-func findSessionID(value any) string {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"} {
-			if text, ok := typed[key].(string); ok && text != "" {
-				return text
-			}
+	parsed := agentLineParse{SessionID: directSessionID(value)}
+	switch stringField(value, "type") {
+	case "system":
+		return parsed
+	case "assistant":
+		parsed.Conversation = claudeAssistantText(value)
+		return parsed
+	case "result":
+		parsed.FinalResult = stringField(value, "result")
+		return parsed
+	case "thread.started":
+		if parsed.SessionID == "" {
+			parsed.SessionID = stringField(value, "thread_id")
 		}
-		for _, child := range typed {
-			if sessionID := findSessionID(child); sessionID != "" {
-				return sessionID
-			}
+		return parsed
+	case "item.completed":
+		if item, ok := objectField(value, "item"); ok && stringField(item, "type") == "agent_message" {
+			parsed.Conversation = stringField(item, "text")
 		}
-	case []any:
-		for _, child := range typed {
-			if sessionID := findSessionID(child); sessionID != "" {
-				return sessionID
-			}
-		}
-	}
-	return ""
-}
-
-func findMessageText(value any) string {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"message", "final_message", "finalMessage", "output", "result", "content", "text"} {
-			if child, ok := typed[key]; ok {
-				if text := textFromMessageValue(child); text != "" {
-					return text
-				}
-			}
-		}
-		for _, child := range typed {
-			if text := findMessageText(child); text != "" {
-				return text
-			}
-		}
-	case []any:
-		return strings.Join(messageTextsFromArray(typed), "\n")
-	}
-	return ""
-}
-
-func textFromMessageValue(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case map[string]any:
-		return findMessageText(typed)
-	case []any:
-		return strings.Join(messageTextsFromArray(typed), "\n")
+		return parsed
+	case "":
+		parsed.Conversation = stringField(value, "message")
+		return parsed
 	default:
+		return parsed
+	}
+}
+
+func directSessionID(value map[string]any) string {
+	for _, key := range []string{"session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"} {
+		if text := stringField(value, key); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func claudeAssistantText(value map[string]any) string {
+	message, ok := objectField(value, "message")
+	if !ok {
 		return ""
 	}
-}
-
-func messageTextsFromArray(items []any) []string {
-	var out []string
-	for _, item := range items {
-		if text := textFromMessageValue(item); text != "" {
-			out = append(out, text)
+	content, ok := message["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, item := range content {
+		part, ok := item.(map[string]any)
+		if !ok || stringField(part, "type") != "text" {
+			continue
+		}
+		if text := stringField(part, "text"); text != "" {
+			parts = append(parts, text)
 		}
 	}
-	return out
+	return strings.Join(parts, "\n")
+}
+
+func objectField(value map[string]any, key string) (map[string]any, bool) {
+	child, ok := value[key].(map[string]any)
+	return child, ok
+}
+
+func stringField(value map[string]any, key string) string {
+	text, ok := value[key].(string)
+	if !ok {
+		return ""
+	}
+	return text
 }
 
 func scanPipe(wg *sync.WaitGroup, pipe any, emit func(string)) {

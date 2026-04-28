@@ -229,14 +229,153 @@ func TestCodexCommandAgentAppliesExecutionConfig(t *testing.T) {
 }
 
 func TestParseAgentJSONLineReadsCodexThreadAndAgentMessage(t *testing.T) {
-	sessionID, message := parseAgentJSONLine(`{"type":"thread.started","thread_id":"codex-thread"}`)
-	if sessionID != "codex-thread" || message != "" {
-		t.Fatalf("thread.started parsed session=%q message=%q", sessionID, message)
+	parsed := parseAgentJSONLine(`{"type":"thread.started","thread_id":"codex-thread"}`)
+	if parsed.SessionID != "codex-thread" || parsed.Conversation != "" || parsed.FinalResult != "" {
+		t.Fatalf("thread.started parsed = %+v", parsed)
 	}
 
-	sessionID, message = parseAgentJSONLine(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"codex reply"}}`)
-	if sessionID != "" || message != "codex reply" {
-		t.Fatalf("item.completed parsed session=%q message=%q", sessionID, message)
+	parsed = parseAgentJSONLine(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"codex reply"}}`)
+	if parsed.SessionID != "" || parsed.Conversation != "codex reply" || parsed.FinalResult != "" {
+		t.Fatalf("item.completed parsed = %+v", parsed)
+	}
+
+	parsed = parseAgentJSONLine(`{"session_id":"codex-session","message":"simple reply"}`)
+	if parsed.SessionID != "codex-session" || parsed.Conversation != "simple reply" || parsed.FinalResult != "" {
+		t.Fatalf("simple message parsed = %+v", parsed)
+	}
+}
+
+func TestParseAgentJSONLineReadsFriendlyClaudeEvents(t *testing.T) {
+	parsed := parseAgentJSONLine(`{"type":"system","subtype":"init","session_id":"claude-session","tools":["Task","AskUserQuestion","Bash"]}`)
+	if parsed.SessionID != "claude-session" || parsed.Conversation != "" || parsed.FinalResult != "" {
+		t.Fatalf("system init parsed = %+v", parsed)
+	}
+
+	parsed = parseAgentJSONLine(`{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"thinking","thinking":"internal reasoning"}]}}`)
+	if parsed.SessionID != "claude-session" || parsed.Conversation != "" || parsed.FinalResult != "" {
+		t.Fatalf("thinking-only assistant parsed = %+v", parsed)
+	}
+
+	parsed = parseAgentJSONLine(`{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"text","text":"first paragraph"},{"type":"tool_use","name":"Bash"},{"type":"text","text":"second paragraph"}]}}`)
+	if parsed.SessionID != "claude-session" || parsed.Conversation != "first paragraph\nsecond paragraph" || parsed.FinalResult != "" {
+		t.Fatalf("assistant text parsed = %+v", parsed)
+	}
+
+	parsed = parseAgentJSONLine(`{"type":"result","session_id":"claude-session","result":"final answer"}`)
+	if parsed.SessionID != "claude-session" || parsed.Conversation != "" || parsed.FinalResult != "final answer" {
+		t.Fatalf("result parsed = %+v", parsed)
+	}
+}
+
+func TestExecutorKeepsRawClaudeOutputAndEmitsSingleFriendlyConversation(t *testing.T) {
+	root := t.TempDir()
+	systemLine := `{"type":"system","subtype":"init","session_id":"claude-session","tools":["Task","AskUserQuestion","Bash"]}`
+	assistantLine := `{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"text","text":"friendly reply"}]}}`
+	resultLine := `{"type":"result","session_id":"claude-session","result":"final answer"}`
+	agentPath := filepath.Join(root, "fake-claude")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '" + systemLine + "'\n" +
+		"printf '%s\\n' '" + assistantLine + "'\n" +
+		"printf '%s\\n' '" + resultLine + "'\n"
+	if err := os.WriteFile(agentPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []protocol.WorkerEvent
+	runner := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  root,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentClaude: newClaudeAgent(agentPath, func() string { return "claude-session" }),
+		},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+	})
+	if err := runner.Execute(context.Background(), protocol.TaskStartPayload{
+		Task:    protocol.TaskPayload{ID: "task-raw-friendly", Title: "prompt", AgentType: domain.AgentClaude},
+		Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
+	}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	var logs []string
+	var conversations []string
+	var result, completed string
+	for _, event := range events {
+		switch event.Type {
+		case protocol.MessageTaskLog:
+			if event.Stream == "stdout" {
+				logs = append(logs, event.Content)
+			}
+		case protocol.MessageTaskConversation:
+			conversations = append(conversations, event.Content)
+		case protocol.MessageTaskResult:
+			result = event.Result
+		case protocol.MessageTaskCompleted:
+			completed = event.Result
+		}
+	}
+	if strings.Join(logs, "\n") != strings.Join([]string{systemLine, assistantLine, resultLine}, "\n") {
+		t.Fatalf("stdout logs = %#v", logs)
+	}
+	if len(conversations) != 1 || conversations[0] != "friendly reply" {
+		t.Fatalf("conversations = %#v", conversations)
+	}
+	if result != "final answer" || completed != "final answer" {
+		t.Fatalf("result=%q completed=%q, want final answer", result, completed)
+	}
+}
+
+func TestExecutorFallsBackToResultConversationWhenAssistantTextMissing(t *testing.T) {
+	root := t.TempDir()
+	systemLine := `{"type":"system","subtype":"init","session_id":"claude-session","tools":["Task","AskUserQuestion","Bash"]}`
+	resultLine := `{"type":"result","session_id":"claude-session","result":"fallback answer"}`
+	agentPath := filepath.Join(root, "fake-claude-result-only")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '" + systemLine + "'\n" +
+		"printf '%s\\n' '" + resultLine + "'\n"
+	if err := os.WriteFile(agentPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []protocol.WorkerEvent
+	runner := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  root,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentClaude: newClaudeAgent(agentPath, func() string { return "claude-session" }),
+		},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+	})
+	if err := runner.Execute(context.Background(), protocol.TaskStartPayload{
+		Task:    protocol.TaskPayload{ID: "task-result-fallback", Title: "prompt", AgentType: domain.AgentClaude},
+		Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
+	}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	var conversations []string
+	var result, completed string
+	for _, event := range events {
+		switch event.Type {
+		case protocol.MessageTaskConversation:
+			conversations = append(conversations, event.Content)
+		case protocol.MessageTaskResult:
+			result = event.Result
+		case protocol.MessageTaskCompleted:
+			completed = event.Result
+		}
+	}
+	if len(conversations) != 1 || conversations[0] != "fallback answer" {
+		t.Fatalf("conversations = %#v", conversations)
+	}
+	if result != "fallback answer" || completed != "fallback answer" {
+		t.Fatalf("result=%q completed=%q, want fallback answer", result, completed)
 	}
 }
 
