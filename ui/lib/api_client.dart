@@ -211,7 +211,9 @@ class ApiClient {
       graphQL(
         r'''
         query TaskConversations($taskId: ID!) {
-          taskConversations(taskId: $taskId) { id role content createdAt }
+          taskConversations(taskId: $taskId) {
+            id role content metadata { key value } createdAt
+          }
         }
         ''',
         variables: {'taskId': taskId},

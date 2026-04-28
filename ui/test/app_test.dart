@@ -807,6 +807,7 @@ class FakeApiClient extends ApiClient {
               ConversationItem(
                 role: 'assistant',
                 content: 'conversation from subscription',
+                metadata: {},
               ),
             ]
           : const [],

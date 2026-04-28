@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -2393,8 +2394,8 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     return AlertDialog(
       title: Text(widget.task.title),
       content: SizedBox(
-        width: 820,
-        height: 560,
+        width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
+        height: math.min(MediaQuery.sizeOf(context).height * 0.82, 820),
         child: FutureBuilder<TaskDetailData>(
           future: _future,
           builder: (context, snapshot) {
@@ -2690,14 +2691,12 @@ class _TaskDetailBody extends StatelessWidget {
           Expanded(
             child: TabBarView(
               children: [
-                _RuntimeTab(
+                _ConversationTab(
+                  conversations: detail.conversations,
                   footer: _ContinuationComposer(
                     task: task,
                     onContinue: onContinue,
                   ),
-                  children: detail.conversations
-                      .map((item) => '${item.role}: ${item.content}')
-                      .toList(),
                 ),
                 _RuntimeTab(
                   children: detail.logs
@@ -2719,6 +2718,160 @@ class _TaskDetailBody extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ConversationTab extends StatelessWidget {
+  const _ConversationTab({required this.conversations, required this.footer});
+
+  final List<ConversationItem> conversations;
+  final Widget footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ConversationList(conversations: conversations),
+          const SizedBox(height: 12),
+          footer,
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationList extends StatelessWidget {
+  const _ConversationList({required this.conversations});
+
+  final List<ConversationItem> conversations;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (conversations.isEmpty)
+              Text('No entries', style: Theme.of(context).textTheme.bodySmall),
+            ...conversations.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ConversationMessageCard(item: item),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationMessageCard extends StatelessWidget {
+  const _ConversationMessageCard({required this.item});
+
+  final ConversationItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final format = _conversationFormat(item);
+    final textTheme = Theme.of(context).textTheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  item.role,
+                  style: textTheme.labelLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                if (format.label.isNotEmpty)
+                  Chip(
+                    label: Text(format.label),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            format.build(context, item.content),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationFormat {
+  const _ConversationFormat({required this.label, required this.build});
+
+  final String label;
+  final Widget Function(BuildContext context, String content) build;
+}
+
+_ConversationFormat _conversationFormat(ConversationItem item) {
+  final value = (item.metadata['format'] ??
+          item.metadata['contentType'] ??
+          item.metadata['mimeType'] ??
+          item.metadata['type'] ??
+          '')
+      .toLowerCase();
+  if (value.contains('json') || _looksLikeJson(item.content)) {
+    return _ConversationFormat(label: 'JSON', build: _buildJsonContent);
+  }
+  if (value.contains('markdown') || value == 'md') {
+    return _ConversationFormat(label: 'Markdown', build: _buildTextContent);
+  }
+  if (value.contains('code') || value.contains('text/x-')) {
+    return _ConversationFormat(label: 'Code', build: _buildMonospaceContent);
+  }
+  return const _ConversationFormat(label: '', build: _buildTextContent);
+}
+
+bool _looksLikeJson(String content) {
+  final trimmed = content.trimLeft();
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
+Widget _buildJsonContent(BuildContext context, String content) {
+  try {
+    const encoder = JsonEncoder.withIndent('  ');
+    return _buildMonospaceContent(context, encoder.convert(jsonDecode(content)));
+  } catch (_) {
+    return _buildMonospaceContent(context, content);
+  }
+}
+
+Widget _buildTextContent(BuildContext context, String content) {
+  return SelectableText(content, style: Theme.of(context).textTheme.bodySmall);
+}
+
+Widget _buildMonospaceContent(BuildContext context, String content) {
+  return SelectableText(
+    content,
+    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontFamily: 'monospace',
+        ),
+  );
 }
 
 class _RuntimeTab extends StatelessWidget {

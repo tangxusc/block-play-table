@@ -314,16 +314,37 @@ class TaskLogItem {
 }
 
 class ConversationItem {
-  const ConversationItem({required this.role, required this.content});
+  const ConversationItem({
+    required this.role,
+    required this.content,
+    required this.metadata,
+  });
 
   factory ConversationItem.fromJson(Map<String, dynamic> json) =>
       ConversationItem(
         role: json['role'] as String? ?? 'assistant',
         content: json['content'] as String? ?? '',
+        metadata: _keyValuesToMap(json['metadata'] as List<dynamic>? ?? []),
       );
 
   final String role;
   final String content;
+  final Map<String, String> metadata;
+}
+
+Map<String, String> _keyValuesToMap(List<dynamic> items) {
+  final values = <String, String>{};
+  for (final item in items) {
+    if (item is! Map<String, dynamic>) {
+      continue;
+    }
+    final key = item['key'] as String? ?? '';
+    if (key.isEmpty) {
+      continue;
+    }
+    values[key] = item['value'] as String? ?? '';
+  }
+  return values;
 }
 
 class DomainEventItem {
