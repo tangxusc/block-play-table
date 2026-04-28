@@ -45,6 +45,153 @@ func TestServiceSettingsConversationFailureHeartbeatAndArchive(t *testing.T) {
 	}
 }
 
+func TestServiceTaskInteractionLifecycleAndDedup(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+
+	waiting, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-1", TaskInteractionRequestInput{
+		InteractionID:  "interaction-1",
+		TaskID:         task.ID,
+		Kind:           domain.TaskInteractionCommandApproval,
+		Title:          "Command approval",
+		Body:           "Run tests",
+		RawPayload:     `{"command":"make test"}`,
+		AgentSessionID: "session-1",
+	})
+	if err != nil {
+		t.Fatalf("ApplyWorkerTaskInteractionRequest returned error: %v", err)
+	}
+	if waiting.Status != domain.TaskWaitingInput || waiting.AgentSessionID != "session-1" {
+		t.Fatalf("task after request = %+v", waiting)
+	}
+	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-dup", TaskInteractionRequestInput{
+		InteractionID: "interaction-1",
+		TaskID:        task.ID,
+		Kind:          domain.TaskInteractionCommandApproval,
+		Title:         "Duplicate",
+	}); err != nil {
+		t.Fatalf("duplicate interaction request returned error: %v", err)
+	}
+	interactions, err := service.Store().TaskInteractions(ctx, task.ID, domain.TaskInteractionPending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interactions) != 1 || interactions[0].Title != "Command approval" {
+		t.Fatalf("interactions = %+v", interactions)
+	}
+
+	_, _, payload, err := service.PrepareTaskInteractionResponse(ctx, RespondTaskInteractionInput{
+		InteractionID: "interaction-1",
+		Decision:      domain.TaskInteractionApprove,
+	})
+	if err != nil {
+		t.Fatalf("PrepareTaskInteractionResponse returned error: %v", err)
+	}
+	if payload.TaskID != task.ID || payload.Decision != domain.TaskInteractionApprove {
+		t.Fatalf("response payload = %+v", payload)
+	}
+	answered, err := service.MarkTaskInteractionAnswered(ctx, RespondTaskInteractionInput{
+		InteractionID: "interaction-1",
+		Decision:      domain.TaskInteractionApprove,
+	})
+	if err != nil {
+		t.Fatalf("MarkTaskInteractionAnswered returned error: %v", err)
+	}
+	if answered.Status != domain.TaskInteractionAnswered || answered.ResponseDecision != domain.TaskInteractionApprove {
+		t.Fatalf("answered interaction = %+v", answered)
+	}
+	resumed, err := service.ApplyWorkerTaskInteractionResolved(ctx, "interaction-resolved-1", TaskInteractionResolvedInput{
+		InteractionID: "interaction-1",
+		TaskID:        task.ID,
+	})
+	if err != nil {
+		t.Fatalf("ApplyWorkerTaskInteractionResolved returned error: %v", err)
+	}
+	if resumed.Status != domain.TaskRunning {
+		t.Fatalf("task after resolved = %+v", resumed)
+	}
+}
+
+func TestServiceTaskInteractionResponseRequiresOnlineWorkerAndTerminalCancelsPending(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-offline", TaskInteractionRequestInput{
+		InteractionID: "interaction-offline",
+		TaskID:        task.ID,
+		Kind:          domain.TaskInteractionUserInput,
+		Title:         "Question",
+		Body:          "Need input",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerDisconnected(ctx, task.WorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.PrepareTaskInteractionResponse(ctx, RespondTaskInteractionInput{
+		InteractionID: "interaction-offline",
+		Message:       "answer",
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("offline response err = %v, want conflict", err)
+	}
+
+	if _, err := service.WorkerConnected(ctx, task.WorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerTaskCompleted(ctx, "completed-with-pending", task.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	canceled, err := service.Store().TaskInteraction(ctx, "interaction-offline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canceled.Status != domain.TaskInteractionCanceled || canceled.ResponseDecision != domain.TaskInteractionCancel {
+		t.Fatalf("terminal task should cancel pending interaction, got %+v", canceled)
+	}
+}
+
+func TestServiceTaskInteractionResolvedWithResponseBeatsFastCompletion(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-race", TaskInteractionRequestInput{
+		InteractionID: "interaction-race",
+		TaskID:        task.ID,
+		Kind:          domain.TaskInteractionCommandApproval,
+		Title:         "Command approval",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerTaskInteractionResolved(ctx, "interaction-resolved-race", TaskInteractionResolvedInput{
+		InteractionID: "interaction-race",
+		TaskID:        task.ID,
+		Responded:     true,
+		Decision:      domain.TaskInteractionApprove,
+	}); err != nil {
+		t.Fatalf("ApplyWorkerTaskInteractionResolved returned error: %v", err)
+	}
+	if _, err := service.ApplyWorkerTaskCompleted(ctx, "interaction-completed-race", task.ID, "done"); err != nil {
+		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
+	}
+	answered, err := service.MarkTaskInteractionAnswered(ctx, RespondTaskInteractionInput{
+		InteractionID: "interaction-race",
+		Decision:      domain.TaskInteractionApprove,
+	})
+	if err != nil {
+		t.Fatalf("MarkTaskInteractionAnswered should be idempotent after resolved response: %v", err)
+	}
+	if answered.Status != domain.TaskInteractionAnswered || answered.ResponseDecision != domain.TaskInteractionApprove {
+		t.Fatalf("interaction after fast completion = %+v", answered)
+	}
+}
+
 func TestServiceRejectsUnavailableWorker(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())

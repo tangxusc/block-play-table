@@ -16,36 +16,38 @@ class BoardData {
     Map<String, dynamic> json, {
     required List<ProjectItem> projects,
     required List<WorkerItem> workers,
-  }) => BoardData(
-    id: json['id'] as String? ?? 'default',
-    name: json['name'] as String? ?? 'Default Board',
-    type: json['type'] as String? ?? 'KANBAN',
-    columns: (json['columns'] as List<dynamic>? ?? [])
-        .map((item) => BoardColumnData.fromJson(item as Map<String, dynamic>))
-        .toList(),
-    calendarItems: (json['calendarItems'] as List<dynamic>? ?? [])
-        .map(
-          (item) =>
-              BoardCalendarItemData.fromJson(item as Map<String, dynamic>),
-        )
-        .toList(),
-    tasks: (json['tasks'] as List<dynamic>? ?? [])
-        .map((item) => TaskItem.fromJson(item as Map<String, dynamic>))
-        .toList(),
-    projects: projects,
-    workers: workers,
-  );
+  }) =>
+      BoardData(
+        id: json['id'] as String? ?? 'default',
+        name: json['name'] as String? ?? 'Default Board',
+        type: json['type'] as String? ?? 'KANBAN',
+        columns: (json['columns'] as List<dynamic>? ?? [])
+            .map((item) =>
+                BoardColumnData.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        calendarItems: (json['calendarItems'] as List<dynamic>? ?? [])
+            .map(
+              (item) =>
+                  BoardCalendarItemData.fromJson(item as Map<String, dynamic>),
+            )
+            .toList(),
+        tasks: (json['tasks'] as List<dynamic>? ?? [])
+            .map((item) => TaskItem.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        projects: projects,
+        workers: workers,
+      );
 
   factory BoardData.empty() => BoardData(
-    id: 'default',
-    name: 'Default Board',
-    type: 'KANBAN',
-    columns: const [],
-    calendarItems: const [],
-    tasks: const [],
-    projects: const [],
-    workers: const [],
-  );
+        id: 'default',
+        name: 'Default Board',
+        type: 'KANBAN',
+        columns: const [],
+        calendarItems: const [],
+        tasks: const [],
+        projects: const [],
+        workers: const [],
+      );
 
   final String id;
   final String name;
@@ -128,32 +130,32 @@ class TaskItem {
   });
 
   factory TaskItem.fromJson(Map<String, dynamic> json) => TaskItem(
-    id: json['id'] as String?,
-    title: json['title'] as String? ?? '',
-    description: json['description'] as String? ?? '',
-    status: json['status'] as String? ?? '',
-    projectId: json['projectId'] as String? ?? '',
-    agentType: json['agentType'] as String? ?? '',
-    agentConfig: AgentExecutionConfigItem.fromJson(
-      json['agentConfig'] as Map<String, dynamic>? ?? const {},
-    ),
-    baseBranch: json['baseBranch'] as String? ?? 'main',
-    preCommands: stringList(json['preCommands']),
-    postCommands: stringList(json['postCommands']),
-    startDate: (json['startDate'] as String?) ??
-        (json['createdAt'] as String?) ??
-        '',
-    endDate: (json['endDate'] as String?) ??
-        (json['startDate'] as String?) ??
-        (json['createdAt'] as String?) ??
-        '',
-    createdAt: json['createdAt'] as String? ?? '',
-    updatedAt: json['updatedAt'] as String? ?? '',
-    workerId: json['workerId'] as String?,
-    worktreePath: json['worktreePath'] as String?,
-    agentSessionId: json['agentSessionId'] as String?,
-    result: json['result'] as String?,
-  );
+        id: json['id'] as String?,
+        title: json['title'] as String? ?? '',
+        description: json['description'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        projectId: json['projectId'] as String? ?? '',
+        agentType: json['agentType'] as String? ?? '',
+        agentConfig: AgentExecutionConfigItem.fromJson(
+          json['agentConfig'] as Map<String, dynamic>? ?? const {},
+        ),
+        baseBranch: json['baseBranch'] as String? ?? 'main',
+        preCommands: stringList(json['preCommands']),
+        postCommands: stringList(json['postCommands']),
+        startDate: (json['startDate'] as String?) ??
+            (json['createdAt'] as String?) ??
+            '',
+        endDate: (json['endDate'] as String?) ??
+            (json['startDate'] as String?) ??
+            (json['createdAt'] as String?) ??
+            '',
+        createdAt: json['createdAt'] as String? ?? '',
+        updatedAt: json['updatedAt'] as String? ?? '',
+        workerId: json['workerId'] as String?,
+        worktreePath: json['worktreePath'] as String?,
+        agentSessionId: json['agentSessionId'] as String?,
+        result: json['result'] as String?,
+      );
 
   final String? id;
   final String title;
@@ -277,8 +279,7 @@ class ClaudeExecutionConfigItem {
   final String effort;
   final String permissionMode;
 
-  bool get isEmpty =>
-      model.isEmpty && effort.isEmpty && permissionMode.isEmpty;
+  bool get isEmpty => model.isEmpty && effort.isEmpty && permissionMode.isEmpty;
 
   Map<String, dynamic> toGraphQLInput() => {
         if (model.trim().isNotEmpty) 'model': model.trim(),
@@ -292,12 +293,14 @@ class TaskDetailData {
     required this.task,
     required this.logs,
     required this.conversations,
+    required this.interactions,
     required this.events,
   });
 
   final TaskItem task;
   final List<TaskLogItem> logs;
   final List<ConversationItem> conversations;
+  final List<TaskInteractionItem> interactions;
   final List<DomainEventItem> events;
 }
 
@@ -305,9 +308,9 @@ class TaskLogItem {
   const TaskLogItem({required this.stream, required this.content});
 
   factory TaskLogItem.fromJson(Map<String, dynamic> json) => TaskLogItem(
-    stream: json['stream'] as String? ?? '',
-    content: json['content'] as String? ?? '',
-  );
+        stream: json['stream'] as String? ?? '',
+        content: json['content'] as String? ?? '',
+      );
 
   final String stream;
   final String content;
@@ -330,6 +333,70 @@ class ConversationItem {
   final String role;
   final String content;
   final Map<String, String> metadata;
+}
+
+class TaskInteractionItem {
+  const TaskInteractionItem({
+    required this.id,
+    required this.taskId,
+    required this.kind,
+    required this.status,
+    required this.title,
+    required this.body,
+    required this.rawPayload,
+    required this.createdAt,
+    required this.updatedAt,
+    this.agentSessionId,
+    this.responseDecision,
+    this.responseMessage,
+    this.responsePayload,
+  });
+
+  factory TaskInteractionItem.fromJson(Map<String, dynamic> json) =>
+      TaskInteractionItem(
+        id: json['id'] as String? ?? '',
+        taskId: json['taskId'] as String? ?? '',
+        kind: json['kind'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        title: json['title'] as String? ?? '',
+        body: json['body'] as String? ?? '',
+        rawPayload: json['rawPayload'] as String? ?? '',
+        agentSessionId: json['agentSessionId'] as String?,
+        responseDecision: json['responseDecision'] as String?,
+        responseMessage: json['responseMessage'] as String?,
+        responsePayload: json['responsePayload'] as String?,
+        createdAt: json['createdAt'] as String? ?? '',
+        updatedAt: json['updatedAt'] as String? ?? '',
+      );
+
+  final String id;
+  final String taskId;
+  final String kind;
+  final String status;
+  final String title;
+  final String body;
+  final String rawPayload;
+  final String? agentSessionId;
+  final String? responseDecision;
+  final String? responseMessage;
+  final String? responsePayload;
+  final String createdAt;
+  final String updatedAt;
+
+  Map<String, dynamic> get rawJson {
+    if (rawPayload.trim().isEmpty) {
+      return const {};
+    }
+    try {
+      final decoded = jsonDecode(rawPayload);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {
+      return const {};
+    }
+    return const {};
+  }
 }
 
 Map<String, String> _keyValuesToMap(List<dynamic> items) {
@@ -369,8 +436,8 @@ class DomainEventItem {
       payload: payload == null
           ? 'null'
           : payload is String
-          ? payload
-          : jsonEncode(payload),
+              ? payload
+              : jsonEncode(payload),
       occurredAt: json['occurredAt'] as String? ?? '',
     );
   }
@@ -395,13 +462,13 @@ class ProjectItem {
   });
 
   factory ProjectItem.fromJson(Map<String, dynamic> json) => ProjectItem(
-    id: json['id'] as String? ?? '',
-    name: json['name'] as String? ?? '',
-    gitUrl: json['gitUrl'] as String? ?? '',
-    defaultBranch: json['defaultBranch'] as String? ?? 'main',
-    worktreeNamePrefix: json['worktreeNamePrefix'] as String? ?? '',
-    archived: json['archived'] as bool? ?? false,
-  );
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        gitUrl: json['gitUrl'] as String? ?? '',
+        defaultBranch: json['defaultBranch'] as String? ?? 'main',
+        worktreeNamePrefix: json['worktreeNamePrefix'] as String? ?? '',
+        archived: json['archived'] as bool? ?? false,
+      );
 
   final String id;
   final String name;
@@ -427,23 +494,24 @@ class WorkerItem {
   });
 
   factory WorkerItem.fromJson(Map<String, dynamic> json) => WorkerItem(
-    id: json['id'] as String? ?? '',
-    name: json['name'] as String? ?? '',
-    status: json['status'] as String? ?? '',
-    supportedAgents: stringList(json['supportedAgents']),
-    workDir: json['workDir'] as String? ?? '',
-    startupCommand: json['startupCommand'] as String? ?? '',
-    projectBindingMode: json['projectBindingMode'] as String? ?? 'ALL_PROJECTS',
-    boundProjectIds: stringList(json['boundProjectIds']),
-    currentTaskIds: stringList(json['currentTaskIds']),
-    agentRuntimeEnv: (json['agentRuntimeEnv'] as List<dynamic>? ?? [])
-        .map(
-          (item) =>
-              WorkerAgentRuntimeEnvItem.fromJson(item as Map<String, dynamic>),
-        )
-        .toList(),
-    lastHeartbeatAt: json['lastHeartbeatAt'] as String?,
-  );
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        supportedAgents: stringList(json['supportedAgents']),
+        workDir: json['workDir'] as String? ?? '',
+        startupCommand: json['startupCommand'] as String? ?? '',
+        projectBindingMode:
+            json['projectBindingMode'] as String? ?? 'ALL_PROJECTS',
+        boundProjectIds: stringList(json['boundProjectIds']),
+        currentTaskIds: stringList(json['currentTaskIds']),
+        agentRuntimeEnv: (json['agentRuntimeEnv'] as List<dynamic>? ?? [])
+            .map(
+              (item) => WorkerAgentRuntimeEnvItem.fromJson(
+                  item as Map<String, dynamic>),
+            )
+            .toList(),
+        lastHeartbeatAt: json['lastHeartbeatAt'] as String?,
+      );
 
   final String id;
   final String name;
@@ -469,19 +537,20 @@ class WorkerItem {
     List<String>? currentTaskIds,
     List<WorkerAgentRuntimeEnvItem>? agentRuntimeEnv,
     String? lastHeartbeatAt,
-  }) => WorkerItem(
-    id: id ?? this.id,
-    name: name ?? this.name,
-    status: status ?? this.status,
-    supportedAgents: supportedAgents ?? this.supportedAgents,
-    workDir: workDir ?? this.workDir,
-    startupCommand: startupCommand ?? this.startupCommand,
-    projectBindingMode: projectBindingMode ?? this.projectBindingMode,
-    boundProjectIds: boundProjectIds ?? this.boundProjectIds,
-    currentTaskIds: currentTaskIds ?? this.currentTaskIds,
-    agentRuntimeEnv: agentRuntimeEnv ?? this.agentRuntimeEnv,
-    lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
-  );
+  }) =>
+      WorkerItem(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        status: status ?? this.status,
+        supportedAgents: supportedAgents ?? this.supportedAgents,
+        workDir: workDir ?? this.workDir,
+        startupCommand: startupCommand ?? this.startupCommand,
+        projectBindingMode: projectBindingMode ?? this.projectBindingMode,
+        boundProjectIds: boundProjectIds ?? this.boundProjectIds,
+        currentTaskIds: currentTaskIds ?? this.currentTaskIds,
+        agentRuntimeEnv: agentRuntimeEnv ?? this.agentRuntimeEnv,
+        lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
+      );
 }
 
 class WorkerAgentRuntimeEnvItem {
@@ -509,9 +578,10 @@ class SettingsData {
   });
 
   factory SettingsData.fromJson(Map<String, dynamic> json) => SettingsData(
-    workerHeartbeatTimeout: json['workerHeartbeatTimeout'] as String? ?? '90s',
-    securityPolicy: json['securityPolicy'] as String? ?? 'TRUSTED',
-  );
+        workerHeartbeatTimeout:
+            json['workerHeartbeatTimeout'] as String? ?? '90s',
+        securityPolicy: json['securityPolicy'] as String? ?? 'TRUSTED',
+      );
 
   final String workerHeartbeatTimeout;
   final String securityPolicy;

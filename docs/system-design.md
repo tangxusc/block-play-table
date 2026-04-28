@@ -191,8 +191,8 @@ Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent �
 | `codex.reasoningEffort` | 可选，`minimal` / `low` / `medium` / `high` / `xhigh` |
 | `codex.sandboxMode` | 可选，`read-only` / `workspace-write` / `danger-full-access` |
 | `codex.approvalPolicy` | 可选，`untrusted` / `on-failure` / `on-request` / `never` |
-| `codex.fullAuto` | 可选，映射 Codex `--full-auto` |
-| `codex.bypassApprovalsAndSandbox` | 可选，映射 Codex 危险绕过参数 |
+| `codex.fullAuto` | 可选，app-server 下映射为自动执行常用组合 |
+| `codex.bypassApprovalsAndSandbox` | 可选，app-server 下映射为 `never` + `danger-full-access` |
 | `claude.model` | 可选，自由文本模型名 |
 | `claude.effort` | 可选，`low` / `medium` / `high` / `xhigh` / `max` |
 | `claude.permissionMode` | 可选，映射 Claude `--permission-mode` |
@@ -565,11 +565,14 @@ Task
 5. `MarkRunning`
 6. `AppendLog`
 7. `AppendConversation`
-8. `RequestInterrupt`
-9. `MarkInterrupted`
-10. `MarkFailed`
-11. `MarkCompleted`
-12. `Archive`
+8. `RequestInteraction`
+9. `RecordInteractionAnswered`
+10. `Resume`
+11. `RequestInterrupt`
+12. `MarkInterrupted`
+13. `MarkFailed`
+14. `MarkCompleted`
+15. `Archive`
 
 状态机：
 
@@ -952,10 +955,12 @@ CLI 参数映射：
 
 | Agent | 默认命令 | 非空配置映射 |
 | --- | --- | --- |
-| Codex | `codex exec --skip-git-repo-check --json <prompt>` | `model -> --model`；`reasoningEffort -> -c model_reasoning_effort=...`；`sandboxMode -> --sandbox`；`approvalPolicy -> --ask-for-approval`；`fullAuto -> --full-auto`；`bypassApprovalsAndSandbox -> --dangerously-bypass-approvals-and-sandbox` |
+| Codex | `codex app-server --listen stdio://` + `thread/start`/`turn/start` | `model`、`reasoningEffort`、`sandboxMode`、`approvalPolicy` 写入 app-server JSON-RPC 参数；`fullAuto` 默认映射为 `approvalPolicy=on-failure` + `sandbox=workspace-write`；`bypassApprovalsAndSandbox` 映射为 `approvalPolicy=never` + `sandbox=danger-full-access` |
 | Claude | `claude -p --output-format=stream-json --verbose ... <prompt>` | `model -> --model`；`effort -> --effort`；`permissionMode -> --permission-mode` |
 
 空配置不追加这些参数，保持本机 CLI 默认模型、推理深度和权限行为。继续任务时使用同一 `agentConfig`，避免会话前后模型或权限漂移。
+
+Codex adapter 使用 app-server 的 server request 作为授权通道：`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 和 `item/tool/requestUserInput` 会映射成统一 `TaskInteraction`；UI 响应后再映射回 app-server 的 `accept`、`acceptForSession`、`decline`、`cancel` 或用户输入 answers。`codex exec --json` 只保留为旧测试辅助路径，不作为需要授权任务的执行通道。
 
 统一 Agent 事件：
 
@@ -1083,6 +1088,22 @@ type KeyValue {
   value: String!
 }
 
+type TaskInteraction {
+  id: ID!
+  taskId: ID!
+  kind: TaskInteractionKind!
+  status: TaskInteractionStatus!
+  title: String!
+  body: String!
+  rawPayload: String!
+  agentSessionId: String
+  responseDecision: TaskInteractionDecision
+  responseMessage: String
+  responsePayload: String!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
 input CreateTaskInput {
   title: String!
   description: String
@@ -1156,6 +1177,13 @@ input KeyValueInput {
   value: String!
 }
 
+input RespondTaskInteractionInput {
+  interactionId: ID!
+  decision: TaskInteractionDecision
+  message: String
+  payload: String
+}
+
 input CreateWorkerInput {
   id: ID
   name: String!
@@ -1187,6 +1215,7 @@ input UpdateWorkerInput {
 type Query {
   task(id: ID!): Task
   tasks(filter: TaskFilter, page: PageInput): TaskConnection!
+  taskInteractions(taskId: ID!, status: TaskInteractionStatus): [TaskInteraction!]!
 
   worker(id: ID!): Worker
   workers(filter: WorkerFilter): [Worker!]!
@@ -1208,6 +1237,8 @@ type Mutation {
   updateTask(input: UpdateTaskInput!): Task!
   assignWorker(input: AssignWorkerInput!): Task!
   startTask(input: StartTaskInput!): Task!
+  continueTask(input: ContinueTaskInput!): Task!
+  respondTaskInteraction(input: RespondTaskInteractionInput!): TaskInteraction!
   interruptTask(taskId: ID!): Task!
   archiveTask(taskId: ID!): Task!
 
@@ -1327,10 +1358,21 @@ Worker -> Manager
 | `TASK_LOG` | 任务日志 |
 | `TASK_CONVERSATION` | AI 对话 |
 | `TASK_WAITING_INPUT` | 等待用户输入 |
+| `TASK_INTERACTION_REQUEST` | Agent 请求用户输入、命令审批、文件审批或权限审批 |
+| `TASK_INTERACTION_RESOLVED` | Worker 确认 Agent 已接收用户响应，任务可恢复运行 |
 | `TASK_INTERRUPTED` | 任务已中断 |
 | `TASK_COMPLETED` | 任务已完成 |
 | `TASK_FAILED` | 任务失败 |
 | `TASK_RESULT` | 任务结果 |
+
+Manager 下发给 Worker 的实时交互消息：
+
+| 消息类型 | 说明 |
+| --- | --- |
+| `TASK_INTERACTION_RESPONSE` | 用户对同一 `interactionId` 的批准、拒绝、取消或文本回答 |
+
+实时交互不复用 `TASK_CONTINUE`。`continueTask` 只用于已完成任务基于 `agentSessionId` 继续会话；运行中的授权和提问走 `TaskInteraction` 持久化闭环。
+`TASK_INTERACTION_RESOLVED` 会回带 `responded/decision/message/payload`，用于让 Manager 在恢复任务前幂等落库用户响应，避免 Agent 极快完成时终态清理把已响应交互误取消。
 
 ## 10. 数据架构
 
@@ -1484,6 +1526,26 @@ PostgreSQL Implementation
 | `content` | text | 内容 |
 | `metadata` | json | 元数据 |
 | `created_at` | datetime | 创建时间 |
+
+#### task_interactions
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | `interactionId`，由 Worker/Agent adapter 生成 |
+| `task_id` | string | 关联任务 |
+| `kind` | string | `USER_INPUT` / `COMMAND_APPROVAL` / `FILE_APPROVAL` / `PERMISSION_APPROVAL` |
+| `status` | string | `PENDING` / `ANSWERED` / `CANCELED` |
+| `title` | string | UI 展示标题 |
+| `body` | text | UI 展示正文或问题 |
+| `raw_payload` | text | Agent 原始请求 JSON，便于 UI 展示和排障 |
+| `agent_session_id` | string | Agent 会话或 Codex thread ID |
+| `response_decision` | string | 用户决策 |
+| `response_message` | text | 用户文本回答 |
+| `response_payload` | text | 适配器透传响应 JSON |
+| `created_at` | datetime | 创建时间 |
+| `updated_at` | datetime | 更新时间 |
+
+说明：终态任务会自动取消仍为 `PENDING` 的交互；Manager 只有在 Worker 确认交互响应已路由到运行中的 Agent 后，才把交互标记为 `ANSWERED`。
 
 ## 11. 部署架构
 

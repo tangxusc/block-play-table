@@ -110,6 +110,52 @@ func TestMemoryStorePersistsOutboxMessages(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreTaskInteractionCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	interaction := domain.TaskInteraction{
+		ID:             "interaction-1",
+		TaskID:         "task-1",
+		Kind:           domain.TaskInteractionCommandApproval,
+		Status:         domain.TaskInteractionPending,
+		Title:          "Approve command",
+		Body:           "Run make test",
+		RawPayload:     `{"command":"make test"}`,
+		AgentSessionID: "session-1",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.SaveTaskInteraction(ctx, interaction); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.TaskInteraction(ctx, interaction.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RawPayload != interaction.RawPayload || loaded.Status != domain.TaskInteractionPending {
+		t.Fatalf("loaded interaction = %+v", loaded)
+	}
+	all, err := s.TaskInteractions(ctx, "task-1", "")
+	if err != nil || len(all) != 1 {
+		t.Fatalf("all interactions = %+v, %v", all, err)
+	}
+	pending, err := s.TaskInteractions(ctx, "task-1", domain.TaskInteractionPending)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending interactions = %+v, %v", pending, err)
+	}
+	if err := s.CancelPendingTaskInteractions(ctx, "task-1", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	canceled, err := s.TaskInteraction(ctx, interaction.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canceled.Status != domain.TaskInteractionCanceled || canceled.ResponseDecision != domain.TaskInteractionCancel {
+		t.Fatalf("canceled interaction = %+v", canceled)
+	}
+}
+
 func TestMemoryStoreNotFoundErrors(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore()

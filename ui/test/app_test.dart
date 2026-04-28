@@ -667,8 +667,7 @@ class FakeApiClient extends ApiClient {
     SettingsData? settings,
     WorkerItem? worker,
     List<TaskItem>? tasks,
-  })
-      : _settings = settings ?? const SettingsData(),
+  })  : _settings = settings ?? const SettingsData(),
         _worker = worker ?? _defaultWorker,
         _tasks = tasks ?? [_task],
         super('http://manager/graphql');
@@ -811,6 +810,7 @@ class FakeApiClient extends ApiClient {
               ),
             ]
           : const [],
+      interactions: const [],
       events: _completedDetail
           ? const [
               DomainEventItem(

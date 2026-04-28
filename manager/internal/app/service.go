@@ -208,6 +208,32 @@ type ContinueTaskInput struct {
 	Message string `json:"message"`
 }
 
+type TaskInteractionRequestInput struct {
+	InteractionID  string                     `json:"interactionId"`
+	TaskID         string                     `json:"taskId"`
+	Kind           domain.TaskInteractionKind `json:"kind"`
+	Title          string                     `json:"title"`
+	Body           string                     `json:"body"`
+	RawPayload     string                     `json:"rawPayload"`
+	AgentSessionID string                     `json:"agentSessionId"`
+}
+
+type RespondTaskInteractionInput struct {
+	InteractionID string                         `json:"interactionId"`
+	Decision      domain.TaskInteractionDecision `json:"decision"`
+	Message       string                         `json:"message"`
+	Payload       string                         `json:"payload"`
+}
+
+type TaskInteractionResolvedInput struct {
+	InteractionID string                         `json:"interactionId"`
+	TaskID        string                         `json:"taskId"`
+	Responded     bool                           `json:"responded"`
+	Decision      domain.TaskInteractionDecision `json:"decision"`
+	Message       string                         `json:"message"`
+	Payload       string                         `json:"payload"`
+}
+
 type TaskFilter struct {
 	Status          domain.TaskStatus
 	ProjectID       string
@@ -977,6 +1003,183 @@ func (s *Service) ApplyWorkerWaitingInput(ctx context.Context, messageID, taskID
 	return task, s.appendEvents(ctx, events)
 }
 
+func (s *Service) ApplyWorkerTaskInteractionRequest(ctx context.Context, messageID string, input TaskInteractionRequestInput) (*domain.Task, error) {
+	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
+	if err != nil || !ok {
+		return s.store.Task(ctx, input.TaskID)
+	}
+	now := s.clock()
+	if strings.TrimSpace(input.InteractionID) == "" {
+		input.InteractionID = messageID
+	}
+	if strings.TrimSpace(input.TaskID) == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	if !input.Kind.Valid() {
+		return nil, fmt.Errorf("unsupported task interaction kind %q", input.Kind)
+	}
+	if existing, err := s.store.TaskInteraction(ctx, input.InteractionID); err == nil {
+		return s.store.Task(ctx, existing.TaskID)
+	}
+	task, err := s.store.Task(ctx, input.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	interaction, err := domain.NewTaskInteraction(domain.TaskInteraction{
+		ID:             input.InteractionID,
+		TaskID:         task.ID,
+		Kind:           input.Kind,
+		Status:         domain.TaskInteractionPending,
+		Title:          input.Title,
+		Body:           input.Body,
+		RawPayload:     input.RawPayload,
+		AgentSessionID: firstString(input.AgentSessionID, task.AgentSessionID),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := task.RequestInteraction(interaction.ID, interaction.Kind, interaction.Title, now, interaction.AgentSessionID); err != nil {
+		return nil, err
+	}
+	if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
+		return nil, err
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, s.appendEvents(ctx, events)
+}
+
+func (s *Service) PrepareTaskInteractionResponse(ctx context.Context, input RespondTaskInteractionInput) (*domain.Task, *domain.TaskInteraction, protocol.TaskInteractionResponsePayload, error) {
+	if strings.TrimSpace(input.InteractionID) == "" {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("interaction id is required")
+	}
+	if !input.Decision.Valid() {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("unsupported task interaction decision %q", input.Decision)
+	}
+	interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
+	if err != nil {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
+	}
+	if interaction.Status != domain.TaskInteractionPending {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: interaction %s is %s", domain.ErrConflict, interaction.ID, interaction.Status)
+	}
+	task, err := s.store.Task(ctx, interaction.TaskID)
+	if err != nil {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
+	}
+	if task.WorkerID == "" {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: interaction %s has no worker", domain.ErrConflict, interaction.ID)
+	}
+	worker, err := s.store.Worker(ctx, task.WorkerID)
+	if err != nil {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
+	}
+	if worker.Status != domain.WorkerOnline {
+		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: worker %s is not online", domain.ErrConflict, worker.ID)
+	}
+	payload := protocol.TaskInteractionResponsePayload{
+		InteractionID: interaction.ID,
+		TaskID:        task.ID,
+		Decision:      input.Decision,
+		Message:       input.Message,
+		Payload:       input.Payload,
+	}
+	return task, interaction, payload, nil
+}
+
+func (s *Service) MarkTaskInteractionAnswered(ctx context.Context, input RespondTaskInteractionInput) (*domain.TaskInteraction, error) {
+	now := s.clock()
+	interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
+	if err != nil {
+		return nil, err
+	}
+	if interaction.Status == domain.TaskInteractionAnswered {
+		if interaction.ResponseDecision == input.Decision &&
+			interaction.ResponseMessage == input.Message &&
+			interaction.ResponsePayload == input.Payload {
+			return interaction, nil
+		}
+		return nil, fmt.Errorf("%w: interaction %s is already answered", domain.ErrConflict, interaction.ID)
+	}
+	if interaction.Status != domain.TaskInteractionPending {
+		return nil, fmt.Errorf("%w: interaction %s is %s", domain.ErrConflict, interaction.ID, interaction.Status)
+	}
+	interaction.Status = domain.TaskInteractionAnswered
+	interaction.ResponseDecision = input.Decision
+	interaction.ResponseMessage = input.Message
+	interaction.ResponsePayload = input.Payload
+	interaction.UpdatedAt = now
+	if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
+		return nil, err
+	}
+	task, err := s.store.Task(ctx, interaction.TaskID)
+	if err != nil {
+		return interaction, nil
+	}
+	if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
+		return nil, err
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.appendEvents(ctx, events); err != nil {
+		return nil, err
+	}
+	return interaction, nil
+}
+
+func (s *Service) ApplyWorkerTaskInteractionResolved(ctx context.Context, messageID string, input TaskInteractionResolvedInput) (*domain.Task, error) {
+	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
+	if err != nil || !ok {
+		return s.store.Task(ctx, input.TaskID)
+	}
+	now := s.clock()
+	task, err := s.store.Task(ctx, input.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if input.Responded {
+		interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
+		if err != nil {
+			return nil, err
+		}
+		if interaction.Status == domain.TaskInteractionPending {
+			interaction.Status = domain.TaskInteractionAnswered
+			interaction.ResponseDecision = input.Decision
+			interaction.ResponseMessage = input.Message
+			interaction.ResponsePayload = input.Payload
+			interaction.UpdatedAt = now
+			if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
+				return nil, err
+			}
+			if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if task.Status == domain.TaskWaitingInput {
+		if err := task.Resume(now); err != nil {
+			return nil, err
+		}
+	} else if task.Status != domain.TaskRunning {
+		return nil, fmt.Errorf("%w: resolve interaction from %s", domain.ErrInvalidTransition, task.Status)
+	} else {
+		if err := task.RecordInteractionResolved(input.InteractionID, now); err != nil {
+			return nil, err
+		}
+	}
+	events := task.PullEvents()
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, s.appendEvents(ctx, events)
+}
+
 func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, result string, agentSessionIDs ...string) (*domain.Task, error) {
 	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
 	if err != nil || !ok {
@@ -1012,6 +1215,9 @@ func (s *Service) ApplyWorkerTaskCompleted(ctx context.Context, messageID, taskI
 	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
 		return nil, err
 	}
+	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
+		return nil, err
+	}
 	events := task.PullEvents()
 	if err := s.store.SaveTask(ctx, task); err != nil {
 		return nil, err
@@ -1033,6 +1239,9 @@ func (s *Service) ApplyWorkerTaskFailed(ctx context.Context, messageID, taskID, 
 		return nil, err
 	}
 	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
+		return nil, err
+	}
+	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
 		return nil, err
 	}
 	events := task.PullEvents()
@@ -1061,6 +1270,9 @@ func (s *Service) ApplyWorkerTaskInterrupted(ctx context.Context, messageID, tas
 		return nil, err
 	}
 	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
+		return nil, err
+	}
+	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
 		return nil, err
 	}
 	events := task.PullEvents()

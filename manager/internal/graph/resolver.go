@@ -19,6 +19,7 @@ import (
 type WorkerSender interface {
 	SendTaskStart(workerID, taskID string, payload protocol.TaskStartPayload) error
 	SendTaskContinue(workerID, taskID string, payload protocol.TaskContinuePayload) error
+	SendTaskInteractionResponse(workerID, taskID string, payload protocol.TaskInteractionResponsePayload) error
 	SendTaskInterrupt(workerID, taskID string) error
 	SendTaskCancel(workerID, taskID string) error
 }
@@ -276,6 +277,40 @@ func toModelConversation(message domain.ConversationMessage) *model.Conversation
 		Metadata:  toKeyValues(message.Metadata),
 		CreatedAt: message.CreatedAt,
 	}
+}
+
+func toModelTaskInteraction(interaction *domain.TaskInteraction) *model.TaskInteraction {
+	if interaction == nil {
+		return nil
+	}
+	var responseDecision *model.TaskInteractionDecision
+	if interaction.ResponseDecision != "" {
+		value := model.TaskInteractionDecision(interaction.ResponseDecision)
+		responseDecision = &value
+	}
+	return &model.TaskInteraction{
+		ID:               interaction.ID,
+		TaskID:           interaction.TaskID,
+		Kind:             model.TaskInteractionKind(interaction.Kind),
+		Status:           model.TaskInteractionStatus(interaction.Status),
+		Title:            interaction.Title,
+		Body:             interaction.Body,
+		RawPayload:       interaction.RawPayload,
+		AgentSessionID:   optionalString(interaction.AgentSessionID),
+		ResponseDecision: responseDecision,
+		ResponseMessage:  optionalString(interaction.ResponseMessage),
+		ResponsePayload:  interaction.ResponsePayload,
+		CreatedAt:        interaction.CreatedAt,
+		UpdatedAt:        interaction.UpdatedAt,
+	}
+}
+
+func toModelTaskInteractions(interactions []domain.TaskInteraction) []*model.TaskInteraction {
+	out := make([]*model.TaskInteraction, 0, len(interactions))
+	for index := range interactions {
+		out = append(out, toModelTaskInteraction(&interactions[index]))
+	}
+	return out
 }
 
 func toModelEvent(event domain.DomainEvent) *model.DomainEvent {

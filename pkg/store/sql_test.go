@@ -53,6 +53,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "006_task_display_dates", SQL: migrations.TaskDisplayDatesSQL},
 		{Version: "007_task_agent_config", SQL: migrations.TaskAgentConfigSQL},
 		{Version: "008_worker_current_task_ids", SQL: migrations.WorkerCurrentTaskIDsSQL},
+		{Version: "009_task_interactions", SQL: migrations.TaskInteractionsSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -123,6 +124,13 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if !hasWorkerCurrentTaskIDs {
 		t.Fatal("workers.current_task_ids should exist after versioned migrations")
 	}
+	hasTaskInteractionStatus, err := sqliteTableHasColumn(ctx, sqlStore, "task_interactions", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTaskInteractionStatus {
+		t.Fatal("task_interactions.status should exist after versioned migrations")
+	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
 	if err != nil {
@@ -191,6 +199,42 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if err := sqlStore.SaveTask(ctx, task); err != nil {
 		t.Fatal(err)
+	}
+	interaction := domain.TaskInteraction{
+		ID:             "interaction-list",
+		TaskID:         task.ID,
+		Kind:           domain.TaskInteractionCommandApproval,
+		Status:         domain.TaskInteractionPending,
+		Title:          "Approve",
+		Body:           "Run command",
+		RawPayload:     `{"command":"make test"}`,
+		AgentSessionID: "session-list",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := sqlStore.SaveTaskInteraction(ctx, interaction); err != nil {
+		t.Fatalf("SaveTaskInteraction returned error: %v", err)
+	}
+	loadedInteraction, err := sqlStore.TaskInteraction(ctx, interaction.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedInteraction.Kind != domain.TaskInteractionCommandApproval || loadedInteraction.RawPayload != interaction.RawPayload {
+		t.Fatalf("TaskInteraction = %+v", loadedInteraction)
+	}
+	filteredInteractions, err := sqlStore.TaskInteractions(ctx, task.ID, domain.TaskInteractionPending)
+	if err != nil || len(filteredInteractions) != 1 {
+		t.Fatalf("TaskInteractions filtered = %+v, %v", filteredInteractions, err)
+	}
+	if err := sqlStore.CancelPendingTaskInteractions(ctx, task.ID, now.Add(time.Minute)); err != nil {
+		t.Fatalf("CancelPendingTaskInteractions returned error: %v", err)
+	}
+	canceledInteraction, err := sqlStore.TaskInteraction(ctx, interaction.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canceledInteraction.Status != domain.TaskInteractionCanceled || canceledInteraction.ResponseDecision != domain.TaskInteractionCancel {
+		t.Fatalf("canceled interaction = %+v", canceledInteraction)
 	}
 	if projects, err := sqlStore.Projects(ctx); err != nil || len(projects) != 1 || projects[0].ID != project.ID {
 		t.Fatalf("Projects = %+v, %v", projects, err)

@@ -129,6 +129,7 @@ type ComplexityRoot struct {
 		EnableWorker                 func(childComplexity int, id string) int
 		InterruptTask                func(childComplexity int, taskID *string, id *string) int
 		RegisterWorker               func(childComplexity int, input model.RegisterWorkerInput) int
+		RespondTaskInteraction       func(childComplexity int, input model.RespondTaskInteractionInput) int
 		RetryTask                    func(childComplexity int, taskID *string, id *string) int
 		StartTask                    func(childComplexity int, input *model.StartTaskInput, taskID *string, id *string) int
 		UpdateProject                func(childComplexity int, input model.UpdateProjectInput) int
@@ -168,6 +169,7 @@ type ComplexityRoot struct {
 		Task              func(childComplexity int, id string) int
 		TaskConversations func(childComplexity int, taskID string) int
 		TaskEvents        func(childComplexity int, taskID string) int
+		TaskInteractions  func(childComplexity int, taskID string, status *model.TaskInteractionStatus) int
 		TaskList          func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
 		TaskLogs          func(childComplexity int, taskID string) int
 		Tasks             func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
@@ -219,6 +221,22 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	TaskInteraction struct {
+		AgentSessionID   func(childComplexity int) int
+		Body             func(childComplexity int) int
+		CreatedAt        func(childComplexity int) int
+		ID               func(childComplexity int) int
+		Kind             func(childComplexity int) int
+		RawPayload       func(childComplexity int) int
+		ResponseDecision func(childComplexity int) int
+		ResponseMessage  func(childComplexity int) int
+		ResponsePayload  func(childComplexity int) int
+		Status           func(childComplexity int) int
+		TaskID           func(childComplexity int) int
+		Title            func(childComplexity int) int
+		UpdatedAt        func(childComplexity int) int
+	}
+
 	TaskLog struct {
 		Content   func(childComplexity int) int
 		CreatedAt func(childComplexity int) int
@@ -257,6 +275,7 @@ type MutationResolver interface {
 	AssignWorker(ctx context.Context, input *model.AssignWorkerInput, taskID *string, workerID *string) (*model.Task, error)
 	StartTask(ctx context.Context, input *model.StartTaskInput, taskID *string, id *string) (*model.Task, error)
 	ContinueTask(ctx context.Context, input model.ContinueTaskInput) (*model.Task, error)
+	RespondTaskInteraction(ctx context.Context, input model.RespondTaskInteractionInput) (*model.TaskInteraction, error)
 	InterruptTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	ArchiveTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	RetryTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
@@ -287,6 +306,7 @@ type QueryResolver interface {
 	OutboxMessages(ctx context.Context, includePublished *bool) ([]*model.OutboxMessage, error)
 	TaskLogs(ctx context.Context, taskID string) ([]*model.TaskLog, error)
 	TaskConversations(ctx context.Context, taskID string) ([]*model.ConversationMessage, error)
+	TaskInteractions(ctx context.Context, taskID string, status *model.TaskInteractionStatus) ([]*model.TaskInteraction, error)
 }
 type SubscriptionResolver interface {
 	TaskUpdated(ctx context.Context, taskID string) (<-chan *model.DomainEvent, error)
@@ -740,6 +760,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.RegisterWorker(childComplexity, args["input"].(model.RegisterWorkerInput)), true
+	case "Mutation.respondTaskInteraction":
+		if e.ComplexityRoot.Mutation.RespondTaskInteraction == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_respondTaskInteraction_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.RespondTaskInteraction(childComplexity, args["input"].(model.RespondTaskInteractionInput)), true
 	case "Mutation.retryTask":
 		if e.ComplexityRoot.Mutation.RetryTask == nil {
 			break
@@ -999,6 +1030,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.TaskEvents(childComplexity, args["taskId"].(string)), true
+	case "Query.taskInteractions":
+		if e.ComplexityRoot.Query.TaskInteractions == nil {
+			break
+		}
+
+		args, err := ec.field_Query_taskInteractions_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.TaskInteractions(childComplexity, args["taskId"].(string), args["status"].(*model.TaskInteractionStatus)), true
 	case "Query.taskList":
 		if e.ComplexityRoot.Query.TaskList == nil {
 			break
@@ -1276,6 +1318,85 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.TaskConnection.TotalCount(childComplexity), true
 
+	case "TaskInteraction.agentSessionId":
+		if e.ComplexityRoot.TaskInteraction.AgentSessionID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.AgentSessionID(childComplexity), true
+	case "TaskInteraction.body":
+		if e.ComplexityRoot.TaskInteraction.Body == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.Body(childComplexity), true
+	case "TaskInteraction.createdAt":
+		if e.ComplexityRoot.TaskInteraction.CreatedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.CreatedAt(childComplexity), true
+	case "TaskInteraction.id":
+		if e.ComplexityRoot.TaskInteraction.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.ID(childComplexity), true
+	case "TaskInteraction.kind":
+		if e.ComplexityRoot.TaskInteraction.Kind == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.Kind(childComplexity), true
+	case "TaskInteraction.rawPayload":
+		if e.ComplexityRoot.TaskInteraction.RawPayload == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.RawPayload(childComplexity), true
+	case "TaskInteraction.responseDecision":
+		if e.ComplexityRoot.TaskInteraction.ResponseDecision == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.ResponseDecision(childComplexity), true
+	case "TaskInteraction.responseMessage":
+		if e.ComplexityRoot.TaskInteraction.ResponseMessage == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.ResponseMessage(childComplexity), true
+	case "TaskInteraction.responsePayload":
+		if e.ComplexityRoot.TaskInteraction.ResponsePayload == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.ResponsePayload(childComplexity), true
+	case "TaskInteraction.status":
+		if e.ComplexityRoot.TaskInteraction.Status == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.Status(childComplexity), true
+	case "TaskInteraction.taskId":
+		if e.ComplexityRoot.TaskInteraction.TaskID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.TaskID(childComplexity), true
+	case "TaskInteraction.title":
+		if e.ComplexityRoot.TaskInteraction.Title == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.Title(childComplexity), true
+	case "TaskInteraction.updatedAt":
+		if e.ComplexityRoot.TaskInteraction.UpdatedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskInteraction.UpdatedAt(childComplexity), true
+
 	case "TaskLog.content":
 		if e.ComplexityRoot.TaskLog.Content == nil {
 			break
@@ -1433,6 +1554,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputPageInput,
 		ec.unmarshalInputProjectFilter,
 		ec.unmarshalInputRegisterWorkerInput,
+		ec.unmarshalInputRespondTaskInteractionInput,
 		ec.unmarshalInputStartTaskInput,
 		ec.unmarshalInputTaskFilter,
 		ec.unmarshalInputUpdateProjectInput,
@@ -1704,6 +1826,17 @@ func (ec *executionContext) field_Mutation_registerWorker_args(ctx context.Conte
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_respondTaskInteraction_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNRespondTaskInteractionInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐRespondTaskInteractionInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_retryTask_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1896,6 +2029,22 @@ func (ec *executionContext) field_Query_taskEvents_args(ctx context.Context, raw
 		return nil, err
 	}
 	args["taskId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_taskInteractions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "taskId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["taskId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "status", ec.unmarshalOTaskInteractionStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus)
+	if err != nil {
+		return nil, err
+	}
+	args["status"] = arg1
 	return args, nil
 }
 
@@ -4041,6 +4190,75 @@ func (ec *executionContext) fieldContext_Mutation_continueTask(ctx context.Conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_continueTask_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_respondTaskInteraction(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_respondTaskInteraction,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().RespondTaskInteraction(ctx, fc.Args["input"].(model.RespondTaskInteractionInput))
+		},
+		nil,
+		ec.marshalNTaskInteraction2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteraction,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_respondTaskInteraction(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_TaskInteraction_id(ctx, field)
+			case "taskId":
+				return ec.fieldContext_TaskInteraction_taskId(ctx, field)
+			case "kind":
+				return ec.fieldContext_TaskInteraction_kind(ctx, field)
+			case "status":
+				return ec.fieldContext_TaskInteraction_status(ctx, field)
+			case "title":
+				return ec.fieldContext_TaskInteraction_title(ctx, field)
+			case "body":
+				return ec.fieldContext_TaskInteraction_body(ctx, field)
+			case "rawPayload":
+				return ec.fieldContext_TaskInteraction_rawPayload(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_TaskInteraction_agentSessionId(ctx, field)
+			case "responseDecision":
+				return ec.fieldContext_TaskInteraction_responseDecision(ctx, field)
+			case "responseMessage":
+				return ec.fieldContext_TaskInteraction_responseMessage(ctx, field)
+			case "responsePayload":
+				return ec.fieldContext_TaskInteraction_responsePayload(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_TaskInteraction_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_TaskInteraction_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TaskInteraction", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_respondTaskInteraction_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -6291,6 +6509,75 @@ func (ec *executionContext) fieldContext_Query_taskConversations(ctx context.Con
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_taskInteractions(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_taskInteractions,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().TaskInteractions(ctx, fc.Args["taskId"].(string), fc.Args["status"].(*model.TaskInteractionStatus))
+		},
+		nil,
+		ec.marshalNTaskInteraction2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_taskInteractions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_TaskInteraction_id(ctx, field)
+			case "taskId":
+				return ec.fieldContext_TaskInteraction_taskId(ctx, field)
+			case "kind":
+				return ec.fieldContext_TaskInteraction_kind(ctx, field)
+			case "status":
+				return ec.fieldContext_TaskInteraction_status(ctx, field)
+			case "title":
+				return ec.fieldContext_TaskInteraction_title(ctx, field)
+			case "body":
+				return ec.fieldContext_TaskInteraction_body(ctx, field)
+			case "rawPayload":
+				return ec.fieldContext_TaskInteraction_rawPayload(ctx, field)
+			case "agentSessionId":
+				return ec.fieldContext_TaskInteraction_agentSessionId(ctx, field)
+			case "responseDecision":
+				return ec.fieldContext_TaskInteraction_responseDecision(ctx, field)
+			case "responseMessage":
+				return ec.fieldContext_TaskInteraction_responseMessage(ctx, field)
+			case "responsePayload":
+				return ec.fieldContext_TaskInteraction_responsePayload(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_TaskInteraction_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_TaskInteraction_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TaskInteraction", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_taskInteractions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7516,6 +7803,383 @@ func (ec *executionContext) fieldContext_TaskConnection_totalCount(_ context.Con
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_id(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_taskId(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_taskId,
+		func(ctx context.Context) (any, error) {
+			return obj.TaskID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_taskId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_kind(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_kind,
+		func(ctx context.Context) (any, error) {
+			return obj.Kind, nil
+		},
+		nil,
+		ec.marshalNTaskInteractionKind2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionKind,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_kind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type TaskInteractionKind does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_status(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNTaskInteractionStatus2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type TaskInteractionStatus does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_title(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_title,
+		func(ctx context.Context) (any, error) {
+			return obj.Title, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_title(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_body(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_body,
+		func(ctx context.Context) (any, error) {
+			return obj.Body, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_body(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_rawPayload(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_rawPayload,
+		func(ctx context.Context) (any, error) {
+			return obj.RawPayload, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_rawPayload(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_agentSessionId(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_agentSessionId,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentSessionID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_agentSessionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_responseDecision(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_responseDecision,
+		func(ctx context.Context) (any, error) {
+			return obj.ResponseDecision, nil
+		},
+		nil,
+		ec.marshalOTaskInteractionDecision2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionDecision,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_responseDecision(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type TaskInteractionDecision does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_responseMessage(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_responseMessage,
+		func(ctx context.Context) (any, error) {
+			return obj.ResponseMessage, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_responseMessage(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_responsePayload(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_responsePayload,
+		func(ctx context.Context) (any, error) {
+			return obj.ResponsePayload, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_responsePayload(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskInteraction_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.TaskInteraction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskInteraction_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskInteraction_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskInteraction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -10399,6 +11063,57 @@ func (ec *executionContext) unmarshalInputRegisterWorkerInput(ctx context.Contex
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputRespondTaskInteractionInput(ctx context.Context, obj any) (model.RespondTaskInteractionInput, error) {
+	var it model.RespondTaskInteractionInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"interactionId", "decision", "message", "payload"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "interactionId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("interactionId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InteractionID = data
+		case "decision":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("decision"))
+			data, err := ec.unmarshalOTaskInteractionDecision2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionDecision(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Decision = data
+		case "message":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("message"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Message = data
+		case "payload":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payload"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Payload = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputStartTaskInput(ctx context.Context, obj any) (model.StartTaskInput, error) {
 	var it model.StartTaskInput
 	if obj == nil {
@@ -11459,6 +12174,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "respondTaskInteraction":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_respondTaskInteraction(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "interruptTask":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_interruptTask(ctx, field)
@@ -12033,6 +12755,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "taskInteractions":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_taskInteractions(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -12288,6 +13032,96 @@ func (ec *executionContext) _TaskConnection(ctx context.Context, sel ast.Selecti
 			}
 		case "totalCount":
 			out.Values[i] = ec._TaskConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var taskInteractionImplementors = []string{"TaskInteraction"}
+
+func (ec *executionContext) _TaskInteraction(ctx context.Context, sel ast.SelectionSet, obj *model.TaskInteraction) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, taskInteractionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TaskInteraction")
+		case "id":
+			out.Values[i] = ec._TaskInteraction_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "taskId":
+			out.Values[i] = ec._TaskInteraction_taskId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "kind":
+			out.Values[i] = ec._TaskInteraction_kind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "status":
+			out.Values[i] = ec._TaskInteraction_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "title":
+			out.Values[i] = ec._TaskInteraction_title(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "body":
+			out.Values[i] = ec._TaskInteraction_body(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rawPayload":
+			out.Values[i] = ec._TaskInteraction_rawPayload(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "agentSessionId":
+			out.Values[i] = ec._TaskInteraction_agentSessionId(ctx, field, obj)
+		case "responseDecision":
+			out.Values[i] = ec._TaskInteraction_responseDecision(ctx, field, obj)
+		case "responseMessage":
+			out.Values[i] = ec._TaskInteraction_responseMessage(ctx, field, obj)
+		case "responsePayload":
+			out.Values[i] = ec._TaskInteraction_responsePayload(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._TaskInteraction_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._TaskInteraction_updatedAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -13278,6 +14112,11 @@ func (ec *executionContext) unmarshalNRegisterWorkerInput2githubᚗcomᚋtangxus
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNRespondTaskInteractionInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐRespondTaskInteractionInput(ctx context.Context, v any) (model.RespondTaskInteractionInput, error) {
+	res, err := ec.unmarshalInputRespondTaskInteractionInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) marshalNSettings2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSettings(ctx context.Context, sel ast.SelectionSet, v model.Settings) graphql.Marshaler {
 	return ec._Settings(ctx, sel, &v)
 }
@@ -13380,6 +14219,56 @@ func (ec *executionContext) marshalNTaskConnection2ᚖgithubᚗcomᚋtangxuscᚋ
 		return graphql.Null
 	}
 	return ec._TaskConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNTaskInteraction2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteraction(ctx context.Context, sel ast.SelectionSet, v model.TaskInteraction) graphql.Marshaler {
+	return ec._TaskInteraction(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNTaskInteraction2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.TaskInteraction) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNTaskInteraction2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteraction(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNTaskInteraction2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteraction(ctx context.Context, sel ast.SelectionSet, v *model.TaskInteraction) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._TaskInteraction(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNTaskInteractionKind2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionKind(ctx context.Context, v any) (model.TaskInteractionKind, error) {
+	var res model.TaskInteractionKind
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNTaskInteractionKind2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionKind(ctx context.Context, sel ast.SelectionSet, v model.TaskInteractionKind) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNTaskInteractionStatus2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus(ctx context.Context, v any) (model.TaskInteractionStatus, error) {
+	var res model.TaskInteractionStatus
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNTaskInteractionStatus2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus(ctx context.Context, sel ast.SelectionSet, v model.TaskInteractionStatus) graphql.Marshaler {
+	return v
 }
 
 func (ec *executionContext) marshalNTaskLog2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskLog(ctx context.Context, sel ast.SelectionSet, v model.TaskLog) graphql.Marshaler {
@@ -14064,6 +14953,38 @@ func (ec *executionContext) unmarshalOTaskFilter2ᚖgithubᚗcomᚋtangxuscᚋbl
 	}
 	res, err := ec.unmarshalInputTaskFilter(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOTaskInteractionDecision2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionDecision(ctx context.Context, v any) (*model.TaskInteractionDecision, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.TaskInteractionDecision)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTaskInteractionDecision2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionDecision(ctx context.Context, sel ast.SelectionSet, v *model.TaskInteractionDecision) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOTaskInteractionStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus(ctx context.Context, v any) (*model.TaskInteractionStatus, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.TaskInteractionStatus)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTaskInteractionStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionStatus(ctx context.Context, sel ast.SelectionSet, v *model.TaskInteractionStatus) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) unmarshalOTaskStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskStatus(ctx context.Context, v any) (*model.TaskStatus, error) {

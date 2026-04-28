@@ -10,6 +10,7 @@
 
 - 验证 Project、Worker、Task、Settings、Board 等核心对象可以通过 UI/API 完成主要工作流。
 - 验证 Manager GraphQL 与 Worker WebSocket 的协议交互、状态流转、日志、会话、结果和领域事件持久化。
+- 验证运行中 Agent 交互闭环：Worker 上报 `TASK_INTERACTION_REQUEST` 后任务进入 `WAITING_INPUT`，UI 批准/回答后 Manager 下发 `TASK_INTERACTION_RESPONSE`，Worker 上报 `TASK_INTERACTION_RESOLVED` 并恢复执行。
 - 验证任务分配时的 Agent CLI 运行配置会保存、展示，并随 `TASK_START` / `TASK_CONTINUE` 下发给 Worker。
 - 验证 Flutter Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
 - 验证真实 Codex/Claude CLI 在发布前可以通过 Worker 执行固定任务，并产出可追踪结果。
@@ -31,7 +32,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、交互授权、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -43,7 +44,7 @@
 - Node.js 与 npm：用于安装和运行 Playwright。
 - Playwright：通过 `npm install` 安装 `@playwright/test`。
 - Docker：用于本地启动 Manager、Worker、UI、PostgreSQL，或运行 Flutter 测试镜像。
-- Codex CLI：真实 Agent E2E 需要 `codex exec` 可用。
+- Codex CLI：真实 Agent E2E 需要 `codex app-server --listen stdio://` 可用。
 - Claude CLI：真实 Agent E2E 需要 `claude -p` 可用。
 - Worker 工作目录：真实或容器 Worker 需要可写目录，例如 `./worker-data` 或 `worker-data-real-e2e`。
 
@@ -194,7 +195,7 @@ npm run e2e:real-agents
 
 发布前需要完成两条固定任务：
 
-- Codex 任务：`agentType=codex`，使用固定测试仓库或本地 fixture，要求 Worker 创建 worktree、执行前置命令、运行 `codex exec`、写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
+- Codex 任务：`agentType=codex`，使用固定测试仓库或本地 fixture，要求 Worker 创建 worktree、执行前置命令、运行 `codex app-server`，必要时通过 UI 完成命令/文件/权限/用户输入交互，写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
 - Claude 任务：`agentType=claude`，使用同一类固定输入，要求 Worker 创建 worktree、执行前置命令、运行 `claude -p`、写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
 - 默认脚本会给两类任务传非空 `agentConfig`：Codex 覆盖 `reasoningEffort` 和权限/沙箱相关字段；Claude 覆盖 `effort` 和 `permissionMode`。模型字段可通过 `REAL_AGENT_CODEX_MODEL` / `REAL_AGENT_CLAUDE_MODEL` 显式开启，以避免默认测试依赖特定模型名可用性。空配置兼容路径由 L1/L2 与单元测试覆盖。
 
@@ -242,7 +243,8 @@ npm run e2e:real-agents
 | Task | Worker 上报 `TASK_RESULT` 后结果暂存到任务 | L2 | [已实现] |
 | Task | Worker 上报 `TASK_COMPLETED` 后任务进入 `COMPLETED` 并释放 Worker | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_FAILED` 后任务进入 `FAILED` 并保留失败原因 | L1/L2 | [待补齐] |
-| Task | Worker 上报 `TASK_WAITING_INPUT` 后任务进入 `WAITING_INPUT` | L1/L2 | [待补齐] |
+| Task | Worker 上报 `TASK_WAITING_INPUT` 后任务进入 `WAITING_INPUT` | L1/L2 | [已实现] |
+| Task | Worker 上报 `TASK_INTERACTION_REQUEST` 后 UI 展示待处理授权/输入，响应后 Worker 收到 `TASK_INTERACTION_RESPONSE` 并通过 `TASK_INTERACTION_RESOLVED` 恢复任务 | L1/L2 | [已实现] |
 | Task | 中断运行中任务，下发 `TASK_INTERRUPT`，Worker 上报 `TASK_INTERRUPTED` | L1/L2 | [待补齐] |
 | Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
 | Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [部分实现：Worker 同 task 分支 worktree 清理由单元测试覆盖，浏览器主流程待补齐] |

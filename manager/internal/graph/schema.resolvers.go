@@ -135,6 +135,39 @@ func (r *mutationResolver) ContinueTask(ctx context.Context, input model.Continu
 	return toModelTask(task), nil
 }
 
+// RespondTaskInteraction is the resolver for the respondTaskInteraction field.
+func (r *mutationResolver) RespondTaskInteraction(ctx context.Context, input model.RespondTaskInteractionInput) (*model.TaskInteraction, error) {
+	decision := domain.TaskInteractionDecision("")
+	if input.Decision != nil {
+		decision = domain.TaskInteractionDecision(*input.Decision)
+	}
+	task, _, payload, err := r.Service.PrepareTaskInteractionResponse(ctx, app.RespondTaskInteractionInput{
+		InteractionID: input.InteractionID,
+		Decision:      decision,
+		Message:       valueOrEmpty(input.Message),
+		Payload:       valueOrEmpty(input.Payload),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r.WorkerSender == nil {
+		return nil, fmt.Errorf("worker sender is not configured")
+	}
+	if err := r.WorkerSender.SendTaskInteractionResponse(task.WorkerID, task.ID, payload); err != nil {
+		return nil, err
+	}
+	interaction, err := r.Service.MarkTaskInteractionAnswered(ctx, app.RespondTaskInteractionInput{
+		InteractionID: input.InteractionID,
+		Decision:      decision,
+		Message:       valueOrEmpty(input.Message),
+		Payload:       valueOrEmpty(input.Payload),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskInteraction(interaction), nil
+}
+
 // InterruptTask is the resolver for the interruptTask field.
 func (r *mutationResolver) InterruptTask(ctx context.Context, taskID *string, id *string) (*model.Task, error) {
 	resolvedTaskID := firstID(taskID, id)
@@ -418,6 +451,19 @@ func (r *queryResolver) TaskConversations(ctx context.Context, taskID string) ([
 		out = append(out, toModelConversation(message))
 	}
 	return out, nil
+}
+
+// TaskInteractions is the resolver for the taskInteractions field.
+func (r *queryResolver) TaskInteractions(ctx context.Context, taskID string, status *model.TaskInteractionStatus) ([]*model.TaskInteraction, error) {
+	filter := domain.TaskInteractionStatus("")
+	if status != nil {
+		filter = domain.TaskInteractionStatus(*status)
+	}
+	interactions, err := r.Service.Store().TaskInteractions(ctx, taskID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskInteractions(interactions), nil
 }
 
 // TaskUpdated is the resolver for the taskUpdated field.

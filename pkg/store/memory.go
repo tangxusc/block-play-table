@@ -28,6 +28,10 @@ type Store interface {
 	TaskLogs(context.Context, string) ([]domain.TaskLog, error)
 	AppendConversation(context.Context, domain.ConversationMessage) error
 	TaskConversations(context.Context, string) ([]domain.ConversationMessage, error)
+	SaveTaskInteraction(context.Context, domain.TaskInteraction) error
+	TaskInteraction(context.Context, string) (*domain.TaskInteraction, error)
+	TaskInteractions(context.Context, string, domain.TaskInteractionStatus) ([]domain.TaskInteraction, error)
+	CancelPendingTaskInteractions(context.Context, string, time.Time) error
 	AppendEvents(context.Context, []domain.DomainEvent) error
 	DomainEvents(context.Context, domain.EventFilter) ([]domain.DomainEvent, error)
 	OutboxMessages(context.Context, bool) ([]domain.OutboxMessage, error)
@@ -43,6 +47,7 @@ type MemoryStore struct {
 	settings          *domain.Settings
 	logs              []domain.TaskLog
 	conversations     []domain.ConversationMessage
+	interactions      map[string]domain.TaskInteraction
 	events            []domain.DomainEvent
 	outbox            []domain.OutboxMessage
 	processedMessages map[string]struct{}
@@ -53,6 +58,7 @@ func NewMemoryStore() *MemoryStore {
 		tasks:             map[string]*domain.Task{},
 		workers:           map[string]*domain.Worker{},
 		projects:          map[string]*domain.Project{},
+		interactions:      map[string]domain.TaskInteraction{},
 		settings:          domain.NewSettings(time.Now().UTC()),
 		processedMessages: map[string]struct{}{},
 	}
@@ -205,6 +211,66 @@ func (s *MemoryStore) TaskConversations(ctx context.Context, taskID string) ([]d
 		}
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) SaveTaskInteraction(ctx context.Context, interaction domain.TaskInteraction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interactions[interaction.ID] = interaction
+	return nil
+}
+
+func (s *MemoryStore) TaskInteraction(ctx context.Context, id string) (*domain.TaskInteraction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	interaction, ok := s.interactions[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: task interaction %s", domain.ErrNotFound, id)
+	}
+	copy := interaction
+	return &copy, nil
+}
+
+func (s *MemoryStore) TaskInteractions(ctx context.Context, taskID string, status domain.TaskInteractionStatus) ([]domain.TaskInteraction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.TaskInteraction, 0)
+	for _, interaction := range s.interactions {
+		if interaction.TaskID != taskID {
+			continue
+		}
+		if status != "" && interaction.Status != status {
+			continue
+		}
+		out = append(out, interaction)
+	}
+	slices.SortFunc(out, func(a, b domain.TaskInteraction) int {
+		if cmp := a.CreatedAt.Compare(b.CreatedAt); cmp != 0 {
+			return cmp
+		}
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
+	return out, nil
+}
+
+func (s *MemoryStore) CancelPendingTaskInteractions(ctx context.Context, taskID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, interaction := range s.interactions {
+		if interaction.TaskID == taskID && interaction.Status == domain.TaskInteractionPending {
+			interaction.Status = domain.TaskInteractionCanceled
+			interaction.ResponseDecision = domain.TaskInteractionCancel
+			interaction.UpdatedAt = now
+			s.interactions[id] = interaction
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) AppendEvents(ctx context.Context, events []domain.DomainEvent) error {

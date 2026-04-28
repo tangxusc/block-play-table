@@ -198,6 +198,17 @@ func (c *Client) readLoop(ctx context.Context) error {
 			c.executor.Interrupt(envelope.TaskID)
 		case protocol.MessageTaskCancel:
 			c.executor.Interrupt(envelope.TaskID)
+		case protocol.MessageTaskInteractionResponse:
+			var payload protocol.TaskInteractionResponsePayload
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				return err
+			}
+			if payload.TaskID == "" {
+				payload.TaskID = envelope.TaskID
+			}
+			if err := c.executor.HandleTaskInteractionResponse(ctx, payload); err != nil {
+				c.logger.Warn("task interaction response was not routed", "taskId", payload.TaskID, "interactionId", payload.InteractionID, "error", err)
+			}
 		case protocol.MessagePing:
 			_ = c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageWorkerHeartbeat, WorkerID: c.config.WorkerID, Timestamp: time.Now().UTC()})
 		}

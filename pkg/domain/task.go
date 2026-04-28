@@ -469,11 +469,48 @@ func (t *Task) WaitForInput(now time.Time) error {
 	return nil
 }
 
+func (t *Task) RequestInteraction(interactionID string, kind TaskInteractionKind, title string, now time.Time, agentSessionIDs ...string) error {
+	if t.Status != TaskRunning && t.Status != TaskWaitingInput {
+		return fmt.Errorf("%w: request interaction from %s", ErrInvalidTransition, t.Status)
+	}
+	t.setAgentSessionID(agentSessionIDs...)
+	payload := map[string]any{
+		"interactionId":  interactionID,
+		"kind":           kind,
+		"title":          title,
+		"agentSessionId": t.AgentSessionID,
+	}
+	if t.Status == TaskRunning {
+		t.Status = TaskWaitingInput
+	}
+	t.touch(now)
+	t.addEvent("TaskInteractionRequested", payload, now)
+	return nil
+}
+
+func (t *Task) RecordInteractionAnswered(interactionID string, decision TaskInteractionDecision, now time.Time) error {
+	if !t.canReceiveRuntimeEvent() {
+		return fmt.Errorf("%w: answer interaction from %s", ErrInvalidTransition, t.Status)
+	}
+	t.touch(now)
+	t.addEvent("TaskInteractionAnswered", map[string]any{"interactionId": interactionID, "decision": decision}, now)
+	return nil
+}
+
+func (t *Task) RecordInteractionResolved(interactionID string, now time.Time) error {
+	if !t.canReceiveRuntimeEvent() {
+		return fmt.Errorf("%w: resolve interaction from %s", ErrInvalidTransition, t.Status)
+	}
+	t.touch(now)
+	t.addEvent("TaskInteractionResolved", map[string]any{"interactionId": interactionID}, now)
+	return nil
+}
+
 func (t *Task) Resume(now time.Time) error {
 	if t.Status != TaskWaitingInput {
 		return fmt.Errorf("%w: resume from %s", ErrInvalidTransition, t.Status)
 	}
-	t.transition(TaskRunning, now, "TaskStarted", nil)
+	t.transition(TaskRunning, now, "TaskResumed", nil)
 	return nil
 }
 
@@ -623,4 +660,93 @@ type ConversationMessage struct {
 	Content   string            `json:"content"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	CreatedAt time.Time         `json:"createdAt"`
+}
+
+type TaskInteractionKind string
+
+const (
+	TaskInteractionUserInput          TaskInteractionKind = "USER_INPUT"
+	TaskInteractionCommandApproval    TaskInteractionKind = "COMMAND_APPROVAL"
+	TaskInteractionFileApproval       TaskInteractionKind = "FILE_APPROVAL"
+	TaskInteractionPermissionApproval TaskInteractionKind = "PERMISSION_APPROVAL"
+)
+
+func (k TaskInteractionKind) Valid() bool {
+	return k == TaskInteractionUserInput ||
+		k == TaskInteractionCommandApproval ||
+		k == TaskInteractionFileApproval ||
+		k == TaskInteractionPermissionApproval
+}
+
+type TaskInteractionStatus string
+
+const (
+	TaskInteractionPending  TaskInteractionStatus = "PENDING"
+	TaskInteractionAnswered TaskInteractionStatus = "ANSWERED"
+	TaskInteractionCanceled TaskInteractionStatus = "CANCELED"
+)
+
+func (s TaskInteractionStatus) Valid() bool {
+	return s == "" || s == TaskInteractionPending || s == TaskInteractionAnswered || s == TaskInteractionCanceled
+}
+
+type TaskInteractionDecision string
+
+const (
+	TaskInteractionApprove           TaskInteractionDecision = "APPROVE"
+	TaskInteractionApproveForSession TaskInteractionDecision = "APPROVE_FOR_SESSION"
+	TaskInteractionDeny              TaskInteractionDecision = "DENY"
+	TaskInteractionCancel            TaskInteractionDecision = "CANCEL"
+)
+
+func (d TaskInteractionDecision) Valid() bool {
+	return d == "" ||
+		d == TaskInteractionApprove ||
+		d == TaskInteractionApproveForSession ||
+		d == TaskInteractionDeny ||
+		d == TaskInteractionCancel
+}
+
+type TaskInteraction struct {
+	ID               string                  `json:"id"`
+	TaskID           string                  `json:"taskId"`
+	Kind             TaskInteractionKind     `json:"kind"`
+	Status           TaskInteractionStatus   `json:"status"`
+	Title            string                  `json:"title"`
+	Body             string                  `json:"body"`
+	RawPayload       string                  `json:"rawPayload"`
+	AgentSessionID   string                  `json:"agentSessionId,omitempty"`
+	ResponseDecision TaskInteractionDecision `json:"responseDecision,omitempty"`
+	ResponseMessage  string                  `json:"responseMessage,omitempty"`
+	ResponsePayload  string                  `json:"responsePayload,omitempty"`
+	CreatedAt        time.Time               `json:"createdAt"`
+	UpdatedAt        time.Time               `json:"updatedAt"`
+}
+
+func NewTaskInteraction(input TaskInteraction) (*TaskInteraction, error) {
+	if err := requireNonBlank("interaction id", input.ID); err != nil {
+		return nil, err
+	}
+	if err := requireNonBlank("task id", input.TaskID); err != nil {
+		return nil, err
+	}
+	if !input.Kind.Valid() {
+		return nil, fmt.Errorf("unsupported task interaction kind %q", input.Kind)
+	}
+	if input.Status == "" {
+		input.Status = TaskInteractionPending
+	}
+	if !input.Status.Valid() {
+		return nil, fmt.Errorf("unsupported task interaction status %q", input.Status)
+	}
+	if !input.ResponseDecision.Valid() {
+		return nil, fmt.Errorf("unsupported task interaction decision %q", input.ResponseDecision)
+	}
+	if input.CreatedAt.IsZero() {
+		input.CreatedAt = input.UpdatedAt
+	}
+	if input.UpdatedAt.IsZero() {
+		input.UpdatedAt = input.CreatedAt
+	}
+	return &input, nil
 }

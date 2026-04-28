@@ -39,20 +39,39 @@ type AgentEvent struct {
 	Metadata       map[string]string
 }
 
+type AgentInteractionRequest struct {
+	InteractionID  string
+	Kind           domain.TaskInteractionKind
+	Title          string
+	Body           string
+	RawPayload     string
+	AgentSessionID string
+}
+
+type AgentInteractionResponse struct {
+	InteractionID string
+	TaskID        string
+	Decision      domain.TaskInteractionDecision
+	Message       string
+	Payload       string
+}
+
 type AgentInput struct {
-	Task        protocol.TaskPayload
-	Project     protocol.ProjectPayload
-	WorktreeDir string
-	Env         map[string]string
+	Task               protocol.TaskPayload
+	Project            protocol.ProjectPayload
+	WorktreeDir        string
+	Env                map[string]string
+	RequestInteraction func(context.Context, AgentInteractionRequest) (AgentInteractionResponse, error)
 }
 
 type AgentContinuationInput struct {
-	Task           protocol.TaskPayload
-	Project        protocol.ProjectPayload
-	WorktreeDir    string
-	Env            map[string]string
-	Message        string
-	AgentSessionID string
+	Task               protocol.TaskPayload
+	Project            protocol.ProjectPayload
+	WorktreeDir        string
+	Env                map[string]string
+	Message            string
+	AgentSessionID     string
+	RequestInteraction func(context.Context, AgentInteractionRequest) (AgentInteractionResponse, error)
 }
 
 type Agent interface {
@@ -93,7 +112,12 @@ type Executor struct {
 	reporter Reporter
 
 	mu      sync.Mutex
-	running map[string]context.CancelFunc
+	running map[string]*taskRun
+}
+
+type taskRun struct {
+	cancel       context.CancelFunc
+	interactions map[string]chan protocol.TaskInteractionResponsePayload
 }
 
 func NewExecutor(config Config) *Executor {
@@ -104,7 +128,7 @@ func NewExecutor(config Config) *Executor {
 		config.Reporter = ReporterFunc(func(context.Context, protocol.WorkerEvent) error { return nil })
 	}
 	agents := map[domain.AgentType]Agent{
-		domain.AgentCodex:  newCodexAgent("codex"),
+		domain.AgentCodex:  newCodexAppServerAgent("codex"),
 		domain.AgentClaude: newClaudeAgent("claude", func() string { return uuid.NewString() }),
 	}
 	for k, v := range config.Agents {
@@ -115,7 +139,7 @@ func NewExecutor(config Config) *Executor {
 		workDir:  config.WorkDir,
 		agents:   agents,
 		reporter: config.Reporter,
-		running:  map[string]context.CancelFunc{},
+		running:  map[string]*taskRun{},
 	}
 }
 
@@ -127,14 +151,10 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	e.mu.Lock()
-	e.running[payload.Task.ID] = cancel
-	e.mu.Unlock()
+	e.registerRun(payload.Task.ID, cancel)
 	defer func() {
 		cancel()
-		e.mu.Lock()
-		delete(e.running, payload.Task.ID)
-		e.mu.Unlock()
+		e.unregisterRun(payload.Task.ID)
 	}()
 
 	env := runtimeEnv(payload.AgentRuntimeEnv)
@@ -158,7 +178,15 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 	finalResult := ""
 	agentFailed := ""
 	finalSessionID := ""
-	err = agent.Run(ctx, AgentInput{Task: payload.Task, Project: payload.Project, WorktreeDir: worktree, Env: env}, func(event AgentEvent) {
+	err = agent.Run(ctx, AgentInput{
+		Task:        payload.Task,
+		Project:     payload.Project,
+		WorktreeDir: worktree,
+		Env:         env,
+		RequestInteraction: func(ctx context.Context, request AgentInteractionRequest) (AgentInteractionResponse, error) {
+			return e.requestInteraction(ctx, payload.Task.ID, request, redact)
+		},
+	}, func(event AgentEvent) {
 		switch event.Type {
 		case AgentEventStdout:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stdout", Content: redact(event.Content)})
@@ -221,14 +249,10 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	e.mu.Lock()
-	e.running[payload.Task.ID] = cancel
-	e.mu.Unlock()
+	e.registerRun(payload.Task.ID, cancel)
 	defer func() {
 		cancel()
-		e.mu.Lock()
-		delete(e.running, payload.Task.ID)
-		e.mu.Unlock()
+		e.unregisterRun(payload.Task.ID)
 	}()
 
 	env := runtimeEnv(payload.AgentRuntimeEnv)
@@ -240,7 +264,20 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 	finalResult := ""
 	agentFailed := ""
 	finalSessionID := payload.AgentSessionID
-	err := continuable.Continue(ctx, AgentContinuationInput{Task: payload.Task, Project: payload.Project, WorktreeDir: payload.WorktreePath, Env: env, Message: payload.Message, AgentSessionID: payload.AgentSessionID}, func(event AgentEvent) {
+	err := continuable.Continue(ctx, AgentContinuationInput{
+		Task:           payload.Task,
+		Project:        payload.Project,
+		WorktreeDir:    payload.WorktreePath,
+		Env:            env,
+		Message:        payload.Message,
+		AgentSessionID: payload.AgentSessionID,
+		RequestInteraction: func(ctx context.Context, request AgentInteractionRequest) (AgentInteractionResponse, error) {
+			if request.AgentSessionID == "" {
+				request.AgentSessionID = payload.AgentSessionID
+			}
+			return e.requestInteraction(ctx, payload.Task.ID, request, redact)
+		},
+	}, func(event AgentEvent) {
 		switch event.Type {
 		case AgentEventStdout:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stdout", Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
@@ -282,10 +319,124 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 
 func (e *Executor) Interrupt(taskID string) {
 	e.mu.Lock()
-	cancel := e.running[taskID]
+	run := e.running[taskID]
 	e.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if run != nil && run.cancel != nil {
+		run.cancel()
+	}
+}
+
+func (e *Executor) HandleTaskInteractionResponse(ctx context.Context, payload protocol.TaskInteractionResponsePayload) error {
+	if payload.InteractionID == "" {
+		return fmt.Errorf("interaction id is required")
+	}
+	taskID := payload.TaskID
+	var ch chan protocol.TaskInteractionResponsePayload
+	e.mu.Lock()
+	if taskID != "" {
+		if run := e.running[taskID]; run != nil {
+			ch = run.interactions[payload.InteractionID]
+		}
+	} else {
+		for id, run := range e.running {
+			if candidate := run.interactions[payload.InteractionID]; candidate != nil {
+				taskID = id
+				ch = candidate
+				break
+			}
+		}
+	}
+	e.mu.Unlock()
+	if ch == nil {
+		err := fmt.Errorf("no running interaction %s for task %s", payload.InteractionID, taskID)
+		if taskID != "" {
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: taskID, Stream: "stderr", Content: err.Error()})
+		}
+		return err
+	}
+	select {
+	case ch <- payload:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *Executor) registerRun(taskID string, cancel context.CancelFunc) {
+	e.mu.Lock()
+	e.running[taskID] = &taskRun{cancel: cancel, interactions: map[string]chan protocol.TaskInteractionResponsePayload{}}
+	e.mu.Unlock()
+}
+
+func (e *Executor) unregisterRun(taskID string) {
+	e.mu.Lock()
+	delete(e.running, taskID)
+	e.mu.Unlock()
+}
+
+func (e *Executor) requestInteraction(ctx context.Context, taskID string, request AgentInteractionRequest, redact func(string) string) (AgentInteractionResponse, error) {
+	if strings.TrimSpace(request.InteractionID) == "" {
+		request.InteractionID = "interaction_" + uuid.NewString()
+	}
+	if !request.Kind.Valid() {
+		return AgentInteractionResponse{}, fmt.Errorf("unsupported task interaction kind %q", request.Kind)
+	}
+	ch := make(chan protocol.TaskInteractionResponsePayload, 1)
+	e.mu.Lock()
+	run := e.running[taskID]
+	if run == nil {
+		e.mu.Unlock()
+		return AgentInteractionResponse{}, fmt.Errorf("task %s is not running", taskID)
+	}
+	if _, exists := run.interactions[request.InteractionID]; exists {
+		e.mu.Unlock()
+		return AgentInteractionResponse{}, fmt.Errorf("interaction %s is already pending", request.InteractionID)
+	}
+	run.interactions[request.InteractionID] = ch
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		if run := e.running[taskID]; run != nil {
+			delete(run.interactions, request.InteractionID)
+		}
+		e.mu.Unlock()
+	}()
+
+	if err := e.report(ctx, protocol.WorkerEvent{
+		Type:           protocol.MessageTaskInteractionRequest,
+		TaskID:         taskID,
+		InteractionID:  request.InteractionID,
+		Kind:           request.Kind,
+		Title:          redact(request.Title),
+		Body:           redact(request.Body),
+		RawPayload:     redact(request.RawPayload),
+		AgentSessionID: request.AgentSessionID,
+	}); err != nil {
+		return AgentInteractionResponse{}, err
+	}
+
+	select {
+	case payload := <-ch:
+		if err := e.report(ctx, protocol.WorkerEvent{
+			Type:          protocol.MessageTaskInteractionResolved,
+			TaskID:        taskID,
+			InteractionID: payload.InteractionID,
+			Responded:     true,
+			Decision:      payload.Decision,
+			Message:       payload.Message,
+			Payload:       payload.Payload,
+		}); err != nil {
+			return AgentInteractionResponse{}, err
+		}
+		return AgentInteractionResponse{
+			InteractionID: payload.InteractionID,
+			TaskID:        payload.TaskID,
+			Decision:      payload.Decision,
+			Message:       payload.Message,
+			Payload:       payload.Payload,
+		}, nil
+	case <-ctx.Done():
+		return AgentInteractionResponse{}, ctx.Err()
 	}
 }
 

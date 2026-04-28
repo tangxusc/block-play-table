@@ -137,8 +137,10 @@ type WorkerGateway struct {
 	logger      *slog.Logger
 	workerToken string
 
-	mu          sync.RWMutex
-	connections map[string]*workerConnection
+	mu                 sync.RWMutex
+	connections        map[string]*workerConnection
+	interactionMu      sync.Mutex
+	interactionWaiters map[string]chan error
 }
 
 type workerConnection struct {
@@ -153,7 +155,13 @@ func (c *workerConnection) writeJSON(value any) error {
 }
 
 func NewWorkerGateway(service *app.Service, logger *slog.Logger, workerToken string) *WorkerGateway {
-	return &WorkerGateway{service: service, logger: logger, workerToken: workerToken, connections: map[string]*workerConnection{}}
+	return &WorkerGateway{
+		service:            service,
+		logger:             logger,
+		workerToken:        workerToken,
+		connections:        map[string]*workerConnection{},
+		interactionWaiters: map[string]chan error{},
+	}
 }
 
 func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +310,42 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 		_ = json.Unmarshal(envelope.Payload, &event)
 		_, err := g.service.ApplyWorkerWaitingInput(ctx, envelope.MessageID, taskIDFromEnvelope(envelope, event), event.Content)
 		return err
+	case protocol.MessageTaskInteractionRequest:
+		var payload protocol.TaskInteractionRequestPayload
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.TaskID == "" {
+			payload.TaskID = envelope.TaskID
+		}
+		_, err := g.service.ApplyWorkerTaskInteractionRequest(ctx, envelope.MessageID, app.TaskInteractionRequestInput{
+			InteractionID:  payload.InteractionID,
+			TaskID:         payload.TaskID,
+			Kind:           payload.Kind,
+			Title:          payload.Title,
+			Body:           payload.Body,
+			RawPayload:     payload.RawPayload,
+			AgentSessionID: payload.AgentSessionID,
+		})
+		return err
+	case protocol.MessageTaskInteractionResolved:
+		var payload protocol.TaskInteractionResolvedPayload
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.TaskID == "" {
+			payload.TaskID = envelope.TaskID
+		}
+		_, err := g.service.ApplyWorkerTaskInteractionResolved(ctx, envelope.MessageID, app.TaskInteractionResolvedInput{
+			InteractionID: payload.InteractionID,
+			TaskID:        payload.TaskID,
+			Responded:     payload.Responded,
+			Decision:      payload.Decision,
+			Message:       payload.Message,
+			Payload:       payload.Payload,
+		})
+		g.resolveInteractionWaiter(payload.InteractionID, err)
+		return err
 	case protocol.MessageTaskResult:
 		var event protocol.WorkerEvent
 		_ = json.Unmarshal(envelope.Payload, &event)
@@ -364,6 +408,34 @@ func (g *WorkerGateway) SendTaskContinue(workerID, taskID string, payload protoc
 	})
 }
 
+func (g *WorkerGateway) SendTaskInteractionResponse(workerID, taskID string, payload protocol.TaskInteractionResponsePayload) error {
+	if workerID == "" {
+		return fmt.Errorf("worker id is required")
+	}
+	if payload.TaskID == "" {
+		payload.TaskID = taskID
+	}
+	waiter := g.registerInteractionWaiter(payload.InteractionID)
+	if err := g.send(workerID, protocol.Envelope{
+		MessageID: "msg_" + uuid.NewString(),
+		Type:      protocol.MessageTaskInteractionResponse,
+		WorkerID:  workerID,
+		TaskID:    taskID,
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	}); err != nil {
+		g.removeInteractionWaiter(payload.InteractionID)
+		return err
+	}
+	select {
+	case err := <-waiter:
+		return err
+	case <-time.After(10 * time.Second):
+		g.removeInteractionWaiter(payload.InteractionID)
+		return fmt.Errorf("worker %s did not resolve interaction %s", workerID, payload.InteractionID)
+	}
+}
+
 func (g *WorkerGateway) SendTaskInterrupt(workerID, taskID string) error {
 	if workerID == "" {
 		return nil
@@ -398,6 +470,40 @@ func (g *WorkerGateway) send(workerID string, envelope protocol.Envelope) error 
 		return fmt.Errorf("worker %s is not connected", workerID)
 	}
 	return conn.writeJSON(envelope)
+}
+
+func (g *WorkerGateway) registerInteractionWaiter(interactionID string) chan error {
+	waiter := make(chan error, 1)
+	if interactionID == "" {
+		waiter <- nil
+		return waiter
+	}
+	g.interactionMu.Lock()
+	g.interactionWaiters[interactionID] = waiter
+	g.interactionMu.Unlock()
+	return waiter
+}
+
+func (g *WorkerGateway) resolveInteractionWaiter(interactionID string, err error) {
+	if interactionID == "" {
+		return
+	}
+	g.interactionMu.Lock()
+	waiter := g.interactionWaiters[interactionID]
+	delete(g.interactionWaiters, interactionID)
+	g.interactionMu.Unlock()
+	if waiter != nil {
+		waiter <- err
+	}
+}
+
+func (g *WorkerGateway) removeInteractionWaiter(interactionID string) {
+	if interactionID == "" {
+		return
+	}
+	g.interactionMu.Lock()
+	delete(g.interactionWaiters, interactionID)
+	g.interactionMu.Unlock()
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

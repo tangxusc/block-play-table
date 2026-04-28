@@ -69,7 +69,7 @@ Supported fields are typed by Agent instead of free-form JSON:
 - Codex: `model`, `reasoningEffort`, `sandboxMode`, `approvalPolicy`, `fullAuto`, and `bypassApprovalsAndSandbox`.
 - Claude: `model`, `effort`, and `permissionMode`.
 
-Default empty config keeps the existing CLI behavior. Codex still runs `codex exec --skip-git-repo-check --json <prompt>` unless config is set, then maps to `--model`, `-c model_reasoning_effort=...`, `--sandbox`, `--ask-for-approval`, `--full-auto`, and the bypass flag. Claude still runs `claude -p --output-format=stream-json --verbose ...` unless config is set, then maps to `--model`, `--effort`, and `--permission-mode`.
+Default empty config keeps the existing CLI behavior for Claude, which runs `claude -p --output-format=stream-json --verbose ...` and maps configured values to `--model`, `--effort`, and `--permission-mode`. Codex tasks run through `codex app-server --listen stdio://`; configured values are passed into the app-server turn as model, reasoning, sandbox, approval, and bypass options so live command/file/permission approvals can use the task interaction channel.
 
 ## Docker Compose
 
@@ -111,7 +111,7 @@ Readiness is exposed at `GET /readyz` and checks the configured store.
 Full end-to-end test strategy, coverage matrix, release gates, and troubleshooting notes are documented in [`docs/e2e-testing.md`](docs/e2e-testing.md).
 
 ```bash
-make test-go
+make test
 make coverage
 make e2e
 ```
@@ -135,8 +135,10 @@ npm run e2e
 
 Real Agent E2E is a release gate and must cover both Codex and Claude. The Worker expects:
 
-- Codex: `codex exec`
+- Codex: `codex app-server --listen stdio://`
 - Claude: `claude -p`
+
+Codex tasks use the app-server JSON-RPC protocol so command, file, permission, and user-input requests can be surfaced in the task detail UI. The Manager persists pending `TaskInteraction` records, moves the task to `WAITING_INPUT`, and sends the user's approve/deny/answer decision back to the same Worker before the task resumes.
 
 The helper script checks both CLIs and starts Manager/Worker in trusted mode. After it starts, create and verify one fixed `agentType=codex` task and one fixed `agentType=claude` task through UI, GraphQL, or an automated API flow. See [`docs/e2e-testing.md`](docs/e2e-testing.md) for the full acceptance criteria.
 By default the script passes non-empty `agentConfig` without model names; set `REAL_AGENT_CODEX_MODEL` or `REAL_AGENT_CLAUDE_MODEL` to verify explicit model CLI arguments in your environment.

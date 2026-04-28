@@ -1,7 +1,9 @@
 package executor
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -659,14 +661,230 @@ func TestReporterFuncAndAgentFuncPropagateErrors(t *testing.T) {
 	}
 }
 
+func TestExecutorInteractionBrokerApprovesAndResumes(t *testing.T) {
+	requests := make(chan protocol.WorkerEvent, 1)
+	resolved := make(chan protocol.WorkerEvent, 1)
+	var eventsMu sync.Mutex
+	var events []protocol.WorkerEvent
+	runner := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  t.TempDir(),
+		Agents: map[domain.AgentType]Agent{domain.AgentCodex: AgentFunc(func(ctx context.Context, input AgentInput, emit func(AgentEvent)) error {
+			response, err := input.RequestInteraction(ctx, AgentInteractionRequest{
+				InteractionID:  "interaction-1",
+				Kind:           domain.TaskInteractionCommandApproval,
+				Title:          "Approve command",
+				Body:           "Run make test",
+				RawPayload:     `{"command":"make test"}`,
+				AgentSessionID: "session-1",
+			})
+			if err != nil {
+				return err
+			}
+			if response.Decision != domain.TaskInteractionApprove {
+				return errors.New("expected approve decision")
+			}
+			emit(AgentEvent{Type: AgentEventCompleted, Content: "approved", AgentSessionID: "session-1"})
+			return nil
+		})},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			eventsMu.Lock()
+			events = append(events, event)
+			eventsMu.Unlock()
+			switch event.Type {
+			case protocol.MessageTaskInteractionRequest:
+				requests <- event
+			case protocol.MessageTaskInteractionResolved:
+				resolved <- event
+			}
+			return nil
+		}),
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Execute(context.Background(), protocol.TaskStartPayload{
+			Task:    protocol.TaskPayload{ID: "task-interaction", AgentType: domain.AgentCodex},
+			Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
+		})
+	}()
+	select {
+	case request := <-requests:
+		if request.InteractionID != "interaction-1" || request.Kind != domain.TaskInteractionCommandApproval {
+			t.Fatalf("interaction request = %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interaction request")
+	}
+	if err := runner.HandleTaskInteractionResponse(context.Background(), protocol.TaskInteractionResponsePayload{
+		InteractionID: "interaction-1",
+		TaskID:        "task-interaction",
+		Decision:      domain.TaskInteractionApprove,
+	}); err != nil {
+		t.Fatalf("HandleTaskInteractionResponse returned error: %v", err)
+	}
+	select {
+	case event := <-resolved:
+		if event.InteractionID != "interaction-1" || !event.Responded || event.Decision != domain.TaskInteractionApprove {
+			t.Fatalf("resolved event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interaction resolved")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	if events[len(events)-1].Type != protocol.MessageTaskCompleted {
+		t.Fatalf("last event = %+v", events[len(events)-1])
+	}
+}
+
+func TestExecutorInteractionWaitCanceledByInterrupt(t *testing.T) {
+	requests := make(chan protocol.WorkerEvent, 1)
+	runner := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  t.TempDir(),
+		Agents: map[domain.AgentType]Agent{domain.AgentCodex: AgentFunc(func(ctx context.Context, input AgentInput, emit func(AgentEvent)) error {
+			_, err := input.RequestInteraction(ctx, AgentInteractionRequest{
+				InteractionID: "interaction-cancel",
+				Kind:          domain.TaskInteractionUserInput,
+				Title:         "Question",
+				Body:          "Need input",
+			})
+			return err
+		})},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			if event.Type == protocol.MessageTaskInteractionRequest {
+				requests <- event
+			}
+			return nil
+		}),
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Execute(context.Background(), protocol.TaskStartPayload{
+			Task:    protocol.TaskPayload{ID: "task-interrupt-wait", AgentType: domain.AgentCodex},
+			Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
+		})
+	}()
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interaction request")
+	}
+	runner.Interrupt("task-interrupt-wait")
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interrupted execution")
+	}
+}
+
+func TestCodexAppServerAgentHandlesApprovalAndCompletion(t *testing.T) {
+	root := t.TempDir()
+	responseFile := filepath.Join(root, "approval-response.json")
+	wrapper := filepath.Join(root, "fake-codex")
+	script := "#!/bin/sh\nBPT_FAKE_CODEX_APP_SERVER=1 BPT_FAKE_CODEX_RESPONSE_FILE='" + responseFile + "' exec '" + os.Args[0] + "' -test.run=TestCodexAppServerAgentHelper -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newCodexAppServerAgent(wrapper)
+	var requests []AgentInteractionRequest
+	var events []AgentEvent
+	err := agent.Run(context.Background(), AgentInput{
+		Task:        protocol.TaskPayload{ID: "task-codex-app", Title: "do it", AgentType: domain.AgentCodex},
+		WorktreeDir: root,
+		RequestInteraction: func(ctx context.Context, request AgentInteractionRequest) (AgentInteractionResponse, error) {
+			requests = append(requests, request)
+			return AgentInteractionResponse{InteractionID: request.InteractionID, Decision: domain.TaskInteractionApprove}, nil
+		},
+	}, func(event AgentEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(requests) != 1 || requests[0].Kind != domain.TaskInteractionCommandApproval || !strings.Contains(requests[0].RawPayload, "make test") {
+		t.Fatalf("codex interaction requests = %+v", requests)
+	}
+	last := events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.AgentSessionID != "codex-thread" || last.Content != "codex completed" {
+		t.Fatalf("codex app-server events = %+v", events)
+	}
+	response, err := os.ReadFile(responseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(response), `"decision":"accept"`) {
+		t.Fatalf("approval response = %s", response)
+	}
+}
+
+func TestCodexAppServerAgentHelper(t *testing.T) {
+	if os.Getenv("BPT_FAKE_CODEX_APP_SERVER") != "1" {
+		return
+	}
+	defer os.Exit(0)
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var message map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil {
+			continue
+		}
+		id := message["id"]
+		method, _ := message["method"].(string)
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"userAgent": "fake", "codexHome": "/tmp", "platformFamily": "unix", "platformOs": "linux"}})
+		case "thread/start":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"thread": map[string]any{"id": "codex-thread"}}})
+		case "turn/start":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+			_ = encoder.Encode(map[string]any{
+				"id":     100,
+				"method": "item/commandExecution/requestApproval",
+				"params": map[string]any{
+					"threadId": "codex-thread",
+					"turnId":   "turn-1",
+					"itemId":   "item-1",
+					"reason":   "needs command",
+					"command":  "make test",
+					"cwd":      "/tmp/work",
+				},
+			})
+		default:
+			if id == float64(100) {
+				if path := os.Getenv("BPT_FAKE_CODEX_RESPONSE_FILE"); path != "" {
+					_ = os.WriteFile(path, scanner.Bytes(), 0o644)
+				}
+				_ = encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{
+					"threadId": "codex-thread",
+					"turnId":   "turn-1",
+					"item":     map[string]any{"type": "agentMessage", "id": "msg-1", "text": "codex completed"},
+				}})
+				_ = encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{
+					"threadId": "codex-thread",
+					"turn":     map[string]any{"id": "turn-1", "status": "completed"},
+				}})
+				return
+			}
+		}
+	}
+}
+
 func TestDefaultCodexAgentAllowsNonGitWorkdir(t *testing.T) {
 	exec := NewExecutor(Config{WorkDir: t.TempDir()})
-	agent, ok := exec.agents[domain.AgentCodex].(*SessionCommandAgent)
+	agent, ok := exec.agents[domain.AgentCodex].(*CodexAppServerAgent)
 	if !ok {
 		t.Fatalf("default codex agent type = %T", exec.agents[domain.AgentCodex])
 	}
-	if agent.agentType != domain.AgentCodex {
-		t.Fatalf("default codex agent type = %s, want codex", agent.agentType)
+	if agent.binary != "codex" {
+		t.Fatalf("default codex binary = %s, want codex", agent.binary)
 	}
 }
 

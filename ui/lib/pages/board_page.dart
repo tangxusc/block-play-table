@@ -587,13 +587,15 @@ List<Widget> _agentConfigDetailWidgets(TaskItem task) {
   final widgets = <Widget>[];
   if (config.workMode.isNotEmpty) {
     widgets.add(
-      DetailText(icon: Icons.rule_folder_outlined, text: _enumLabel(config.workMode)),
+      DetailText(
+          icon: Icons.rule_folder_outlined, text: _enumLabel(config.workMode)),
     );
   }
   if (task.agentType == 'codex') {
     final codex = config.codex;
     if (codex.model.isNotEmpty) {
-      widgets.add(DetailText(icon: Icons.smart_toy_outlined, text: codex.model));
+      widgets
+          .add(DetailText(icon: Icons.smart_toy_outlined, text: codex.model));
     }
     if (codex.reasoningEffort.isNotEmpty) {
       widgets.add(
@@ -605,12 +607,16 @@ List<Widget> _agentConfigDetailWidgets(TaskItem task) {
     }
     if (codex.sandboxMode.isNotEmpty) {
       widgets.add(
-        DetailText(icon: Icons.inventory_2_outlined, text: _enumLabel(codex.sandboxMode)),
+        DetailText(
+            icon: Icons.inventory_2_outlined,
+            text: _enumLabel(codex.sandboxMode)),
       );
     }
     if (codex.approvalPolicy.isNotEmpty) {
       widgets.add(
-        DetailText(icon: Icons.verified_user_outlined, text: _enumLabel(codex.approvalPolicy)),
+        DetailText(
+            icon: Icons.verified_user_outlined,
+            text: _enumLabel(codex.approvalPolicy)),
       );
     }
     if (codex.fullAuto) {
@@ -627,11 +633,14 @@ List<Widget> _agentConfigDetailWidgets(TaskItem task) {
   } else if (task.agentType == 'claude') {
     final claude = config.claude;
     if (claude.model.isNotEmpty) {
-      widgets.add(DetailText(icon: Icons.smart_toy_outlined, text: claude.model));
+      widgets
+          .add(DetailText(icon: Icons.smart_toy_outlined, text: claude.model));
     }
     if (claude.effort.isNotEmpty) {
       widgets.add(
-        DetailText(icon: Icons.psychology_alt_outlined, text: _enumLabel(claude.effort)),
+        DetailText(
+            icon: Icons.psychology_alt_outlined,
+            text: _enumLabel(claude.effort)),
       );
     }
     if (claude.permissionMode.isNotEmpty) {
@@ -690,8 +699,7 @@ class _AgentConfigDraft {
         codexSandboxMode = config.codex.sandboxMode,
         codexApprovalPolicy = config.codex.approvalPolicy,
         codexFullAuto = config.codex.fullAuto,
-        codexBypassApprovalsAndSandbox =
-            config.codex.bypassApprovalsAndSandbox,
+        codexBypassApprovalsAndSandbox = config.codex.bypassApprovalsAndSandbox,
         claudeModel = TextEditingController(text: config.claude.model),
         claudeEffort = config.claude.effort,
         claudePermissionMode = config.claude.permissionMode;
@@ -1271,7 +1279,8 @@ class _CalendarToolbar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
-        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+        border:
+            Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1398,7 +1407,8 @@ class _CalendarWeekdayHeader extends StatelessWidget {
     return Container(
       height: 32,
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+        border:
+            Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Row(
         children: [
@@ -1442,7 +1452,8 @@ class _CalendarWeekRow extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
+        final width =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
         final height =
             constraints.maxHeight.isFinite ? constraints.maxHeight : 150.0;
         final cellWidth = width / 7;
@@ -1506,7 +1517,8 @@ class _CalendarWeekRow extends StatelessWidget {
     required int index,
     required double cellWidth,
   }) {
-    final segmentStart = range.start.isBefore(weekStart) ? weekStart : range.start;
+    final segmentStart =
+        range.start.isBefore(weekStart) ? weekStart : range.start;
     final weekEnd = weekStart.add(const Duration(days: 6));
     final segmentEnd = range.end.isAfter(weekEnd) ? weekEnd : range.end;
     final dayOffset = segmentStart.difference(weekStart).inDays;
@@ -1984,7 +1996,8 @@ Color _calendarStatusColor(BuildContext context, String status) {
     'ARCHIVED' ||
     'DISABLED' ||
     'OFFLINE' ||
-    'INTERRUPTED' => scheme.onSurfaceVariant,
+    'INTERRUPTED' =>
+      scheme.onSurfaceVariant,
     _ => scheme.primary,
   };
 }
@@ -2334,6 +2347,13 @@ Future<bool?> showTaskDetailDialog(
   );
 }
 
+typedef _TaskInteractionResponder = Future<void> Function(
+  TaskInteractionItem interaction, {
+  String? decision,
+  String? message,
+  String? payload,
+});
+
 class _TaskDetailDialog extends StatefulWidget {
   const _TaskDetailDialog({
     required this.apiClient,
@@ -2391,8 +2411,10 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final currentTask = _lastDetail?.task ?? widget.task;
+    final waitingForInput = currentTask.status == 'WAITING_INPUT';
     return AlertDialog(
-      title: Text(widget.task.title),
+      title: Text(currentTask.title),
       content: SizedBox(
         width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
         height: math.min(MediaQuery.sizeOf(context).height * 0.82, 820),
@@ -2418,6 +2440,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                   detail: detail!,
                   projects: widget.boardData.projects,
                   onContinue: _continueTask,
+                  onRespondInteraction: _respondInteraction,
                 ),
                 if (snapshot.connectionState != ConnectionState.done)
                   const Positioned(
@@ -2442,20 +2465,22 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
           label: const Text('Assign'),
         ),
         TextButton.icon(
-          onPressed: () =>
-              _run(() => widget.apiClient.startTask(widget.task.id!)),
+          onPressed: waitingForInput
+              ? null
+              : () => _run(() => widget.apiClient.startTask(currentTask.id!)),
           icon: const Icon(Icons.play_arrow),
           label: const Text('Start'),
         ),
         TextButton.icon(
           onPressed: () =>
-              _run(() => widget.apiClient.interruptTask(widget.task.id!)),
+              _run(() => widget.apiClient.interruptTask(currentTask.id!)),
           icon: const Icon(Icons.stop),
           label: const Text('Interrupt'),
         ),
         TextButton.icon(
-          onPressed: () =>
-              _run(() => widget.apiClient.retryTask(widget.task.id!)),
+          onPressed: waitingForInput
+              ? null
+              : () => _run(() => widget.apiClient.retryTask(currentTask.id!)),
           icon: const Icon(Icons.replay),
           label: const Text('Retry'),
         ),
@@ -2488,6 +2513,21 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
 
   Future<void> _continueTask(String message) async {
     await widget.apiClient.continueTask(widget.task.id!, message);
+    _reload();
+  }
+
+  Future<void> _respondInteraction(
+    TaskInteractionItem interaction, {
+    String? decision,
+    String? message,
+    String? payload,
+  }) async {
+    await widget.apiClient.respondTaskInteraction(
+      interactionId: interaction.id,
+      decision: decision,
+      message: message ?? '',
+      payload: payload ?? '',
+    );
     _reload();
   }
 
@@ -2638,11 +2678,13 @@ class _TaskDetailBody extends StatelessWidget {
     required this.detail,
     required this.projects,
     required this.onContinue,
+    required this.onRespondInteraction,
   });
 
   final TaskDetailData detail;
   final List<ProjectItem> projects;
   final Future<void> Function(String message) onContinue;
+  final _TaskInteractionResponder onRespondInteraction;
 
   @override
   Widget build(BuildContext context) {
@@ -2693,6 +2735,8 @@ class _TaskDetailBody extends StatelessWidget {
               children: [
                 _ConversationTab(
                   conversations: detail.conversations,
+                  interactions: detail.interactions,
+                  onRespondInteraction: onRespondInteraction,
                   footer: _ContinuationComposer(
                     task: task,
                     onContinue: onContinue,
@@ -2721,9 +2765,16 @@ class _TaskDetailBody extends StatelessWidget {
 }
 
 class _ConversationTab extends StatelessWidget {
-  const _ConversationTab({required this.conversations, required this.footer});
+  const _ConversationTab({
+    required this.conversations,
+    required this.interactions,
+    required this.onRespondInteraction,
+    required this.footer,
+  });
 
   final List<ConversationItem> conversations;
+  final List<TaskInteractionItem> interactions;
+  final _TaskInteractionResponder onRespondInteraction;
   final Widget footer;
 
   @override
@@ -2733,12 +2784,428 @@ class _ConversationTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (interactions.isNotEmpty) ...[
+            _PendingInteractions(
+              interactions: interactions,
+              onRespondInteraction: onRespondInteraction,
+            ),
+            const SizedBox(height: 12),
+          ],
           _ConversationList(conversations: conversations),
           const SizedBox(height: 12),
           footer,
         ],
       ),
     );
+  }
+}
+
+class _PendingInteractions extends StatelessWidget {
+  const _PendingInteractions({
+    required this.interactions,
+    required this.onRespondInteraction,
+  });
+
+  final List<TaskInteractionItem> interactions;
+  final _TaskInteractionResponder onRespondInteraction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final interaction in interactions)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _InteractionCard(
+              interaction: interaction,
+              onRespondInteraction: onRespondInteraction,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _InteractionCard extends StatelessWidget {
+  const _InteractionCard({
+    required this.interaction,
+    required this.onRespondInteraction,
+  });
+
+  final TaskInteractionItem interaction;
+  final _TaskInteractionResponder onRespondInteraction;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final raw = interaction.rawJson;
+    final details = _interactionDetails(interaction, raw);
+    return Card(
+      margin: EdgeInsets.zero,
+      color: scheme.tertiaryContainer.withOpacity(0.55),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Icon(_interactionIcon(interaction.kind), size: 18),
+                Text(
+                  interaction.title.isEmpty
+                      ? _interactionKindLabel(interaction.kind)
+                      : interaction.title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                StatusPill(value: interaction.kind),
+              ],
+            ),
+            if (interaction.body.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SelectableText(interaction.body),
+            ],
+            if (details.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ...details.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: DetailText(icon: item.icon, text: item.text),
+                ),
+              ),
+            ],
+            if (interaction.rawPayload.trim().isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _RawPayloadBlock(payload: interaction.rawPayload),
+            ],
+            const SizedBox(height: 12),
+            if (interaction.kind == 'USER_INPUT')
+              _UserInputInteractionForm(
+                interaction: interaction,
+                onRespondInteraction: onRespondInteraction,
+              )
+            else
+              _ApprovalInteractionActions(
+                interaction: interaction,
+                onRespondInteraction: onRespondInteraction,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ApprovalInteractionActions extends StatefulWidget {
+  const _ApprovalInteractionActions({
+    required this.interaction,
+    required this.onRespondInteraction,
+  });
+
+  final TaskInteractionItem interaction;
+  final _TaskInteractionResponder onRespondInteraction;
+
+  @override
+  State<_ApprovalInteractionActions> createState() =>
+      _ApprovalInteractionActionsState();
+}
+
+class _ApprovalInteractionActionsState
+    extends State<_ApprovalInteractionActions> {
+  bool _sending = false;
+
+  Future<void> _send(String decision) async {
+    if (_sending) {
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await widget.onRespondInteraction(widget.interaction, decision: decision);
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          onPressed: _sending ? null : () => _send('APPROVE'),
+          icon: const Icon(Icons.check),
+          label: const Text('Approve'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _sending ? null : () => _send('APPROVE_FOR_SESSION'),
+          icon: const Icon(Icons.done_all),
+          label: const Text('Approve for session'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _sending ? null : () => _send('DENY'),
+          icon: const Icon(Icons.block),
+          label: const Text('Deny'),
+        ),
+        TextButton.icon(
+          onPressed: _sending ? null : () => _send('CANCEL'),
+          icon: const Icon(Icons.close),
+          label: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}
+
+class _UserInputInteractionForm extends StatefulWidget {
+  const _UserInputInteractionForm({
+    required this.interaction,
+    required this.onRespondInteraction,
+  });
+
+  final TaskInteractionItem interaction;
+  final _TaskInteractionResponder onRespondInteraction;
+
+  @override
+  State<_UserInputInteractionForm> createState() =>
+      _UserInputInteractionFormState();
+}
+
+class _UserInputInteractionFormState extends State<_UserInputInteractionForm> {
+  final TextEditingController _controller = TextEditingController();
+  String _selected = '';
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final message = _controller.text.trim().isNotEmpty
+        ? _controller.text.trim()
+        : _selected;
+    if (message.isEmpty || _sending) {
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final payload = _userInputPayload(widget.interaction, message);
+      await widget.onRespondInteraction(
+        widget.interaction,
+        message: message,
+        payload: payload,
+      );
+      _controller.clear();
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final question = _firstInteractionQuestion(widget.interaction);
+    final options = _questionOptions(question);
+    final isSecret = question['isSecret'] == true;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (options.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: options
+                .map(
+                  (option) => ChoiceChip(
+                    label: Text(option.label),
+                    selected: _selected == option.label,
+                    onSelected: _sending
+                        ? null
+                        : (selected) => setState(
+                              () => _selected = selected ? option.label : '',
+                            ),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 10),
+        ],
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                enabled: !_sending,
+                obscureText: isSecret,
+                minLines: 1,
+                maxLines: isSecret ? 1 : 3,
+                decoration: const InputDecoration(
+                  labelText: 'Response',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => _send(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              tooltip: 'Submit response',
+              onPressed: _sending ? null : _send,
+              icon: _sending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _RawPayloadBlock extends StatelessWidget {
+  const _RawPayloadBlock({required this.payload});
+
+  final String payload;
+
+  @override
+  Widget build(BuildContext context) {
+    final pretty = _prettyJson(payload);
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 180),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.72),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: SingleChildScrollView(
+        child: SelectableText(
+          pretty,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+              ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InteractionDetail {
+  const _InteractionDetail({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+}
+
+class _InteractionOption {
+  const _InteractionOption(this.label);
+
+  final String label;
+}
+
+List<_InteractionDetail> _interactionDetails(
+  TaskInteractionItem interaction,
+  Map<String, dynamic> raw,
+) {
+  final details = <_InteractionDetail>[];
+  void add(IconData icon, String label, dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isNotEmpty) {
+      details.add(_InteractionDetail(icon: icon, text: '$label: $text'));
+    }
+  }
+
+  add(Icons.info_outline, 'Reason', raw['reason']);
+  add(Icons.folder_open, 'Cwd', raw['cwd']);
+  add(Icons.terminal, 'Command', raw['command']);
+  add(Icons.folder_copy, 'Grant root', raw['grantRoot']);
+  add(Icons.key, 'Session', interaction.agentSessionId);
+  return details;
+}
+
+IconData _interactionIcon(String kind) => switch (kind) {
+      'COMMAND_APPROVAL' => Icons.terminal,
+      'FILE_APPROVAL' => Icons.edit_document,
+      'PERMISSION_APPROVAL' => Icons.admin_panel_settings_outlined,
+      _ => Icons.question_answer_outlined,
+    };
+
+String _interactionKindLabel(String kind) => switch (kind) {
+      'COMMAND_APPROVAL' => 'Command approval',
+      'FILE_APPROVAL' => 'File approval',
+      'PERMISSION_APPROVAL' => 'Permission approval',
+      'USER_INPUT' => 'User input',
+      _ => kind,
+    };
+
+Map<String, dynamic> _firstInteractionQuestion(
+  TaskInteractionItem interaction,
+) {
+  final questions = interaction.rawJson['questions'];
+  if (questions is List && questions.isNotEmpty) {
+    final first = questions.first;
+    if (first is Map<String, dynamic>) {
+      return first;
+    }
+  }
+  return const {};
+}
+
+List<_InteractionOption> _questionOptions(Map<String, dynamic> question) {
+  final options = question['options'];
+  if (options is! List) {
+    return const [];
+  }
+  return options
+      .whereType<Map<String, dynamic>>()
+      .map((item) => item['label']?.toString() ?? '')
+      .where((label) => label.isNotEmpty)
+      .map(_InteractionOption.new)
+      .toList();
+}
+
+String _userInputPayload(TaskInteractionItem interaction, String answer) {
+  final questions = interaction.rawJson['questions'];
+  if (questions is! List) {
+    return '';
+  }
+  final answers = <String, dynamic>{};
+  for (final question in questions) {
+    if (question is! Map<String, dynamic>) {
+      continue;
+    }
+    final id = question['id']?.toString() ?? '';
+    if (id.isEmpty) {
+      continue;
+    }
+    answers[id] = {
+      'answers': [answer],
+    };
+  }
+  if (answers.isEmpty) {
+    return '';
+  }
+  return jsonEncode({'answers': answers});
+}
+
+String _prettyJson(String value) {
+  try {
+    return const JsonEncoder.withIndent('  ').convert(jsonDecode(value));
+  } catch (_) {
+    return value;
   }
 }
 
@@ -2855,7 +3322,8 @@ bool _looksLikeJson(String content) {
 Widget _buildJsonContent(BuildContext context, String content) {
   try {
     const encoder = JsonEncoder.withIndent('  ');
-    return _buildMonospaceContent(context, encoder.convert(jsonDecode(content)));
+    return _buildMonospaceContent(
+        context, encoder.convert(jsonDecode(content)));
   } catch (_) {
     return _buildMonospaceContent(context, content);
   }

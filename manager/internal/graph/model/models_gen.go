@@ -220,6 +220,13 @@ type RegisterWorkerInput struct {
 	Capabilities       []*KeyValueInput              `json:"capabilities,omitempty"`
 }
 
+type RespondTaskInteractionInput struct {
+	InteractionID string                   `json:"interactionId"`
+	Decision      *TaskInteractionDecision `json:"decision,omitempty"`
+	Message       *string                  `json:"message,omitempty"`
+	Payload       *string                  `json:"payload,omitempty"`
+}
+
 type Settings struct {
 	ID                     string    `json:"id"`
 	Version                int       `json:"version"`
@@ -269,6 +276,22 @@ type TaskFilter struct {
 	WorkerID        *string     `json:"workerId,omitempty"`
 	AgentType       *AgentType  `json:"agentType,omitempty"`
 	IncludeArchived *bool       `json:"includeArchived,omitempty"`
+}
+
+type TaskInteraction struct {
+	ID               string                   `json:"id"`
+	TaskID           string                   `json:"taskId"`
+	Kind             TaskInteractionKind      `json:"kind"`
+	Status           TaskInteractionStatus    `json:"status"`
+	Title            string                   `json:"title"`
+	Body             string                   `json:"body"`
+	RawPayload       string                   `json:"rawPayload"`
+	AgentSessionID   *string                  `json:"agentSessionId,omitempty"`
+	ResponseDecision *TaskInteractionDecision `json:"responseDecision,omitempty"`
+	ResponseMessage  *string                  `json:"responseMessage,omitempty"`
+	ResponsePayload  string                   `json:"responsePayload"`
+	CreatedAt        time.Time                `json:"createdAt"`
+	UpdatedAt        time.Time                `json:"updatedAt"`
 }
 
 type TaskLog struct {
@@ -818,6 +841,181 @@ func (e *CodexSandboxMode) UnmarshalJSON(b []byte) error {
 }
 
 func (e CodexSandboxMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskInteractionDecision string
+
+const (
+	TaskInteractionDecisionApprove           TaskInteractionDecision = "APPROVE"
+	TaskInteractionDecisionApproveForSession TaskInteractionDecision = "APPROVE_FOR_SESSION"
+	TaskInteractionDecisionDeny              TaskInteractionDecision = "DENY"
+	TaskInteractionDecisionCancel            TaskInteractionDecision = "CANCEL"
+)
+
+var AllTaskInteractionDecision = []TaskInteractionDecision{
+	TaskInteractionDecisionApprove,
+	TaskInteractionDecisionApproveForSession,
+	TaskInteractionDecisionDeny,
+	TaskInteractionDecisionCancel,
+}
+
+func (e TaskInteractionDecision) IsValid() bool {
+	switch e {
+	case TaskInteractionDecisionApprove, TaskInteractionDecisionApproveForSession, TaskInteractionDecisionDeny, TaskInteractionDecisionCancel:
+		return true
+	}
+	return false
+}
+
+func (e TaskInteractionDecision) String() string {
+	return string(e)
+}
+
+func (e *TaskInteractionDecision) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskInteractionDecision(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskInteractionDecision", str)
+	}
+	return nil
+}
+
+func (e TaskInteractionDecision) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskInteractionDecision) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskInteractionDecision) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskInteractionKind string
+
+const (
+	TaskInteractionKindUserInput          TaskInteractionKind = "USER_INPUT"
+	TaskInteractionKindCommandApproval    TaskInteractionKind = "COMMAND_APPROVAL"
+	TaskInteractionKindFileApproval       TaskInteractionKind = "FILE_APPROVAL"
+	TaskInteractionKindPermissionApproval TaskInteractionKind = "PERMISSION_APPROVAL"
+)
+
+var AllTaskInteractionKind = []TaskInteractionKind{
+	TaskInteractionKindUserInput,
+	TaskInteractionKindCommandApproval,
+	TaskInteractionKindFileApproval,
+	TaskInteractionKindPermissionApproval,
+}
+
+func (e TaskInteractionKind) IsValid() bool {
+	switch e {
+	case TaskInteractionKindUserInput, TaskInteractionKindCommandApproval, TaskInteractionKindFileApproval, TaskInteractionKindPermissionApproval:
+		return true
+	}
+	return false
+}
+
+func (e TaskInteractionKind) String() string {
+	return string(e)
+}
+
+func (e *TaskInteractionKind) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskInteractionKind(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskInteractionKind", str)
+	}
+	return nil
+}
+
+func (e TaskInteractionKind) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskInteractionKind) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskInteractionKind) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskInteractionStatus string
+
+const (
+	TaskInteractionStatusPending  TaskInteractionStatus = "PENDING"
+	TaskInteractionStatusAnswered TaskInteractionStatus = "ANSWERED"
+	TaskInteractionStatusCanceled TaskInteractionStatus = "CANCELED"
+)
+
+var AllTaskInteractionStatus = []TaskInteractionStatus{
+	TaskInteractionStatusPending,
+	TaskInteractionStatusAnswered,
+	TaskInteractionStatusCanceled,
+}
+
+func (e TaskInteractionStatus) IsValid() bool {
+	switch e {
+	case TaskInteractionStatusPending, TaskInteractionStatusAnswered, TaskInteractionStatusCanceled:
+		return true
+	}
+	return false
+}
+
+func (e TaskInteractionStatus) String() string {
+	return string(e)
+}
+
+func (e *TaskInteractionStatus) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskInteractionStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskInteractionStatus", str)
+	}
+	return nil
+}
+
+func (e TaskInteractionStatus) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskInteractionStatus) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskInteractionStatus) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

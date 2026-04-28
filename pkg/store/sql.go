@@ -585,6 +585,70 @@ func (s *SQLStore) TaskConversations(ctx context.Context, taskID string) ([]doma
 	return out, rows.Err()
 }
 
+func (s *SQLStore) SaveTaskInteraction(ctx context.Context, interaction domain.TaskInteraction) error {
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+		"task_interactions",
+		[]string{"id", "task_id", "kind", "status", "title", "body", "raw_payload", "agent_session_id", "response_decision", "response_message", "response_payload", "created_at", "updated_at"},
+		[]string{"task_id", "kind", "status", "title", "body", "raw_payload", "agent_session_id", "response_decision", "response_message", "response_payload", "updated_at"},
+	),
+		interaction.ID,
+		interaction.TaskID,
+		interaction.Kind,
+		interaction.Status,
+		interaction.Title,
+		interaction.Body,
+		interaction.RawPayload,
+		nullableString(interaction.AgentSessionID),
+		nullableString(string(interaction.ResponseDecision)),
+		nullableString(interaction.ResponseMessage),
+		interaction.ResponsePayload,
+		interaction.CreatedAt,
+		interaction.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) TaskInteraction(ctx context.Context, id string) (*domain.TaskInteraction, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, kind, status, title, body, raw_payload, agent_session_id, response_decision, response_message, response_payload, created_at, updated_at FROM task_interactions WHERE id = `+s.bind(1), id)
+	return scanTaskInteraction(row)
+}
+
+func (s *SQLStore) TaskInteractions(ctx context.Context, taskID string, status domain.TaskInteractionStatus) ([]domain.TaskInteraction, error) {
+	query := `SELECT id, task_id, kind, status, title, body, raw_payload, agent_session_id, response_decision, response_message, response_payload, created_at, updated_at FROM task_interactions WHERE task_id = ` + s.bind(1)
+	args := []any{taskID}
+	if status != "" {
+		args = append(args, status)
+		query += ` AND status = ` + s.bind(len(args))
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TaskInteraction, 0)
+	for rows.Next() {
+		interaction, err := scanTaskInteraction(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *interaction)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) CancelPendingTaskInteractions(ctx context.Context, taskID string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE task_interactions SET status = `+s.bind(1)+`, response_decision = `+s.bind(2)+`, updated_at = `+s.bind(3)+` WHERE task_id = `+s.bind(4)+` AND status = `+s.bind(5),
+		domain.TaskInteractionCanceled,
+		domain.TaskInteractionCancel,
+		now,
+		taskID,
+		domain.TaskInteractionPending,
+	)
+	return err
+}
+
 func (s *SQLStore) AppendEvents(ctx context.Context, events []domain.DomainEvent) error {
 	if len(events) == 0 {
 		return nil
@@ -868,6 +932,34 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 		return nil, err
 	}
 	return &task, nil
+}
+
+func scanTaskInteraction(scanner interface{ Scan(...any) error }) (*domain.TaskInteraction, error) {
+	var interaction domain.TaskInteraction
+	var agentSessionID sql.NullString
+	var responseDecision sql.NullString
+	var responseMessage sql.NullString
+	if err := scanner.Scan(
+		&interaction.ID,
+		&interaction.TaskID,
+		&interaction.Kind,
+		&interaction.Status,
+		&interaction.Title,
+		&interaction.Body,
+		&interaction.RawPayload,
+		&agentSessionID,
+		&responseDecision,
+		&responseMessage,
+		&interaction.ResponsePayload,
+		&interaction.CreatedAt,
+		&interaction.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	interaction.AgentSessionID = fromNullString(agentSessionID)
+	interaction.ResponseDecision = domain.TaskInteractionDecision(fromNullString(responseDecision))
+	interaction.ResponseMessage = fromNullString(responseMessage)
+	return &interaction, nil
 }
 
 func storeTaskDisplayDate(value time.Time) time.Time {

@@ -319,6 +319,117 @@ function connectWorkerForContinuation(
   return { ready, firstDone, continued, close: () => ws.close() };
 }
 
+function connectWorkerForInteraction(workerId: string, taskId: string) {
+  const url = new URL(managerWorkerWs);
+  url.searchParams.set("worker_id", workerId);
+  if (managerWorkerToken) {
+    url.searchParams.set("token", managerWorkerToken);
+  }
+  const ws = new WebSocket(url.toString());
+  const now = () => new Date().toISOString();
+  const send = (
+    messageId: string,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ) => {
+    ws.send(
+      JSON.stringify({
+        messageId,
+        type,
+        workerId,
+        taskId,
+        timestamp: now(),
+        payload,
+      }),
+    );
+  };
+  const ready = new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(), { once: true });
+    ws.addEventListener(
+      "error",
+      () => reject(new Error("worker websocket failed")),
+      { once: true },
+    );
+  });
+  const requested = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("timed out waiting for interaction request")),
+      8000,
+    );
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_START") {
+        return;
+      }
+      send(`accepted-interaction-${taskId}`, "TASK_ACCEPTED");
+      send(`started-interaction-${taskId}`, "TASK_STARTED", {
+        taskId,
+        content: "/tmp/e2e-interaction-worktree",
+      });
+      send(`interaction-request-${taskId}`, "TASK_INTERACTION_REQUEST", {
+        interactionId: `interaction-${taskId}`,
+        taskId,
+        kind: "COMMAND_APPROVAL",
+        title: "Approve command",
+        body: "Run make test before completing",
+        rawPayload: JSON.stringify({
+          reason: "Need to run verification",
+          cwd: "/tmp/e2e-interaction-worktree",
+          command: "make test",
+        }),
+        agentSessionId: "codex-thread-e2e",
+      });
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  const completed = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("timed out waiting for interaction response")),
+      15000,
+    );
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_INTERACTION_RESPONSE") {
+        return;
+      }
+      expect(envelope.payload.interactionId).toBe(`interaction-${taskId}`);
+      expect(envelope.payload.decision).toBe("APPROVE");
+      send(`interaction-resolved-${taskId}`, "TASK_INTERACTION_RESOLVED", {
+        interactionId: `interaction-${taskId}`,
+        taskId,
+      });
+      send(`interaction-log-${taskId}`, "TASK_LOG", {
+        taskId,
+        stream: "stdout",
+        content: "approved command executed",
+      });
+      send(`interaction-conversation-${taskId}`, "TASK_CONVERSATION", {
+        taskId,
+        content: "interaction approved and task completed",
+        agentSessionId: "codex-thread-e2e",
+        metadata: { role: "assistant" },
+      });
+      send(`interaction-result-${taskId}`, "TASK_RESULT", {
+        taskId,
+        result: "interaction e2e completed",
+        agentSessionId: "codex-thread-e2e",
+      });
+      send(`interaction-completed-${taskId}`, "TASK_COMPLETED", {
+        taskId,
+        result: "interaction e2e completed",
+        agentSessionId: "codex-thread-e2e",
+      });
+      clearTimeout(timeout);
+      setTimeout(() => {
+        ws.close();
+        resolve();
+      }, 250);
+    });
+  });
+  return { ready, requested, completed };
+}
+
 test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   page,
   request,
@@ -590,6 +701,172 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("flutter-view")).toBeVisible();
+});
+
+test("task detail approves a live agent interaction and refreshes results", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+
+  const suffix = Date.now();
+  const projectName = `E2E Interaction Project ${suffix}`;
+  const taskTitle = `E2E Interaction Task ${suffix}`;
+  const workerId = `worker-e2e-interaction-${suffix}`;
+
+  const createdProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+    {
+      input: {
+        name: projectName,
+        gitUrl: "e2e-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "e2e-interaction",
+      },
+    },
+  );
+  const project = createdProject.createProject;
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: workerId,
+        name: `E2E Interaction Worker ${suffix}`,
+        supportedAgents: ["codex"],
+        workDir: "/tmp/e2e-interaction-worker",
+        projectBindingMode: "ALL_PROJECTS",
+      },
+    },
+  );
+  const createdTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+    {
+      input: {
+        title: taskTitle,
+        projectId: project.id,
+        workerId,
+        agentType: "codex",
+        baseBranch: "main",
+      },
+    },
+  );
+  const taskId = createdTask.createTask.id;
+  const workerSocket = connectWorkerForInteraction(workerId, taskId);
+  await workerSocket.ready;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId },
+  );
+  await workerSocket.requested;
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query TaskInteraction($taskId: ID!) {
+          task(id: $taskId) { status }
+          taskInteractions(taskId: $taskId, status: PENDING) { id title kind }
+        }`,
+        { taskId },
+      );
+      return {
+        status: data.task.status,
+        interactions: data.taskInteractions,
+      };
+    })
+    .toMatchObject({
+      status: "WAITING_INPUT",
+      interactions: [
+        expect.objectContaining({
+          title: "Approve command",
+          kind: "COMMAND_APPROVAL",
+        }),
+      ],
+    });
+
+  await page.reload();
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+  await openTaskFromList(page, taskTitle);
+  await expect(
+    page.getByRole("textbox", { name: /Approve command/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /make test/ })).toBeVisible();
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+
+  await workerSocket.completed;
+  await expect
+    .poll(async () => {
+      const [taskData, logData, conversationData, interactionData, eventData] =
+        await Promise.all([
+          graphQL(
+            request,
+            "query Task($id: ID!) { task(id: $id) { status result agentSessionId } }",
+            { id: taskId },
+          ),
+          graphQL(
+            request,
+            "query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { content } }",
+            { taskId },
+          ),
+          graphQL(
+            request,
+            "query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { content } }",
+            { taskId },
+          ),
+          graphQL(
+            request,
+            "query TaskInteractions($taskId: ID!) { taskInteractions(taskId: $taskId) { status responseDecision } }",
+            { taskId },
+          ),
+          graphQL(
+            request,
+            "query TaskEvents($taskId: ID!) { taskEvents(taskId: $taskId) { eventType } }",
+            { taskId },
+          ),
+        ]);
+      return {
+        task: taskData.task,
+        hasLog: logData.taskLogs.some((log: { content: string }) =>
+          log.content.includes("approved command executed"),
+        ),
+        hasConversation: conversationData.taskConversations.some(
+          (message: { content: string }) =>
+            message.content.includes("interaction approved"),
+        ),
+        interactions: interactionData.taskInteractions,
+        eventTypes: eventData.taskEvents.map(
+          (event: { eventType: string }) => event.eventType,
+        ),
+      };
+    })
+    .toMatchObject({
+      task: {
+        status: "COMPLETED",
+        result: "interaction e2e completed",
+        agentSessionId: "codex-thread-e2e",
+      },
+      hasLog: true,
+      hasConversation: true,
+      interactions: [
+        expect.objectContaining({
+          status: "ANSWERED",
+          responseDecision: "APPROVE",
+        }),
+      ],
+      eventTypes: expect.arrayContaining([
+        "TaskInteractionRequested",
+        "TaskResumed",
+        "TaskCompleted",
+      ]),
+    });
 });
 
 test("task detail continues a completed task with the same agent session", async ({
