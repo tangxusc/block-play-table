@@ -11,6 +11,7 @@
 - 验证 Project、Worker、Task、Settings、Board 等核心对象可以通过 UI/API 完成主要工作流。
 - 验证 Manager GraphQL 与 Worker WebSocket 的协议交互、状态流转、日志、会话、结果和领域事件持久化。
 - 验证运行中 Agent 交互闭环：Worker 上报 `TASK_INTERACTION_REQUEST` 后任务进入 `WAITING_INPUT`，UI 批准/回答后 Manager 下发 `TASK_INTERACTION_RESPONSE`，Worker 上报 `TASK_INTERACTION_RESOLVED` 并恢复执行。
+- 验证 Claude `permission_denials` 通过同一交互闭环展示在 UI 中，并在用户批准后由 Worker 继续同一个 Claude session。
 - 验证任务分配时的 Agent CLI 运行配置会保存、展示，并随 `TASK_START` / `TASK_CONTINUE` 下发给 Worker。
 - 验证 Flutter Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
 - 验证真实 Codex/Claude CLI 在发布前可以通过 Worker 执行固定任务，并产出可追踪结果。
@@ -32,7 +33,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、交互授权、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 

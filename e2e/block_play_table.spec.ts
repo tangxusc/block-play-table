@@ -319,7 +319,20 @@ function connectWorkerForContinuation(
   return { ready, firstDone, continued, close: () => ws.close() };
 }
 
-function connectWorkerForInteraction(workerId: string, taskId: string) {
+function connectWorkerForInteraction(
+  workerId: string,
+  taskId: string,
+  options: {
+    kind?: string;
+    title?: string;
+    body?: string;
+    rawPayload?: string;
+    agentSessionId?: string;
+    result?: string;
+    log?: string;
+    conversation?: string;
+  } = {},
+) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
   if (managerWorkerToken) {
@@ -343,6 +356,21 @@ function connectWorkerForInteraction(workerId: string, taskId: string) {
       }),
     );
   };
+  const interactionKind = options.kind || "COMMAND_APPROVAL";
+  const interactionTitle = options.title || "Approve command";
+  const interactionBody = options.body || "Run make test before completing";
+  const interactionRawPayload =
+    options.rawPayload ||
+    JSON.stringify({
+      reason: "Need to run verification",
+      cwd: "/tmp/e2e-interaction-worktree",
+      command: "make test",
+    });
+  const agentSessionId = options.agentSessionId || "codex-thread-e2e";
+  const resultText = options.result || "interaction e2e completed";
+  const logText = options.log || "approved command executed";
+  const conversationText =
+    options.conversation || "interaction approved and task completed";
   const ready = new Promise<void>((resolve, reject) => {
     ws.addEventListener("open", () => resolve(), { once: true });
     ws.addEventListener(
@@ -369,15 +397,11 @@ function connectWorkerForInteraction(workerId: string, taskId: string) {
       send(`interaction-request-${taskId}`, "TASK_INTERACTION_REQUEST", {
         interactionId: `interaction-${taskId}`,
         taskId,
-        kind: "COMMAND_APPROVAL",
-        title: "Approve command",
-        body: "Run make test before completing",
-        rawPayload: JSON.stringify({
-          reason: "Need to run verification",
-          cwd: "/tmp/e2e-interaction-worktree",
-          command: "make test",
-        }),
-        agentSessionId: "codex-thread-e2e",
+        kind: interactionKind,
+        title: interactionTitle,
+        body: interactionBody,
+        rawPayload: interactionRawPayload,
+        agentSessionId,
       });
       clearTimeout(timeout);
       resolve();
@@ -402,23 +426,23 @@ function connectWorkerForInteraction(workerId: string, taskId: string) {
       send(`interaction-log-${taskId}`, "TASK_LOG", {
         taskId,
         stream: "stdout",
-        content: "approved command executed",
+        content: logText,
       });
       send(`interaction-conversation-${taskId}`, "TASK_CONVERSATION", {
         taskId,
-        content: "interaction approved and task completed",
-        agentSessionId: "codex-thread-e2e",
+        content: conversationText,
+        agentSessionId,
         metadata: { role: "assistant" },
       });
       send(`interaction-result-${taskId}`, "TASK_RESULT", {
         taskId,
-        result: "interaction e2e completed",
-        agentSessionId: "codex-thread-e2e",
+        result: resultText,
+        agentSessionId,
       });
       send(`interaction-completed-${taskId}`, "TASK_COMPLETED", {
         taskId,
-        result: "interaction e2e completed",
-        agentSessionId: "codex-thread-e2e",
+        result: resultText,
+        agentSessionId,
       });
       clearTimeout(timeout);
       setTimeout(() => {
@@ -866,6 +890,151 @@ test("task detail approves a live agent interaction and refreshes results", asyn
         "TaskResumed",
         "TaskCompleted",
       ]),
+    });
+});
+
+test("claude task detail waits for permission interaction before completion", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+
+  const suffix = Date.now();
+  const taskTitle = `E2E Claude Interaction Task ${suffix}`;
+  const workerId = `worker-e2e-claude-interaction-${suffix}`;
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `E2E Claude Interaction Project ${suffix}`,
+          gitUrl: "e2e-fixture",
+          defaultBranch: "main",
+          worktreeNamePrefix: "e2e-claude-interaction",
+        },
+      },
+    )
+  ).createProject;
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: workerId,
+        name: `E2E Claude Interaction Worker ${suffix}`,
+        supportedAgents: ["claude"],
+        workDir: "/tmp/e2e-claude-interaction-worker",
+        projectBindingMode: "ALL_PROJECTS",
+      },
+    },
+  );
+  const taskId = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+      {
+        input: {
+          title: taskTitle,
+          projectId: project.id,
+          workerId,
+          agentType: "claude",
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask.id;
+  const workerSocket = connectWorkerForInteraction(workerId, taskId, {
+    kind: "FILE_APPROVAL",
+    title: "Approve Claude file change",
+    body: "Claude needs permission to edit README.md",
+    rawPayload: JSON.stringify({
+      tool_name: "Edit",
+      tool_use_id: "toolu_e2e",
+      tool_input: {
+        file_path: "/tmp/e2e-claude-interaction-worktree/README.md",
+        old_string: "old",
+        new_string: "new",
+      },
+    }),
+    agentSessionId: "claude-session-e2e",
+    result: "claude interaction e2e completed",
+    log: "approved claude edit executed",
+    conversation: "claude interaction approved",
+  });
+  await workerSocket.ready;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId },
+  );
+  await workerSocket.requested;
+
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query TaskInteraction($taskId: ID!) {
+          task(id: $taskId) { status agentType }
+          taskInteractions(taskId: $taskId, status: PENDING) { title kind rawPayload }
+        }`,
+        { taskId },
+      );
+      return {
+        task: data.task,
+        interactions: data.taskInteractions,
+      };
+    })
+    .toMatchObject({
+      task: { status: "WAITING_INPUT", agentType: "claude" },
+      interactions: [
+        expect.objectContaining({
+          title: "Approve Claude file change",
+          kind: "FILE_APPROVAL",
+        }),
+      ],
+    });
+
+  await page.reload();
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+  await openTaskFromList(page, taskTitle);
+  await expect(
+    page.getByRole("textbox", { name: /Approve Claude file change/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /README.md/ })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /Tool: Edit/ })).toBeVisible();
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+
+  await workerSocket.completed;
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Verify($id: ID!, $taskId: ID!) {
+          task(id: $id) { status result agentSessionId }
+          taskInteractions(taskId: $taskId) { status responseDecision }
+        }`,
+        { id: taskId, taskId },
+      );
+      return data;
+    })
+    .toMatchObject({
+      task: {
+        status: "COMPLETED",
+        result: "claude interaction e2e completed",
+        agentSessionId: "claude-session-e2e",
+      },
+      taskInteractions: [
+        expect.objectContaining({
+          status: "ANSWERED",
+          responseDecision: "APPROVE",
+        }),
+      ],
     });
 });
 

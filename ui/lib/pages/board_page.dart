@@ -3129,8 +3129,17 @@ List<_InteractionDetail> _interactionDetails(
   }
 
   add(Icons.info_outline, 'Reason', raw['reason']);
+  add(Icons.build_outlined, 'Tool', raw['tool_name']);
+  add(Icons.fingerprint, 'Tool use', raw['tool_use_id']);
   add(Icons.folder_open, 'Cwd', raw['cwd']);
   add(Icons.terminal, 'Command', raw['command']);
+  final toolInput = raw['tool_input'];
+  if (toolInput is Map<String, dynamic>) {
+    add(Icons.terminal, 'Command', toolInput['command']);
+    add(Icons.description_outlined, 'Description', toolInput['description']);
+    add(Icons.insert_drive_file_outlined, 'File', toolInput['file_path']);
+    add(Icons.insert_drive_file_outlined, 'Path', toolInput['path']);
+  }
   add(Icons.folder_copy, 'Grant root', raw['grantRoot']);
   add(Icons.key, 'Session', interaction.agentSessionId);
   return details;

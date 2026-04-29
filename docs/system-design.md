@@ -956,11 +956,13 @@ CLI 参数映射：
 | Agent | 默认命令 | 非空配置映射 |
 | --- | --- | --- |
 | Codex | `codex app-server --listen stdio://` + `thread/start`/`turn/start` | `model`、`reasoningEffort`、`sandboxMode`、`approvalPolicy` 写入 app-server JSON-RPC 参数；`fullAuto` 默认映射为 `approvalPolicy=on-failure` + `sandbox=workspace-write`；`bypassApprovalsAndSandbox` 映射为 `approvalPolicy=never` + `sandbox=danger-full-access` |
-| Claude | `claude -p --output-format=stream-json --verbose ... <prompt>` | `model -> --model`；`effort -> --effort`；`permissionMode -> --permission-mode` |
+| Claude | `claude -p --output-format=stream-json --verbose ... <prompt>` | `model -> --model`；`effort -> --effort`；`permissionMode -> --permission-mode`；用户批准 `permission_denials` 后本轮 `--resume` 追加推导出的 `--allowedTools` |
 
 空配置不追加这些参数，保持本机 CLI 默认模型、推理深度和权限行为。继续任务时使用同一 `agentConfig`，避免会话前后模型或权限漂移。
 
 Codex adapter 使用 app-server 的 server request 作为授权通道：`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 和 `item/tool/requestUserInput` 会映射成统一 `TaskInteraction`；UI 响应后再映射回 app-server 的 `accept`、`acceptForSession`、`decline`、`cancel` 或用户输入 answers。`codex exec --json` 只保留为旧测试辅助路径，不作为需要授权任务的执行通道。
+
+Claude adapter 使用非交互式 `stream-json` 输出中的 `permission_denials` 作为授权通道。Worker 将 Claude 的 `Bash`、文件编辑和其他工具拒绝分别映射为 `COMMAND_APPROVAL`、`FILE_APPROVAL` 和 `PERMISSION_APPROVAL`，任务进入 `WAITING_INPUT`。用户响应后 Worker 继续同一个 Claude `session_id`：批准时追加本次或本任务会话内的 `--allowedTools`，拒绝或取消时把用户决定作为 follow-up 消息传回 Claude。
 
 统一 Agent 事件：
 

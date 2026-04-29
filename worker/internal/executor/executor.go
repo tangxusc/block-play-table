@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -595,6 +596,8 @@ type SessionCommandAgent struct {
 	newSessionID func() string
 }
 
+const maxClaudeInteractionRounds = 10
+
 func newCodexAgent(binary string) *SessionCommandAgent {
 	return &SessionCommandAgent{binary: binary, agentType: domain.AgentCodex}
 }
@@ -613,14 +616,13 @@ func (a *SessionCommandAgent) Run(ctx context.Context, input AgentInput, emit fu
 	switch a.agentType {
 	case domain.AgentCodex:
 		args = append(codexConfigArgs(input.Task.AgentConfig.Codex), "exec", "--skip-git-repo-check", "--json", prompt)
+		return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, sessionID, emit)
 	case domain.AgentClaude:
 		sessionID = a.newSessionID()
-		args = append([]string{"-p"}, claudeConfigArgs(input.Task.AgentConfig.Claude)...)
-		args = append(args, "--output-format=stream-json", "--verbose", "--session-id", sessionID, prompt)
+		return a.runClaudeSessionCommand(ctx, input.Task, input.WorktreeDir, input.Env, sessionID, prompt, false, input.RequestInteraction, emit)
 	default:
 		return fmt.Errorf("session command agent does not support %s", a.agentType)
 	}
-	return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, sessionID, emit)
 }
 
 func (a *SessionCommandAgent) Continue(ctx context.Context, input AgentContinuationInput, emit func(AgentEvent)) error {
@@ -634,30 +636,87 @@ func (a *SessionCommandAgent) Continue(ctx context.Context, input AgentContinuat
 	switch a.agentType {
 	case domain.AgentCodex:
 		args = append(codexConfigArgs(input.Task.AgentConfig.Codex), "exec", "resume", "--skip-git-repo-check", "--json", input.AgentSessionID, input.Message)
+		return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, input.AgentSessionID, emit)
 	case domain.AgentClaude:
-		args = append([]string{"-p"}, claudeConfigArgs(input.Task.AgentConfig.Claude)...)
-		args = append(args, "--output-format=stream-json", "--verbose", "--resume", input.AgentSessionID, input.Message)
+		return a.runClaudeSessionCommand(ctx, input.Task, input.WorktreeDir, input.Env, input.AgentSessionID, input.Message, true, input.RequestInteraction, emit)
 	default:
 		return fmt.Errorf("session command agent does not support %s", a.agentType)
 	}
-	return a.runSessionCommand(ctx, input.WorktreeDir, input.Env, args, input.AgentSessionID, emit)
 }
 
 func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string, env map[string]string, args []string, initialSessionID string, emit func(AgentEvent)) error {
+	result, err := a.runSessionCommandOnce(ctx, dir, env, args, initialSessionID, emit)
+	if err != nil {
+		return err
+	}
+	return emitSessionCommandCompletion(result, emit)
+}
+
+func (a *SessionCommandAgent) runClaudeSessionCommand(ctx context.Context, task protocol.TaskPayload, dir string, env map[string]string, sessionID string, message string, resume bool, requestInteraction func(context.Context, AgentInteractionRequest) (AgentInteractionResponse, error), emit func(AgentEvent)) error {
+	approvedForSession := map[string]bool{}
+	nextAllowedTools := []string(nil)
+	for round := 0; round < maxClaudeInteractionRounds; round++ {
+		args := claudeCommandArgs(task.AgentConfig.Claude, sessionID, message, resume, append(approvedToolsList(approvedForSession), nextAllowedTools...))
+		nextAllowedTools = nil
+		result, err := a.runSessionCommandOnce(ctx, dir, env, args, sessionID, emit)
+		if err != nil {
+			return err
+		}
+		if result.SessionID != "" {
+			sessionID = result.SessionID
+		}
+		if len(result.PermissionDenials) == 0 {
+			return emitSessionCommandCompletion(result, emit)
+		}
+		if err := emitFallbackConversation(result, emit); err != nil {
+			return err
+		}
+		if requestInteraction == nil {
+			return fmt.Errorf("claude requested permission but task interactions are not configured")
+		}
+		var resumeMessages []string
+		for _, denial := range result.PermissionDenials {
+			response, err := requestInteraction(ctx, claudeInteractionRequest(denial, result.Content, sessionID))
+			if err != nil {
+				return err
+			}
+			switch response.Decision {
+			case domain.TaskInteractionApprove, domain.TaskInteractionApproveForSession:
+				if tool := denial.allowedTool(); tool != "" {
+					if response.Decision == domain.TaskInteractionApproveForSession {
+						approvedForSession[tool] = true
+					} else {
+						nextAllowedTools = append(nextAllowedTools, tool)
+					}
+				}
+				resumeMessages = append(resumeMessages, claudeApprovalResumeMessage(denial, response))
+			case domain.TaskInteractionDeny, domain.TaskInteractionCancel:
+				resumeMessages = append(resumeMessages, claudeDenialResumeMessage(denial, response))
+			default:
+				return fmt.Errorf("unsupported claude interaction decision %q", response.Decision)
+			}
+		}
+		message = strings.Join(resumeMessages, "\n\n")
+		resume = true
+	}
+	return fmt.Errorf("claude permission interaction exceeded %d rounds", maxClaudeInteractionRounds)
+}
+
+func (a *SessionCommandAgent) runSessionCommandOnce(ctx context.Context, dir string, env map[string]string, args []string, initialSessionID string, emit func(AgentEvent)) (sessionCommandResult, error) {
 	cmd := exec.Command(a.binary, args...)
 	cmd.Dir = dir
 	cmd.Env = mergeEnv(env)
 	configureCommandForCancel(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return sessionCommandResult{}, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return sessionCommandResult{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return sessionCommandResult{}, err
 	}
 
 	var wg sync.WaitGroup
@@ -665,6 +724,7 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 	sessionID := initialSessionID
 	lastConversation := ""
 	finalResult := ""
+	var permissionDenials []claudePermissionDenial
 	sawConversation := false
 	wg.Add(2)
 	go func() {
@@ -686,6 +746,9 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 			if parsed.FinalResult != "" {
 				finalResult = parsed.FinalResult
 			}
+			if len(parsed.PermissionDenials) > 0 {
+				permissionDenials = parsed.PermissionDenials
+			}
 			mu.Unlock()
 			if parsed.Conversation != "" {
 				emit(AgentEvent{Type: AgentEventConversation, Content: parsed.Conversation, AgentSessionID: currentSessionID, Metadata: map[string]string{"agentSessionId": currentSessionID}})
@@ -704,12 +767,12 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 	select {
 	case err := <-done:
 		if err != nil {
-			return err
+			return sessionCommandResult{}, err
 		}
 	case <-ctx.Done():
 		killCommandProcessGroup(cmd)
 		<-done
-		return ctx.Err()
+		return sessionCommandResult{}, ctx.Err()
 	}
 
 	mu.Lock()
@@ -719,14 +782,45 @@ func (a *SessionCommandAgent) runSessionCommand(ctx context.Context, dir string,
 		completedContent = lastConversation
 	}
 	shouldEmitFallbackConversation := !sawConversation && finalResult != ""
+	denials := append([]claudePermissionDenial(nil), permissionDenials...)
 	mu.Unlock()
 	if completedSessionID == "" {
-		return fmt.Errorf("agent session id was not reported")
+		return sessionCommandResult{}, fmt.Errorf("agent session id was not reported")
 	}
-	if shouldEmitFallbackConversation {
-		emit(AgentEvent{Type: AgentEventConversation, Content: completedContent, AgentSessionID: completedSessionID, Metadata: map[string]string{"agentSessionId": completedSessionID}})
+	return sessionCommandResult{
+		SessionID:                      completedSessionID,
+		Content:                        completedContent,
+		ShouldEmitFallbackConversation: shouldEmitFallbackConversation,
+		PermissionDenials:              denials,
+	}, nil
+}
+
+type sessionCommandResult struct {
+	SessionID                      string
+	Content                        string
+	ShouldEmitFallbackConversation bool
+	PermissionDenials              []claudePermissionDenial
+}
+
+type claudePermissionDenial struct {
+	ToolName   string
+	ToolUseID  string
+	ToolInput  map[string]any
+	RawPayload string
+}
+
+func emitSessionCommandCompletion(result sessionCommandResult, emit func(AgentEvent)) error {
+	if err := emitFallbackConversation(result, emit); err != nil {
+		return err
 	}
-	emit(AgentEvent{Type: AgentEventCompleted, Content: completedContent, AgentSessionID: completedSessionID})
+	emit(AgentEvent{Type: AgentEventCompleted, Content: result.Content, AgentSessionID: result.SessionID})
+	return nil
+}
+
+func emitFallbackConversation(result sessionCommandResult, emit func(AgentEvent)) error {
+	if result.ShouldEmitFallbackConversation {
+		emit(AgentEvent{Type: AgentEventConversation, Content: result.Content, AgentSessionID: result.SessionID, Metadata: map[string]string{"agentSessionId": result.SessionID}})
+	}
 	return nil
 }
 
@@ -781,6 +875,44 @@ func claudeConfigArgs(config domain.ClaudeExecutionConfig) []string {
 	return args
 }
 
+func claudeCommandArgs(config domain.ClaudeExecutionConfig, sessionID, message string, resume bool, allowedTools []string) []string {
+	args := append([]string{"-p"}, claudeConfigArgs(config)...)
+	if tools := uniqueNonEmptyStrings(allowedTools); len(tools) > 0 {
+		args = append(args, "--allowedTools")
+		args = append(args, tools...)
+	}
+	args = append(args, "--output-format=stream-json", "--verbose")
+	if resume {
+		args = append(args, "--resume", sessionID, message)
+	} else {
+		args = append(args, "--session-id", sessionID, message)
+	}
+	return args
+}
+
+func approvedToolsList(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for tool := range values {
+		out = append(out, tool)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func workModePromptPrefix(mode domain.AgentWorkMode) string {
 	switch mode {
 	case domain.AgentWorkModePlan:
@@ -795,9 +927,10 @@ func workModePromptPrefix(mode domain.AgentWorkMode) string {
 }
 
 type agentLineParse struct {
-	SessionID    string
-	Conversation string
-	FinalResult  string
+	SessionID         string
+	Conversation      string
+	FinalResult       string
+	PermissionDenials []claudePermissionDenial
 }
 
 func parseAgentJSONLine(line string) agentLineParse {
@@ -814,6 +947,7 @@ func parseAgentJSONLine(line string) agentLineParse {
 		return parsed
 	case "result":
 		parsed.FinalResult = stringField(value, "result")
+		parsed.PermissionDenials = claudePermissionDenials(value)
 		return parsed
 	case "thread.started":
 		if parsed.SessionID == "" {
@@ -831,6 +965,152 @@ func parseAgentJSONLine(line string) agentLineParse {
 	default:
 		return parsed
 	}
+}
+
+func claudePermissionDenials(value map[string]any) []claudePermissionDenial {
+	items, ok := value["permission_denials"].([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]claudePermissionDenial, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolInput, _ := objectField(object, "tool_input")
+		if toolInput == nil {
+			toolInput = map[string]any{}
+		}
+		toolName := stringField(object, "tool_name")
+		key := toolName + "\x00" + jsonString(toolInput)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, claudePermissionDenial{
+			ToolName:   toolName,
+			ToolUseID:  stringField(object, "tool_use_id"),
+			ToolInput:  toolInput,
+			RawPayload: jsonString(object),
+		})
+	}
+	return out
+}
+
+func claudeInteractionRequest(denial claudePermissionDenial, finalResult, sessionID string) AgentInteractionRequest {
+	summary := denial.summary()
+	body := strings.TrimSpace(strings.Join(nonEmptyStrings(finalResult, summary), "\n\n"))
+	if body == "" {
+		body = denial.RawPayload
+	}
+	return AgentInteractionRequest{
+		Kind:           denial.kind(),
+		Title:          denial.title(),
+		Body:           body,
+		RawPayload:     denial.RawPayload,
+		AgentSessionID: sessionID,
+	}
+}
+
+func (d claudePermissionDenial) kind() domain.TaskInteractionKind {
+	switch strings.ToLower(d.ToolName) {
+	case "bash":
+		return domain.TaskInteractionCommandApproval
+	case "edit", "write", "multiedit":
+		return domain.TaskInteractionFileApproval
+	default:
+		return domain.TaskInteractionPermissionApproval
+	}
+}
+
+func (d claudePermissionDenial) title() string {
+	switch d.kind() {
+	case domain.TaskInteractionCommandApproval:
+		return "Approve Claude command"
+	case domain.TaskInteractionFileApproval:
+		return "Approve Claude file change"
+	default:
+		if d.ToolName != "" {
+			return "Approve Claude " + d.ToolName
+		}
+		return "Approve Claude tool"
+	}
+}
+
+func (d claudePermissionDenial) summary() string {
+	tool := firstNonEmptyString(d.ToolName, "tool")
+	switch d.kind() {
+	case domain.TaskInteractionCommandApproval:
+		return "Tool: " + tool + "\nCommand: " + firstNonEmptyString(mapString(d.ToolInput, "command"), "(not reported)")
+	case domain.TaskInteractionFileApproval:
+		file := firstNonEmptyString(mapString(d.ToolInput, "file_path"), mapString(d.ToolInput, "path"), "(not reported)")
+		return "Tool: " + tool + "\nFile: " + file
+	default:
+		return "Tool: " + tool
+	}
+}
+
+func (d claudePermissionDenial) allowedTool() string {
+	switch d.kind() {
+	case domain.TaskInteractionCommandApproval:
+		if command := strings.TrimSpace(mapString(d.ToolInput, "command")); command != "" {
+			return "Bash(" + command + ")"
+		}
+		return firstNonEmptyString(d.ToolName, "Bash")
+	default:
+		return strings.TrimSpace(d.ToolName)
+	}
+}
+
+func claudeApprovalResumeMessage(denial claudePermissionDenial, response AgentInteractionResponse) string {
+	scope := "for this request"
+	if response.Decision == domain.TaskInteractionApproveForSession {
+		scope = "for this task session"
+	}
+	parts := []string{
+		"The user approved the Claude tool request " + scope + ". Continue the task.",
+		denial.summary(),
+	}
+	if strings.TrimSpace(response.Message) != "" {
+		parts = append(parts, "User note: "+strings.TrimSpace(response.Message))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func claudeDenialResumeMessage(denial claudePermissionDenial, response AgentInteractionResponse) string {
+	decision := "denied"
+	if response.Decision == domain.TaskInteractionCancel {
+		decision = "canceled"
+	}
+	parts := []string{
+		"The user " + decision + " the Claude tool request. Do not perform that operation. Continue with an alternative if possible; otherwise explain why the task is blocked.",
+		denial.summary(),
+	}
+	if strings.TrimSpace(response.Message) != "" {
+		parts = append(parts, "User note: "+strings.TrimSpace(response.Message))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func jsonString(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func directSessionID(value map[string]any) string {

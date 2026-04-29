@@ -267,6 +267,17 @@ func TestParseAgentJSONLineReadsFriendlyClaudeEvents(t *testing.T) {
 	if parsed.SessionID != "claude-session" || parsed.Conversation != "" || parsed.FinalResult != "final answer" {
 		t.Fatalf("result parsed = %+v", parsed)
 	}
+
+	parsed = parseAgentJSONLine(`{"type":"result","session_id":"claude-session","result":"needs approval","permission_denials":[{"tool_name":"Edit","tool_use_id":"tool-1","tool_input":{"file_path":"/tmp/README.md"}},{"tool_name":"Edit","tool_use_id":"tool-2","tool_input":{"file_path":"/tmp/README.md"}},{"tool_name":"Bash","tool_use_id":"tool-3","tool_input":{"command":"git status"}}]}`)
+	if len(parsed.PermissionDenials) != 2 {
+		t.Fatalf("permission denials = %+v", parsed.PermissionDenials)
+	}
+	if parsed.PermissionDenials[0].kind() != domain.TaskInteractionFileApproval || parsed.PermissionDenials[0].allowedTool() != "Edit" || !strings.Contains(parsed.PermissionDenials[0].RawPayload, `"tool_name":"Edit"`) {
+		t.Fatalf("file denial parsed = %+v", parsed.PermissionDenials[0])
+	}
+	if parsed.PermissionDenials[1].kind() != domain.TaskInteractionCommandApproval || parsed.PermissionDenials[1].allowedTool() != "Bash(git status)" {
+		t.Fatalf("bash denial parsed = %+v", parsed.PermissionDenials[1])
+	}
 }
 
 func TestExecutorKeepsRawClaudeOutputAndEmitsSingleFriendlyConversation(t *testing.T) {
@@ -378,6 +389,155 @@ func TestExecutorFallsBackToResultConversationWhenAssistantTextMissing(t *testin
 	}
 	if result != "fallback answer" || completed != "fallback answer" {
 		t.Fatalf("result=%q completed=%q, want fallback answer", result, completed)
+	}
+}
+
+func TestExecutorSurfacesClaudePermissionDenialAndResumesAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args.txt")
+	agentPath := filepath.Join(root, "fake-claude-permission")
+	denialLine := `{"type":"result","session_id":"claude-session","result":"Need permission to edit README.md","permission_denials":[{"tool_name":"Edit","tool_use_id":"tool-1","tool_input":{"file_path":"/tmp/README.md","old_string":"old","new_string":"new"}},{"tool_name":"Edit","tool_use_id":"tool-dup","tool_input":{"file_path":"/tmp/README.md","old_string":"old","new_string":"new"}}]}`
+	finalLine := `{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"text","text":"edit completed"}]}}`
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '" + argsFile + "'; done\n" +
+		"printf '%s\\n' '---' >> '" + argsFile + "'\n" +
+		"case \"$*\" in\n" +
+		"  *--allowedTools*) printf '%s\\n' '" + finalLine + "' ;;\n" +
+		"  *) printf '%s\\n' '" + denialLine + "' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(agentPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := make(chan protocol.WorkerEvent, 1)
+	var eventsMu sync.Mutex
+	var events []protocol.WorkerEvent
+	runner := NewExecutor(Config{
+		WorkerID: "worker-1",
+		WorkDir:  root,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentClaude: newClaudeAgent(agentPath, func() string { return "claude-session" }),
+		},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+			eventsMu.Lock()
+			events = append(events, event)
+			eventsMu.Unlock()
+			if event.Type == protocol.MessageTaskInteractionRequest {
+				requests <- event
+			}
+			return nil
+		}),
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Execute(context.Background(), protocol.TaskStartPayload{
+			Task:    protocol.TaskPayload{ID: "task-claude-permission", Title: "prompt", AgentType: domain.AgentClaude},
+			Project: protocol.ProjectPayload{ID: "project-1", WorktreeNamePrefix: "p"},
+		})
+	}()
+
+	var request protocol.WorkerEvent
+	select {
+	case request = <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for claude permission request")
+	}
+	if request.Kind != domain.TaskInteractionFileApproval || request.Title != "Approve Claude file change" || !strings.Contains(request.RawPayload, `"tool_name":"Edit"`) {
+		t.Fatalf("claude interaction request = %+v", request)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Execute completed before interaction response: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := runner.HandleTaskInteractionResponse(context.Background(), protocol.TaskInteractionResponsePayload{
+		InteractionID: request.InteractionID,
+		TaskID:        "task-claude-permission",
+		Decision:      domain.TaskInteractionApprove,
+	}); err != nil {
+		t.Fatalf("HandleTaskInteractionResponse returned error: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	var interactionRequests, completed int
+	for _, event := range events {
+		if event.Type == protocol.MessageTaskInteractionRequest {
+			interactionRequests++
+		}
+		if event.Type == protocol.MessageTaskCompleted {
+			completed++
+			if event.Result != "edit completed" || event.AgentSessionID != "claude-session" {
+				t.Fatalf("completed event = %+v", event)
+			}
+		}
+	}
+	if interactionRequests != 1 || completed != 1 {
+		t.Fatalf("interactionRequests=%d completed=%d events=%+v", interactionRequests, completed, events)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	if !strings.Contains(got, "--resume\nclaude-session\n") || !strings.Contains(got, "--allowedTools\nEdit\n") {
+		t.Fatalf("claude resume args = %q", got)
+	}
+}
+
+func TestClaudeCommandAgentResumesDeniedPermissionWithoutAllowedTools(t *testing.T) {
+	root := t.TempDir()
+	argsFile := filepath.Join(root, "args-denied.txt")
+	agentPath := filepath.Join(root, "fake-claude-denied")
+	denialLine := `{"type":"result","session_id":"claude-session","result":"Need permission to run command","permission_denials":[{"tool_name":"Bash","tool_use_id":"tool-1","tool_input":{"command":"rm -rf build"}}]}`
+	finalLine := `{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"text","text":"continued without command"}]}}`
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '" + argsFile + "'; done\n" +
+		"printf '%s\\n' '---' >> '" + argsFile + "'\n" +
+		"case \"$*\" in\n" +
+		"  *--resume*) printf '%s\\n' '" + finalLine + "' ;;\n" +
+		"  *) printf '%s\\n' '" + denialLine + "' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(agentPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := newClaudeAgent(agentPath, func() string { return "claude-session" })
+	var requests []AgentInteractionRequest
+	var events []AgentEvent
+	err := agent.Run(context.Background(), AgentInput{
+		Task:        protocol.TaskPayload{ID: "task-denied", Title: "prompt", AgentType: domain.AgentClaude},
+		WorktreeDir: root,
+		RequestInteraction: func(ctx context.Context, request AgentInteractionRequest) (AgentInteractionResponse, error) {
+			requests = append(requests, request)
+			return AgentInteractionResponse{Decision: domain.TaskInteractionDeny, Message: "do not delete build"}, nil
+		},
+	}, func(event AgentEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(requests) != 1 || requests[0].Kind != domain.TaskInteractionCommandApproval || !strings.Contains(requests[0].Body, "rm -rf build") {
+		t.Fatalf("requests = %+v", requests)
+	}
+	last := events[len(events)-1]
+	if last.Type != AgentEventCompleted || last.Content != "continued without command" {
+		t.Fatalf("events = %+v", events)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	if strings.Contains(got, "--allowedTools") {
+		t.Fatalf("denied permission should not add allowed tools: %q", got)
+	}
+	if !strings.Contains(got, "The user denied the Claude tool request") || !strings.Contains(got, "do not delete build") {
+		t.Fatalf("denial resume message missing from args: %q", got)
 	}
 }
 
