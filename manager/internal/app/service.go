@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,21 @@ func (s *Service) Store() store.Store {
 
 func (s *Service) DomainEvents(ctx context.Context, filter domain.EventFilter) ([]domain.DomainEvent, error) {
 	return s.store.DomainEvents(ctx, filter)
+}
+
+func (s *Service) DomainEventsPage(ctx context.Context, filter domain.EventFilter, page PageInput) ([]domain.DomainEvent, int, error) {
+	events, err := s.store.DomainEvents(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	slices.SortFunc(events, func(a, b domain.DomainEvent) int {
+		if cmp := b.OccurredAt.Compare(a.OccurredAt); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(b.EventID, a.EventID)
+	})
+	pageItems, total := paginateItems(events, page)
+	return pageItems, total, nil
 }
 
 func (s *Service) OutboxMessages(ctx context.Context, includePublished bool) ([]domain.OutboxMessage, error) {
@@ -125,6 +141,25 @@ func (s *Service) Projects(ctx context.Context) ([]*domain.Project, error) {
 }
 
 func (s *Service) ProjectsFiltered(ctx context.Context, includeArchived bool) ([]*domain.Project, error) {
+	return s.filteredProjects(ctx, includeArchived)
+}
+
+func (s *Service) ProjectsFilteredPage(ctx context.Context, includeArchived bool, page PageInput) ([]*domain.Project, int, error) {
+	projects, err := s.filteredProjects(ctx, includeArchived)
+	if err != nil {
+		return nil, 0, err
+	}
+	slices.SortFunc(projects, func(a, b *domain.Project) int {
+		if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	pageItems, total := paginateItems(projects, page)
+	return pageItems, total, nil
+}
+
+func (s *Service) filteredProjects(ctx context.Context, includeArchived bool) ([]*domain.Project, error) {
 	projects, err := s.store.Projects(ctx)
 	if err != nil {
 		return nil, err
@@ -247,6 +282,22 @@ type PageInput struct {
 	Limit  int
 }
 
+func paginateItems[T any](items []T, page PageInput) ([]T, int) {
+	total := len(items)
+	start := page.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > total {
+		start = total
+	}
+	end := total
+	if page.Limit > 0 && start+page.Limit < end {
+		end = start + page.Limit
+	}
+	return items[start:end], total
+}
+
 func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domain.Task, error) {
 	now := s.clock()
 	project, err := s.store.Project(ctx, input.ProjectID)
@@ -328,19 +379,8 @@ func (s *Service) TasksFiltered(ctx context.Context, filter TaskFilter, page Pag
 		}
 		filtered = append(filtered, task)
 	}
-	total := len(filtered)
-	start := page.Offset
-	if start < 0 {
-		start = 0
-	}
-	if start > len(filtered) {
-		start = len(filtered)
-	}
-	end := len(filtered)
-	if page.Limit > 0 && start+page.Limit < end {
-		end = start + page.Limit
-	}
-	return filtered[start:end], total, nil
+	pageItems, total := paginateItems(filtered, page)
+	return pageItems, total, nil
 }
 
 func (s *Service) Task(ctx context.Context, id string) (*domain.Task, error) {
@@ -514,6 +554,25 @@ func (s *Service) Worker(ctx context.Context, id string) (*domain.Worker, error)
 }
 
 func (s *Service) WorkersFiltered(ctx context.Context, filter WorkerFilter) ([]*domain.Worker, error) {
+	return s.filteredWorkers(ctx, filter)
+}
+
+func (s *Service) WorkersFilteredPage(ctx context.Context, filter WorkerFilter, page PageInput) ([]*domain.Worker, int, error) {
+	workers, err := s.filteredWorkers(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	slices.SortFunc(workers, func(a, b *domain.Worker) int {
+		if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	pageItems, total := paginateItems(workers, page)
+	return pageItems, total, nil
+}
+
+func (s *Service) filteredWorkers(ctx context.Context, filter WorkerFilter) ([]*domain.Worker, error) {
 	workers, err := s.store.Workers(ctx)
 	if err != nil {
 		return nil, err

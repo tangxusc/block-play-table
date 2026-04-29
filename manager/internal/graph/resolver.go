@@ -8,6 +8,8 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/tangxusc/block-play-table/manager/internal/app"
@@ -745,6 +747,34 @@ func boardColumns(tasks []*domain.Task) []*model.BoardColumn {
 		out = append(out, &model.BoardColumn{ID: string(column.status), Title: column.title, Status: model.TaskStatus(column.status), Tasks: columnTasks})
 	}
 	return out
+}
+
+func taskPageNewestFirst(tasks []*domain.Task, page app.PageInput) ([]*domain.Task, int) {
+	sorted := append([]*domain.Task(nil), tasks...)
+	slices.SortFunc(sorted, func(a, b *domain.Task) int {
+		if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	pageItems, total := paginateResolverItems(sorted, page)
+	return pageItems, total
+}
+
+func paginateResolverItems[T any](items []T, page app.PageInput) ([]T, int) {
+	total := len(items)
+	start := page.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > total {
+		start = total
+	}
+	end := total
+	if page.Limit > 0 && start+page.Limit < end {
+		end = start + page.Limit
+	}
+	return items[start:end], total
 }
 
 func subscribeRawEvents(ctx context.Context, service *app.Service, filter domain.EventFilter) <-chan domain.DomainEvent {

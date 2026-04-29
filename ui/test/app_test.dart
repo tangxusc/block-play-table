@@ -306,6 +306,113 @@ void main() {
     expect(find.text('Conversation'), findsOneWidget);
   });
 
+  testWidgets('board paginates tasks and resets page when view changes', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final tasks = List.generate(
+      21,
+      (index) => _taskWith(id: 'task-$index', title: 'Paged task $index'),
+    );
+    final apiClient = FakeApiClient(tasks: tasks);
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+    expect(find.text('Paged task 0'), findsOneWidget);
+    expect(find.text('Paged task 20'), findsNothing);
+
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Showing 21-21 of 21'), findsOneWidget);
+    expect(find.text('Paged task 20'), findsOneWidget);
+
+    await tester.tap(find.text('List'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+    expect(find.text('Paged task 0'), findsOneWidget);
+    expect(find.text('Paged task 20'), findsNothing);
+  });
+
+  testWidgets('projects workers and events paginate with shared controls', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 900);
+    _setSurfaceSize(tester, surfaceSize);
+    final projects = List.generate(
+      21,
+      (index) => ProjectItem(
+        id: 'project-$index',
+        name: 'Paged project $index',
+        gitUrl: 'git://project-$index',
+        defaultBranch: 'main',
+        worktreeNamePrefix: 'project-$index',
+        archived: false,
+      ),
+    );
+    final workers = List.generate(
+      21,
+      (index) => _defaultWorker.copyWith(
+        id: 'worker-$index',
+        name: 'Paged worker $index',
+      ),
+    );
+    final events = List.generate(
+      21,
+      (index) => DomainEventItem(
+        eventId: 'event-$index',
+        eventType: 'PagedEvent$index',
+        aggregateType: 'Task',
+        aggregateId: 'task-$index',
+        aggregateVersion: 1,
+        payload: '{}',
+        occurredAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+      ),
+    );
+    final apiClient = FakeApiClient(
+      projects: projects,
+      workers: workers,
+      events: events,
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Projects').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+    expect(find.text('Paged project 0'), findsOneWidget);
+    expect(find.text('Paged project 20'), findsNothing);
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 21-21 of 21'), findsOneWidget);
+    expect(find.text('Paged project 20'), findsOneWidget);
+
+    await tester.tap(find.text('Workers').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+    expect(find.text('Paged worker 0'), findsOneWidget);
+    expect(find.text('Paged worker 20'), findsNothing);
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 21-21 of 21'), findsOneWidget);
+    expect(find.text('Paged worker 20'), findsOneWidget);
+
+    await tester.tap(find.text('Events').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+    expect(find.text('PagedEvent0'), findsOneWidget);
+    expect(find.text('PagedEvent20'), findsNothing);
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    expect(find.text('Showing 21-21 of 21'), findsOneWidget);
+    expect(find.text('PagedEvent20'), findsOneWidget);
+  });
+
   testWidgets('create task can save without worker or agent', (tester) async {
     final apiClient = FakeApiClient();
     await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
@@ -733,16 +840,23 @@ class FakeApiClient extends ApiClient {
     SettingsData? settings,
     WorkerItem? worker,
     List<TaskItem>? tasks,
+    List<ProjectItem>? projects,
+    List<WorkerItem>? workers,
+    List<DomainEventItem>? events,
   })  : _settings = settings ?? const SettingsData(),
-        _worker = worker ?? _defaultWorker,
         _tasks = tasks ?? [_task],
+        _projects = projects ?? [_project],
+        _workers = workers ?? [worker ?? _defaultWorker],
+        _domainEvents = events ?? const [],
         super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
   SettingsData _settings;
-  WorkerItem _worker;
   final List<TaskItem> _tasks;
+  final List<ProjectItem> _projects;
+  List<WorkerItem> _workers;
+  final List<DomainEventItem> _domainEvents;
   int boardFetches = 0;
   int detailFetches = 0;
   bool _completedDetail = false;
@@ -766,22 +880,27 @@ class FakeApiClient extends ApiClient {
   }
 
   @override
-  Future<BoardData> fetchBoardData(String view) async {
+  Future<BoardData> fetchBoardData(
+    String view, {
+    PageRequest page = const PageRequest(),
+  }) async {
     boardFetches++;
+    final pageTasks = page.slice(_tasks);
     return BoardData(
       id: 'default',
       name: 'Default Board',
       type: view,
-      tasks: _tasks,
+      totalCount: _tasks.length,
+      tasks: pageTasks,
       columns: [
         BoardColumnData(
           id: 'CREATED',
           title: 'Pending',
           status: 'CREATED',
-          tasks: _tasks,
+          tasks: pageTasks,
         ),
       ],
-      calendarItems: _tasks
+      calendarItems: pageTasks
           .map(
             (task) => BoardCalendarItemData(
               id: task.id!,
@@ -791,19 +910,40 @@ class FakeApiClient extends ApiClient {
             ),
           )
           .toList(),
-      projects: [_project],
-      workers: [_worker],
+      projects: _projects,
+      workers: _workers,
     );
   }
 
   @override
-  Future<List<ProjectItem>> fetchProjects() async => [_project];
+  Future<List<ProjectItem>> fetchProjects() async => _projects;
 
   @override
-  Future<List<WorkerItem>> fetchWorkers() async => [_worker];
+  Future<PagedResult<ProjectItem>> fetchProjectsPage({
+    PageRequest page = const PageRequest(),
+  }) async =>
+      PagedResult(items: page.slice(_projects), totalCount: _projects.length);
 
   @override
-  Future<List<DomainEventItem>> fetchEvents() async => const [];
+  Future<List<WorkerItem>> fetchWorkers() async => _workers;
+
+  @override
+  Future<PagedResult<WorkerItem>> fetchWorkersPage({
+    PageRequest page = const PageRequest(),
+  }) async =>
+      PagedResult(items: page.slice(_workers), totalCount: _workers.length);
+
+  @override
+  Future<List<DomainEventItem>> fetchEvents() async => _domainEvents;
+
+  @override
+  Future<PagedResult<DomainEventItem>> fetchEventsPage({
+    PageRequest page = const PageRequest(),
+  }) async =>
+      PagedResult(
+        items: page.slice(_domainEvents),
+        totalCount: _domainEvents.length,
+      );
 
   @override
   Future<SettingsData> fetchSettings() async => _settings;
@@ -817,7 +957,13 @@ class FakeApiClient extends ApiClient {
   @override
   Future<void> updateWorker(WorkerItem worker) async {
     savedWorker = worker;
-    _worker = worker;
+    _workers = [
+      for (final existing in _workers)
+        if (existing.id == worker.id) worker else existing,
+    ];
+    if (!_workers.any((existing) => existing.id == worker.id)) {
+      _workers = [worker];
+    }
   }
 
   @override

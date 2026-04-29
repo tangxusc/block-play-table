@@ -147,6 +147,103 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	}
 }
 
+func TestServerPaginationConnections(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		current := now
+		now = now.Add(time.Minute)
+		return current
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	firstProject := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "First Project", "gitUrl": "git://first"},
+	})["data"].(map[string]any)["createProject"].(map[string]any)
+	secondProject := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "Second Project", "gitUrl": "git://second"},
+	})["data"].(map[string]any)["createProject"].(map[string]any)
+	firstProjectID := firstProject["id"].(string)
+	secondProjectID := secondProject["id"].(string)
+
+	for _, input := range []map[string]any{
+		{"id": "worker-page-1", "name": "First Worker", "supportedAgents": []any{"codex"}, "workDir": "/tmp/first"},
+		{"id": "worker-page-2", "name": "Second Worker", "supportedAgents": []any{"codex"}, "workDir": "/tmp/second"},
+	} {
+		_ = postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }`, map[string]any{"input": input})
+	}
+
+	for _, title := range []string{"Task 1", "Task 2", "Task 3"} {
+		_ = postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
+			"input": map[string]any{"title": title, "projectId": secondProjectID, "agentType": "codex"},
+		})
+	}
+
+	projects := postGraphQL(t, server.URL, `query {
+		projectsConnection(filter: { includeArchived: true }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { id name }
+		}
+	}`, nil)["data"].(map[string]any)["projectsConnection"].(map[string]any)
+	if projects["totalCount"] != float64(2) {
+		t.Fatalf("project totalCount = %v, want 2", projects["totalCount"])
+	}
+	projectNodes := projects["nodes"].([]any)
+	if len(projectNodes) != 1 || projectNodes[0].(map[string]any)["id"] != secondProjectID {
+		t.Fatalf("project nodes = %#v, want latest project", projectNodes)
+	}
+
+	workers := postGraphQL(t, server.URL, `query {
+		workersConnection(filter: { includeDisabled: true }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { id name }
+		}
+	}`, nil)["data"].(map[string]any)["workersConnection"].(map[string]any)
+	if workers["totalCount"] != float64(2) {
+		t.Fatalf("worker totalCount = %v, want 2", workers["totalCount"])
+	}
+	workerNodes := workers["nodes"].([]any)
+	if len(workerNodes) != 1 || workerNodes[0].(map[string]any)["id"] != "worker-page-2" {
+		t.Fatalf("worker nodes = %#v, want latest worker", workerNodes)
+	}
+
+	events := postGraphQL(t, server.URL, `query {
+		domainEventsConnection(filter: { aggregateType: "Project" }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { eventType aggregateId }
+		}
+	}`, nil)["data"].(map[string]any)["domainEventsConnection"].(map[string]any)
+	if events["totalCount"] != float64(2) {
+		t.Fatalf("event totalCount = %v, want 2", events["totalCount"])
+	}
+	eventNodes := events["nodes"].([]any)
+	if len(eventNodes) != 1 || eventNodes[0].(map[string]any)["aggregateId"] != secondProjectID {
+		t.Fatalf("event nodes = %#v, want latest project event", eventNodes)
+	}
+
+	board := postGraphQL(t, server.URL, `query {
+		board(page: { offset: 0, limit: 2 }) {
+			totalCount
+			tasks { title }
+			columns { tasks { title } }
+		}
+	}`, nil)["data"].(map[string]any)["board"].(map[string]any)
+	if board["totalCount"] != float64(3) {
+		t.Fatalf("board totalCount = %v, want 3", board["totalCount"])
+	}
+	taskNodes := board["tasks"].([]any)
+	if len(taskNodes) != 2 || taskNodes[0].(map[string]any)["title"] != "Task 3" {
+		t.Fatalf("board tasks = %#v, want latest two tasks", taskNodes)
+	}
+
+	legacyEvents := postGraphQL(t, server.URL, `query DomainEvents($aggregateId: ID!) {
+		domainEvents(aggregateId: $aggregateId) { eventType }
+	}`, map[string]any{"aggregateId": firstProjectID})["data"].(map[string]any)["domainEvents"].([]any)
+	if len(legacyEvents) != 1 {
+		t.Fatalf("legacy domainEvents count = %d, want 1", len(legacyEvents))
+	}
+}
+
 func TestServerValidationCORSAndSubscriptions(t *testing.T) {
 	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore())).Handler())
 	defer server.Close()

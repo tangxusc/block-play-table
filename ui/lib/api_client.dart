@@ -43,7 +43,10 @@ class ApiClient {
   final WebSocketLink _webSocketLink;
   late final GraphQLClient _client;
 
-  Future<BoardData> fetchBoardData(String view) async {
+  Future<BoardData> fetchBoardData(
+    String view, {
+    PageRequest page = const PageRequest(),
+  }) async {
     final id = switch (view) {
       'CALENDAR' => 'calendar',
       'LIST' => 'list',
@@ -51,11 +54,12 @@ class ApiClient {
     };
     final boardFuture = graphQL(
       r'''
-        query Board($id: ID) {
-          board(id: $id) {
+        query Board($id: ID, $page: PageInput) {
+          board(id: $id, page: $page) {
             id
             name
             type
+            totalCount
             columns {
               id
               title
@@ -105,7 +109,7 @@ class ApiClient {
           }
         }
         ''',
-      variables: {'id': id},
+      variables: {'id': id, 'page': page.toGraphQLInput()},
     );
     final projectsFuture = fetchProjects();
     final workersFuture = fetchWorkers();
@@ -132,6 +136,32 @@ class ApiClient {
         .toList();
   }
 
+  Future<PagedResult<ProjectItem>> fetchProjectsPage({
+    PageRequest page = const PageRequest(),
+  }) async {
+    final data = await graphQL(
+      r'''
+      query ProjectsPage($page: PageInput) {
+        projectsConnection(filter: { includeArchived: true }, page: $page) {
+          totalCount
+          nodes {
+            id name gitUrl defaultBranch worktreeNamePrefix archived
+          }
+        }
+      }
+      ''',
+      variables: {'page': page.toGraphQLInput()},
+    );
+    final connection =
+        data['projectsConnection'] as Map<String, dynamic>? ?? const {};
+    return PagedResult(
+      items: (connection['nodes'] as List<dynamic>? ?? [])
+          .map((item) => ProjectItem.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      totalCount: connection['totalCount'] as int? ?? 0,
+    );
+  }
+
   Future<List<WorkerItem>> fetchWorkers() async {
     final data = await graphQL(r'''
       query Workers {
@@ -150,6 +180,37 @@ class ApiClient {
         .toList();
   }
 
+  Future<PagedResult<WorkerItem>> fetchWorkersPage({
+    PageRequest page = const PageRequest(),
+  }) async {
+    final data = await graphQL(
+      r'''
+      query WorkersPage($page: PageInput) {
+        workersConnection(filter: { includeDisabled: true }, page: $page) {
+          totalCount
+          nodes {
+            id name status supportedAgents workDir startupCommand projectBindingMode
+            boundProjectIds currentTaskIds lastHeartbeatAt
+            agentRuntimeEnv {
+              agentType
+              vars { key valueMasked description enabled sensitive }
+            }
+          }
+        }
+      }
+      ''',
+      variables: {'page': page.toGraphQLInput()},
+    );
+    final connection =
+        data['workersConnection'] as Map<String, dynamic>? ?? const {};
+    return PagedResult(
+      items: (connection['nodes'] as List<dynamic>? ?? [])
+          .map((item) => WorkerItem.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      totalCount: connection['totalCount'] as int? ?? 0,
+    );
+  }
+
   Future<List<DomainEventItem>> fetchEvents() async {
     final data = await graphQL(r'''
       query Events {
@@ -161,6 +222,32 @@ class ApiClient {
     return (data['domainEvents'] as List<dynamic>? ?? [])
         .map((item) => DomainEventItem.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<PagedResult<DomainEventItem>> fetchEventsPage({
+    PageRequest page = const PageRequest(),
+  }) async {
+    final data = await graphQL(
+      r'''
+      query EventsPage($page: PageInput) {
+        domainEventsConnection(page: $page) {
+          totalCount
+          nodes {
+            eventId eventType aggregateType aggregateId aggregateVersion payload occurredAt
+          }
+        }
+      }
+      ''',
+      variables: {'page': page.toGraphQLInput()},
+    );
+    final connection =
+        data['domainEventsConnection'] as Map<String, dynamic>? ?? const {};
+    return PagedResult(
+      items: (connection['nodes'] as List<dynamic>? ?? [])
+          .map((item) => DomainEventItem.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      totalCount: connection['totalCount'] as int? ?? 0,
+    );
   }
 
   Future<SettingsData> fetchSettings() async {

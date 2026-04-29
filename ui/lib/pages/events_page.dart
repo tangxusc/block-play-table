@@ -15,8 +15,9 @@ class EventsPage extends StatefulWidget {
 }
 
 class _EventsPageState extends State<EventsPage> {
-  late Future<List<DomainEventItem>> _future;
-  List<DomainEventItem>? _events;
+  PageRequest _page = const PageRequest();
+  late Future<PagedResult<DomainEventItem>> _future;
+  PagedResult<DomainEventItem>? _lastPage;
   RealtimeRefreshController? _realtime;
 
   @override
@@ -32,11 +33,16 @@ class _EventsPageState extends State<EventsPage> {
           return;
         }
         setState(() {
-          final current = _events ?? const <DomainEventItem>[];
+          final current = _lastPage?.items ?? const <DomainEventItem>[];
           if (current.any((item) => item.eventId == event.eventId)) {
             return;
           }
-          _events = [...current, event];
+          if (_page.offset == 0) {
+            _lastPage = PagedResult(
+              items: [event, ...current].take(_page.limit).toList(),
+              totalCount: (_lastPage?.totalCount ?? current.length) + 1,
+            );
+          }
         });
       },
     );
@@ -48,10 +54,17 @@ class _EventsPageState extends State<EventsPage> {
     super.dispose();
   }
 
-  Future<List<DomainEventItem>> _load() async {
-    final events = await widget.apiClient.fetchEvents();
-    _events = events;
-    return events;
+  Future<PagedResult<DomainEventItem>> _load() async {
+    var page = await widget.apiClient.fetchEventsPage(page: _page);
+    if (page.items.isEmpty && page.totalCount > 0 && _page.offset > 0) {
+      final corrected = _page.withOffset(_page.lastOffset(page.totalCount));
+      if (corrected.offset != _page.offset) {
+        _page = corrected;
+        page = await widget.apiClient.fetchEventsPage(page: _page);
+      }
+    }
+    _lastPage = page;
+    return page;
   }
 
   void _reload() {
@@ -59,6 +72,16 @@ class _EventsPageState extends State<EventsPage> {
       return;
     }
     setState(() {
+      _future = _load();
+    });
+  }
+
+  void _goToPage(PageRequest page) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _page = page;
       _future = _load();
     });
   }
@@ -75,21 +98,21 @@ class _EventsPageState extends State<EventsPage> {
           icon: const Icon(Icons.refresh),
         ),
       ],
-      child: FutureBuilder<List<DomainEventItem>>(
+      child: FutureBuilder<PagedResult<DomainEventItem>>(
         future: _future,
         builder: (context, snapshot) {
-          final events = snapshot.data ?? _events;
+          final page = snapshot.data ?? _lastPage;
           if (snapshot.connectionState != ConnectionState.done &&
-              events == null) {
+              page == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError && events == null) {
+          if (snapshot.hasError && page == null) {
             return ErrorView(
               message: snapshot.error.toString(),
               onRetry: _reload,
             );
           }
-          final items = (events ?? const <DomainEventItem>[]).reversed.toList();
+          final items = page?.items ?? const <DomainEventItem>[];
           if (items.isEmpty) {
             return const EmptyState(
               icon: Icons.event_note_outlined,
@@ -100,32 +123,44 @@ class _EventsPageState extends State<EventsPage> {
           }
           return Stack(
             children: [
-              ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemBuilder: (context, index) {
-                  final event = items[index];
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.event_note_outlined),
-                      title: Text(event.eventType),
-                      subtitle: Text(
-                        '${event.aggregateType} ${event.aggregateId}\n${event.payload}',
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: SizedBox(
-                        width: 190,
-                        child: Text(
-                          event.occurredAt,
-                          textAlign: TextAlign.end,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+              Column(
+                children: [
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemBuilder: (context, index) {
+                        final event = items[index];
+                        return Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.event_note_outlined),
+                            title: Text(event.eventType),
+                            subtitle: Text(
+                              '${event.aggregateType} ${event.aggregateId}\n${event.payload}',
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: SizedBox(
+                              width: 190,
+                              child: Text(
+                                event.occurredAt,
+                                textAlign: TextAlign.end,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 8),
+                      itemCount: items.length,
                     ),
-                  );
-                },
-                separatorBuilder: (context, index) => const SizedBox(height: 8),
-                itemCount: items.length,
+                  ),
+                  PaginationBar(
+                    page: _page,
+                    totalCount: page?.totalCount ?? 0,
+                    onPageChanged: _goToPage,
+                  ),
+                ],
               ),
               if (snapshot.connectionState != ConnectionState.done)
                 const Positioned(

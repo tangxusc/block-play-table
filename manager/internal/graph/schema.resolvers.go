@@ -334,6 +334,15 @@ func (r *queryResolver) Workers(ctx context.Context, filter *model.WorkerFilter)
 	return toModelWorkers(workers), err
 }
 
+// WorkersConnection is the resolver for the workersConnection field.
+func (r *queryResolver) WorkersConnection(ctx context.Context, filter *model.WorkerFilter, page *model.PageInput) (*model.WorkerConnection, error) {
+	workers, total, err := r.Service.WorkersFilteredPage(ctx, workerFilter(filter), pageInput(page))
+	if err != nil {
+		return nil, err
+	}
+	return &model.WorkerConnection{Nodes: toModelWorkers(workers), TotalCount: total}, nil
+}
+
 // Project is the resolver for the project field.
 func (r *queryResolver) Project(ctx context.Context, id string) (*model.Project, error) {
 	project, err := r.Service.Project(ctx, id)
@@ -353,12 +362,26 @@ func (r *queryResolver) Projects(ctx context.Context, filter *model.ProjectFilte
 	return toModelProjects(projects), err
 }
 
+// ProjectsConnection is the resolver for the projectsConnection field.
+func (r *queryResolver) ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, page *model.PageInput) (*model.ProjectConnection, error) {
+	includeArchived := false
+	if filter != nil && filter.IncludeArchived != nil {
+		includeArchived = *filter.IncludeArchived
+	}
+	projects, total, err := r.Service.ProjectsFilteredPage(ctx, includeArchived, pageInput(page))
+	if err != nil {
+		return nil, err
+	}
+	return &model.ProjectConnection{Nodes: toModelProjects(projects), TotalCount: total}, nil
+}
+
 // Board is the resolver for the board field.
-func (r *queryResolver) Board(ctx context.Context, id *string) (*model.Board, error) {
+func (r *queryResolver) Board(ctx context.Context, id *string, page *model.PageInput) (*model.Board, error) {
 	tasks, _, err := r.Service.TasksFiltered(ctx, app.TaskFilter{IncludeArchived: true}, app.PageInput{})
 	if err != nil {
 		return nil, err
 	}
+	tasks, total := taskPageNewestFirst(tasks, pageInput(page))
 	boardType := model.BoardTypeKanban
 	name := "Default Board"
 	boardID := "default"
@@ -379,7 +402,7 @@ func (r *queryResolver) Board(ctx context.Context, id *string) (*model.Board, er
 		modelTask := toModelTask(task)
 		calendarItems = append(calendarItems, &model.BoardCalendarItem{ID: task.ID, Task: modelTask, Date: modelTask.StartDate, Status: model.TaskStatus(task.Status)})
 	}
-	return &model.Board{ID: boardID, Name: name, Type: boardType, Columns: columns, CalendarItems: calendarItems, Tasks: toModelTasks(tasks)}, nil
+	return &model.Board{ID: boardID, Name: name, Type: boardType, TotalCount: total, Columns: columns, CalendarItems: calendarItems, Tasks: toModelTasks(tasks)}, nil
 }
 
 // Settings is the resolver for the settings field.
@@ -408,6 +431,25 @@ func (r *queryResolver) DomainEvents(ctx context.Context, filter *model.DomainEv
 	}
 	events, err := r.Service.DomainEvents(ctx, domainFilter)
 	return toModelEvents(events), err
+}
+
+// DomainEventsConnection is the resolver for the domainEventsConnection field.
+func (r *queryResolver) DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error) {
+	domainFilter := eventFilter(filter)
+	if aggregateID != nil {
+		domainFilter.AggregateID = *aggregateID
+	}
+	if aggregateType != nil {
+		domainFilter.AggregateType = *aggregateType
+	}
+	if eventType != nil {
+		domainFilter.EventType = *eventType
+	}
+	events, total, err := r.Service.DomainEventsPage(ctx, domainFilter, pageInput(page))
+	if err != nil {
+		return nil, err
+	}
+	return &model.DomainEventConnection{Nodes: toModelEvents(events), TotalCount: total}, nil
 }
 
 // OutboxMessages is the resolver for the outboxMessages field.

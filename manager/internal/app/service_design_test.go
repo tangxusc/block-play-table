@@ -389,6 +389,92 @@ func TestServiceFilteringPaginationAndEventBranches(t *testing.T) {
 	service.publishEvents(burst)
 }
 
+func TestServicePaginatesProjectsWorkersAndEventsNewestFirst(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		current := now
+		now = now.Add(time.Minute)
+		return current
+	}))
+
+	firstProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "First", GitURL: "git://first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Second", GitURL: "git://second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ArchiveProject(ctx, firstProject.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, total, err := service.ProjectsFilteredPage(ctx, true, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(projects) != 1 || projects[0].ID != secondProject.ID {
+		t.Fatalf("paged projects = len %d total %d first %+v", len(projects), total, projects)
+	}
+	projects, total, err = service.ProjectsFilteredPage(ctx, false, PageInput{Offset: -10, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(projects) != 1 || projects[0].ID != secondProject.ID {
+		t.Fatalf("active projects page = len %d total %d projects %+v", len(projects), total, projects)
+	}
+	projects, total, err = service.ProjectsFilteredPage(ctx, true, PageInput{Offset: 99, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(projects) != 0 {
+		t.Fatalf("out-of-range projects page = len %d total %d", len(projects), total)
+	}
+
+	firstWorker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-first", Name: "First", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWorker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-second", Name: "Second", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.DisableWorker(ctx, firstWorker.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	workers, workerTotal, err := service.WorkersFilteredPage(ctx, WorkerFilter{IncludeDisabled: true}, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workerTotal != 2 || len(workers) != 1 || workers[0].ID != secondWorker.ID {
+		t.Fatalf("paged workers = len %d total %d workers %+v", len(workers), workerTotal, workers)
+	}
+	workers, workerTotal, err = service.WorkersFilteredPage(ctx, WorkerFilter{}, PageInput{Offset: 99, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workerTotal != 1 || len(workers) != 0 {
+		t.Fatalf("out-of-range workers page = len %d total %d", len(workers), workerTotal)
+	}
+
+	events, eventTotal, err := service.DomainEventsPage(ctx, domain.EventFilter{AggregateType: "Project"}, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventTotal != 3 || len(events) != 1 || events[0].AggregateID != firstProject.ID || events[0].EventType != "ProjectArchived" {
+		t.Fatalf("paged events = len %d total %d events %+v", len(events), eventTotal, events)
+	}
+	events, eventTotal, err = service.DomainEventsPage(ctx, domain.EventFilter{AggregateType: "Project"}, PageInput{Offset: 99, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventTotal != 3 || len(events) != 0 {
+		t.Fatalf("out-of-range events page = len %d total %d", len(events), eventTotal)
+	}
+}
+
 func TestServiceSchedulingHelpers(t *testing.T) {
 	worker := &domain.Worker{
 		ID:                 "worker-helper",

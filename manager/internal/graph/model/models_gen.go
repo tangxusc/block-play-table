@@ -49,6 +49,7 @@ type Board struct {
 	ID            string               `json:"id"`
 	Name          string               `json:"name"`
 	Type          BoardType            `json:"type"`
+	TotalCount    int                  `json:"totalCount"`
 	Columns       []*BoardColumn       `json:"columns"`
 	CalendarItems []*BoardCalendarItem `json:"calendarItems"`
 	Tasks         []*Task              `json:"tasks"`
@@ -157,6 +158,11 @@ type DomainEvent struct {
 	CausationID      *string   `json:"causationId,omitempty"`
 }
 
+type DomainEventConnection struct {
+	Nodes      []*DomainEvent `json:"nodes"`
+	TotalCount int            `json:"totalCount"`
+}
+
 type DomainEventFilter struct {
 	AggregateID   *string `json:"aggregateId,omitempty"`
 	AggregateType *string `json:"aggregateType,omitempty"`
@@ -199,6 +205,11 @@ type Project struct {
 	Version            int       `json:"version"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+type ProjectConnection struct {
+	Nodes      []*Project `json:"nodes"`
+	TotalCount int        `json:"totalCount"`
 }
 
 type ProjectFilter struct {
@@ -367,6 +378,11 @@ type WorkerAgentRuntimeEnv struct {
 type WorkerAgentRuntimeEnvInput struct {
 	AgentType AgentType                  `json:"agentType"`
 	Vars      []*AgentRuntimeEnvVarInput `json:"vars"`
+}
+
+type WorkerConnection struct {
+	Nodes      []*Worker `json:"nodes"`
+	TotalCount int       `json:"totalCount"`
 }
 
 type WorkerFilter struct {

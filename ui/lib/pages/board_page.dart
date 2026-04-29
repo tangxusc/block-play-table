@@ -21,6 +21,7 @@ class BoardPage extends StatefulWidget {
 
 class _BoardPageState extends State<BoardPage> {
   String _view = 'KANBAN';
+  PageRequest _page = const PageRequest();
   late Future<BoardData> _future;
   BoardData? _lastData;
   RealtimeRefreshController? _realtime;
@@ -49,16 +50,36 @@ class _BoardPageState extends State<BoardPage> {
   }
 
   Future<BoardData> _load() async {
-    final data = await widget.apiClient.fetchBoardData(_view);
+    var data = await widget.apiClient.fetchBoardData(_view, page: _page);
+    if (data.tasks.isEmpty && data.totalCount > 0 && _page.offset > 0) {
+      final corrected = _page.withOffset(_page.lastOffset(data.totalCount));
+      if (corrected.offset != _page.offset) {
+        _page = corrected;
+        data = await widget.apiClient.fetchBoardData(_view, page: _page);
+      }
+    }
     _lastData = data;
     return data;
   }
 
-  void _reload() {
+  void _reload({bool firstPage = false}) {
     if (!mounted) {
       return;
     }
     setState(() {
+      if (firstPage) {
+        _page = _page.first();
+      }
+      _future = _load();
+    });
+  }
+
+  void _goToPage(PageRequest page) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _page = page;
       _future = _load();
     });
   }
@@ -66,7 +87,7 @@ class _BoardPageState extends State<BoardPage> {
   void _subscribe() {
     _realtime = RealtimeRefreshController(
       events: widget.apiClient.subscribeDomainEvents(),
-      reload: _reload,
+      reload: () => _reload(),
       shouldReload: (event) =>
           event.aggregateType == 'Task' ||
           event.aggregateType == 'Worker' ||
@@ -102,13 +123,14 @@ class _BoardPageState extends State<BoardPage> {
           onSelectionChanged: (values) {
             setState(() {
               _view = values.first;
+              _page = _page.first();
               _future = _load();
             });
           },
         ),
         IconButton(
           tooltip: 'Refresh board',
-          onPressed: _reload,
+          onPressed: () => _reload(),
           icon: const Icon(Icons.refresh),
         ),
         FilledButton.icon(
@@ -128,25 +150,36 @@ class _BoardPageState extends State<BoardPage> {
           if (snapshot.hasError && data == null) {
             return ErrorView(
               message: snapshot.error.toString(),
-              onRetry: _reload,
+              onRetry: () => _reload(),
             );
           }
           final board = data ?? BoardData.empty();
-          return Stack(
+          return Column(
             children: [
-              _BoardContent(
-                view: _view,
-                data: board,
-                onTaskSelected: _openTaskDetail,
-                onTaskEdit: _openTaskDialog,
-              ),
-              if (snapshot.connectionState != ConnectionState.done)
-                const Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  child: LinearProgressIndicator(minHeight: 2),
+              Expanded(
+                child: Stack(
+                  children: [
+                    _BoardContent(
+                      view: _view,
+                      data: board,
+                      onTaskSelected: _openTaskDetail,
+                      onTaskEdit: _openTaskDialog,
+                    ),
+                    if (snapshot.connectionState != ConnectionState.done)
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                  ],
                 ),
+              ),
+              PaginationBar(
+                page: _page,
+                totalCount: board.totalCount,
+                onPageChanged: _goToPage,
+              ),
             ],
           );
         },
@@ -166,7 +199,7 @@ class _BoardPageState extends State<BoardPage> {
       task: task,
     );
     if (saved == true) {
-      _reload();
+      _reload(firstPage: task == null);
     }
   }
 
