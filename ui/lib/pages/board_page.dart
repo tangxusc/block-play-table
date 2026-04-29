@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../board_status_groups.dart';
@@ -2413,8 +2414,25 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   Widget build(BuildContext context) {
     final currentTask = _lastDetail?.task ?? widget.task;
     final waitingForInput = currentTask.status == 'WAITING_INPUT';
+    final taskId = currentTask.id;
     return AlertDialog(
-      title: Text(currentTask.title),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              currentTask.title,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copy task ID',
+            onPressed: taskId == null || taskId.isEmpty
+                ? null
+                : () => _copyTaskId(taskId),
+            icon: const Icon(Icons.copy_outlined),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
         height: math.min(MediaQuery.sizeOf(context).height * 0.82, 820),
@@ -2509,6 +2527,18 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     if (mounted) {
       Navigator.of(context).pop(true);
     }
+  }
+
+  Future<void> _copyTaskId(String taskId) async {
+    await Clipboard.setData(ClipboardData(text: taskId));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Task ID copied')),
+      );
   }
 
   Future<void> _continueTask(String message) async {

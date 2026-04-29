@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:block_play_table_ui/main.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -539,6 +540,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('TaskCompleted v2: {}'), findsOneWidget);
+  });
+
+  testWidgets('task detail title copies task id to clipboard', (
+    tester,
+  ) async {
+    String? clipboardText;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (
+      MethodCall call,
+    ) async {
+      if (call.method == 'Clipboard.setData') {
+        final args = call.arguments as Map<dynamic, dynamic>;
+        clipboardText = args['text'] as String?;
+      }
+      return null;
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Copy task ID'));
+    await tester.pumpAndSettle();
+
+    expect(clipboardText, 'task-1');
+    expect(find.text('Task ID copied'), findsOneWidget);
   });
 
   testWidgets('completed task detail sends continuation message', (
