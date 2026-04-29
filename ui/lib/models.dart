@@ -1,10 +1,57 @@
 import 'dart:convert';
 
+class PageRequest {
+  const PageRequest({this.offset = 0, this.limit = defaultLimit});
+
+  static const defaultLimit = 20;
+
+  final int offset;
+  final int limit;
+
+  PageRequest copyWith({int? offset, int? limit}) => PageRequest(
+        offset: offset ?? this.offset,
+        limit: limit ?? this.limit,
+      );
+
+  PageRequest first() => copyWith(offset: 0);
+
+  PageRequest withOffset(int value) => copyWith(offset: value < 0 ? 0 : value);
+
+  int lastOffset(int totalCount) {
+    if (totalCount <= 0) {
+      return 0;
+    }
+    return ((totalCount - 1) ~/ limit) * limit;
+  }
+
+  List<T> slice<T>(List<T> items) {
+    final start = offset < 0 ? 0 : offset;
+    if (start >= items.length) {
+      return const [];
+    }
+    final end = start + limit < items.length ? start + limit : items.length;
+    return items.sublist(start, end);
+  }
+
+  Map<String, dynamic> toGraphQLInput() => {
+        'offset': offset,
+        'limit': limit,
+      };
+}
+
+class PagedResult<T> {
+  const PagedResult({required this.items, required this.totalCount});
+
+  final List<T> items;
+  final int totalCount;
+}
+
 class BoardData {
   BoardData({
     required this.id,
     required this.name,
     required this.type,
+    required this.totalCount,
     required this.columns,
     required this.calendarItems,
     required this.tasks,
@@ -21,6 +68,7 @@ class BoardData {
         id: json['id'] as String? ?? 'default',
         name: json['name'] as String? ?? 'Default Board',
         type: json['type'] as String? ?? 'KANBAN',
+        totalCount: json['totalCount'] as int? ?? 0,
         columns: (json['columns'] as List<dynamic>? ?? [])
             .map((item) =>
                 BoardColumnData.fromJson(item as Map<String, dynamic>))
@@ -42,6 +90,7 @@ class BoardData {
         id: 'default',
         name: 'Default Board',
         type: 'KANBAN',
+        totalCount: 0,
         columns: const [],
         calendarItems: const [],
         tasks: const [],
@@ -52,6 +101,7 @@ class BoardData {
   final String id;
   final String name;
   final String type;
+  final int totalCount;
   final List<BoardColumnData> columns;
   final List<BoardCalendarItemData> calendarItems;
   final List<TaskItem> tasks;

@@ -15,8 +15,9 @@ class ProjectsPage extends StatefulWidget {
 }
 
 class _ProjectsPageState extends State<ProjectsPage> {
-  late Future<List<ProjectItem>> _future;
-  List<ProjectItem>? _lastProjects;
+  PageRequest _page = const PageRequest();
+  late Future<PagedResult<ProjectItem>> _future;
+  PagedResult<ProjectItem>? _lastPage;
   RealtimeRefreshController? _realtime;
 
   @override
@@ -25,7 +26,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
     _future = _load();
     _realtime = RealtimeRefreshController(
       events: widget.apiClient.subscribeDomainEvents(aggregateType: 'Project'),
-      reload: _reload,
+      reload: () => _reload(),
       shouldReload: (_) => true,
     );
   }
@@ -36,17 +37,37 @@ class _ProjectsPageState extends State<ProjectsPage> {
     super.dispose();
   }
 
-  Future<List<ProjectItem>> _load() async {
-    final projects = await widget.apiClient.fetchProjects();
-    _lastProjects = projects;
-    return projects;
+  Future<PagedResult<ProjectItem>> _load() async {
+    var page = await widget.apiClient.fetchProjectsPage(page: _page);
+    if (page.items.isEmpty && page.totalCount > 0 && _page.offset > 0) {
+      final corrected = _page.withOffset(_page.lastOffset(page.totalCount));
+      if (corrected.offset != _page.offset) {
+        _page = corrected;
+        page = await widget.apiClient.fetchProjectsPage(page: _page);
+      }
+    }
+    _lastPage = page;
+    return page;
   }
 
-  void _reload() {
+  void _reload({bool firstPage = false}) {
     if (!mounted) {
       return;
     }
     setState(() {
+      if (firstPage) {
+        _page = _page.first();
+      }
+      _future = _load();
+    });
+  }
+
+  void _goToPage(PageRequest page) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _page = page;
       _future = _load();
     });
   }
@@ -59,7 +80,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       actions: [
         IconButton(
           tooltip: 'Refresh projects',
-          onPressed: _reload,
+          onPressed: () => _reload(),
           icon: const Icon(Icons.refresh),
         ),
         FilledButton.icon(
@@ -68,21 +89,21 @@ class _ProjectsPageState extends State<ProjectsPage> {
           label: const Text('New project'),
         ),
       ],
-      child: FutureBuilder<List<ProjectItem>>(
+      child: FutureBuilder<PagedResult<ProjectItem>>(
         future: _future,
         builder: (context, snapshot) {
-          final projects = snapshot.data ?? _lastProjects;
+          final page = snapshot.data ?? _lastPage;
           if (snapshot.connectionState != ConnectionState.done &&
-              projects == null) {
+              page == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError && projects == null) {
+          if (snapshot.hasError && page == null) {
             return ErrorView(
               message: snapshot.error.toString(),
-              onRetry: _reload,
+              onRetry: () => _reload(),
             );
           }
-          final items = projects ?? const <ProjectItem>[];
+          final items = page?.items ?? const <ProjectItem>[];
           if (items.isEmpty) {
             return const EmptyState(
               icon: Icons.folder_copy_outlined,
@@ -92,44 +113,56 @@ class _ProjectsPageState extends State<ProjectsPage> {
           }
           return Stack(
             children: [
-              ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemBuilder: (context, index) {
-                  final project = items[index];
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.folder_copy_outlined),
-                      title: Text(project.name),
-                      subtitle: Text(
-                        '${project.gitUrl}\n${project.defaultBranch}  ${project.worktreeNamePrefix}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Wrap(
-                        spacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          if (project.archived)
-                            const StatusPill(value: 'ARCHIVED'),
-                          IconButton(
-                            tooltip: 'Edit project',
-                            onPressed: () => _openProjectDialog(project),
-                            icon: const Icon(Icons.edit_outlined),
+              Column(
+                children: [
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemBuilder: (context, index) {
+                        final project = items[index];
+                        return Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.folder_copy_outlined),
+                            title: Text(project.name),
+                            subtitle: Text(
+                              '${project.gitUrl}\n${project.defaultBranch}  ${project.worktreeNamePrefix}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: Wrap(
+                              spacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                if (project.archived)
+                                  const StatusPill(value: 'ARCHIVED'),
+                                IconButton(
+                                  tooltip: 'Edit project',
+                                  onPressed: () => _openProjectDialog(project),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: 'Archive project',
+                                  onPressed: project.archived
+                                      ? null
+                                      : () => _archiveProject(project),
+                                  icon: const Icon(Icons.archive_outlined),
+                                ),
+                              ],
+                            ),
                           ),
-                          IconButton(
-                            tooltip: 'Archive project',
-                            onPressed: project.archived
-                                ? null
-                                : () => _archiveProject(project),
-                            icon: const Icon(Icons.archive_outlined),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 8),
+                      itemCount: items.length,
                     ),
-                  );
-                },
-                separatorBuilder: (context, index) => const SizedBox(height: 8),
-                itemCount: items.length,
+                  ),
+                  PaginationBar(
+                    page: _page,
+                    totalCount: page?.totalCount ?? 0,
+                    onPageChanged: _goToPage,
+                  ),
+                ],
               ),
               if (snapshot.connectionState != ConnectionState.done)
                 const Positioned(
@@ -152,7 +185,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       project: project,
     );
     if (saved == true) {
-      _reload();
+      _reload(firstPage: project == null);
     }
   }
 

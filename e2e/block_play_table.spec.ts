@@ -38,12 +38,22 @@ async function openTaskFromList(page, taskTitle: string) {
   await page.getByRole("button", { name: "List" }).click();
   await page.mouse.move(700, 520);
   const taskRow = page.getByRole("button", { name: new RegExp(taskTitle) });
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (await taskRow.isVisible().catch(() => false)) {
+  for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
+    for (let scrollAttempt = 0; scrollAttempt < 20; scrollAttempt++) {
+      if (await taskRow.isVisible().catch(() => false)) {
+        await taskRow.click();
+        return;
+      }
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(150);
+    }
+    const nextPage = page.getByRole("button", { name: "Next page" });
+    if (!(await nextPage.isEnabled().catch(() => false))) {
       break;
     }
-    await page.mouse.wheel(0, 900);
-    await page.waitForTimeout(150);
+    await nextPage.click();
+    await page.waitForTimeout(300);
+    await page.mouse.wheel(0, -5000);
   }
   await expect(taskRow).toBeVisible();
   await taskRow.click();
@@ -53,12 +63,22 @@ async function openWorkerEditor(page, workerName: string) {
   await page.getByText("Workers").click();
   await page.mouse.move(700, 520);
   const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (await workerGroup.isVisible().catch(() => false)) {
+  for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
+    for (let scrollAttempt = 0; scrollAttempt < 20; scrollAttempt++) {
+      if (await workerGroup.isVisible().catch(() => false)) {
+        await workerGroup.getByRole("button", { name: "Edit worker" }).click();
+        return;
+      }
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(150);
+    }
+    const nextPage = page.getByRole("button", { name: "Next page" });
+    if (!(await nextPage.isEnabled().catch(() => false))) {
       break;
     }
-    await page.mouse.wheel(0, 900);
-    await page.waitForTimeout(150);
+    await nextPage.click();
+    await page.waitForTimeout(300);
+    await page.mouse.wheel(0, -5000);
   }
   await expect(workerGroup).toBeVisible();
   await workerGroup.getByRole("button", { name: "Edit worker" }).click();
@@ -453,6 +473,136 @@ function connectWorkerForInteraction(
   });
   return { ready, requested, completed };
 }
+
+test("trusted Flutter web UI paginates board projects workers and events", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const suffix = Date.now();
+
+  const createdProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+    {
+      input: {
+        name: `Pagination Base Project ${suffix}`,
+        gitUrl: "pagination-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "pagination",
+      },
+    },
+  );
+  const projectId = createdProject.createProject.id;
+
+  for (let index = 0; index < 21; index++) {
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `Pagination Project ${suffix}-${index}`,
+          gitUrl: `pagination-project-${index}`,
+          defaultBranch: "main",
+          worktreeNamePrefix: `pagination-project-${index}`,
+        },
+      },
+    );
+    await graphQL(
+      request,
+      "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }",
+      {
+        input: {
+          id: `worker-pagination-${suffix}-${index}`,
+          name: `Pagination Worker ${suffix}-${index}`,
+          supportedAgents: ["codex"],
+          workDir: `/tmp/e2e-pagination-worker-${index}`,
+          projectBindingMode: "ALL_PROJECTS",
+        },
+      },
+    );
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+      {
+        input: {
+          title: `Pagination Task ${suffix}-${index}`,
+          projectId,
+          agentType: "codex",
+        },
+      },
+    );
+  }
+
+  await page.goto("/");
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+
+  await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page.getByText(/Showing 21-40 of \d+/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+
+  await page.getByText("Projects").click();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Project ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Project ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Project ${suffix}-0`),
+    }),
+  ).toBeVisible();
+
+  await page.getByText("Workers").click();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Worker ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Worker ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Worker ${suffix}-0`),
+    }),
+  ).toBeVisible();
+
+  await page.getByText("Events").click();
+  await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page.getByText(/Showing 21-40 of \d+/)).toBeVisible();
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+});
 
 test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   page,

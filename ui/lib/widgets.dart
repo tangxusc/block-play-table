@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
+import 'models.dart';
 
 class PageScaffold extends StatelessWidget {
   const PageScaffold({
@@ -159,6 +163,85 @@ class ErrorView extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class PaginationBar extends StatelessWidget {
+  const PaginationBar({
+    super.key,
+    required this.page,
+    required this.totalCount,
+    required this.onPageChanged,
+  });
+
+  final PageRequest page;
+  final int totalCount;
+  final ValueChanged<PageRequest> onPageChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final lastOffset = page.lastOffset(totalCount);
+    var offset = page.offset;
+    if (offset < 0) {
+      offset = 0;
+    }
+    if (offset > lastOffset) {
+      offset = lastOffset;
+    }
+    final canGoBack = totalCount > 0 && offset > 0;
+    final canGoForward = totalCount > 0 && offset < lastOffset;
+    final start = totalCount == 0 ? 0 : offset + 1;
+    final end = totalCount == 0
+        ? 0
+        : math.min(offset + page.limit, totalCount);
+
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            totalCount == 0
+                ? 'No results'
+                : 'Showing $start-$end of $totalCount',
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'First page',
+            onPressed:
+                canGoBack ? () => onPageChanged(page.withOffset(0)) : null,
+            icon: const Icon(Icons.first_page),
+          ),
+          IconButton(
+            tooltip: 'Previous page',
+            onPressed: canGoBack
+                ? () => onPageChanged(page.withOffset(offset - page.limit))
+                : null,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          IconButton(
+            tooltip: 'Next page',
+            onPressed: canGoForward
+                ? () => onPageChanged(page.withOffset(offset + page.limit))
+                : null,
+            icon: const Icon(Icons.chevron_right),
+          ),
+          IconButton(
+            tooltip: 'Last page',
+            onPressed: canGoForward
+                ? () => onPageChanged(page.withOffset(lastOffset))
+                : null,
+            icon: const Icon(Icons.last_page),
+          ),
+        ],
       ),
     );
   }

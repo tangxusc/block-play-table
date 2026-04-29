@@ -708,6 +708,7 @@ Board
 - id
 - name
 - type
+- totalCount
 - columns
 - filters
 - createdAt
@@ -725,6 +726,7 @@ Kanban 展示规则：
 1. Board 页面按任务状态分为固定列展示。
 2. 状态列内容超过可视高度时，列内任务列表独立垂直滚动，并显示滚动条。
 3. 看板横向空间不足时，列区域整体水平滚动，列宽仍保留最小可读宽度。
+4. Board 查询使用全局任务分页，默认每页 20 条；当前页任务再按状态分组到 Kanban 列，列头数量表示当前页内数量，`totalCount` 表示符合条件的全量任务数。
 
 Calendar 展示规则：
 
@@ -860,7 +862,7 @@ ui/
 10. `RealtimeLogPanel`
 11. `AgentConversationPanel`
 
-`BoardPage` 的 Kanban 视图需要保留列头可见；任务卡片较多时只滚动列内任务列表，不滚动整个页面。
+`BoardPage` 的 Kanban 视图需要保留列头可见；任务卡片较多时只滚动列内任务列表，不滚动整个页面。Board、Projects、Workers、Events 页面均使用后端分页，分页条固定显示首页、上一页、下一页、末页和当前范围。
 
 ### 7.3 Manager 技术架构
 
@@ -1221,15 +1223,21 @@ type Query {
 
   worker(id: ID!): Worker
   workers(filter: WorkerFilter): [Worker!]!
+  workersConnection(filter: WorkerFilter, page: PageInput): WorkerConnection!
 
   project(id: ID!): Project
   projects(filter: ProjectFilter): [Project!]!
+  projectsConnection(filter: ProjectFilter, page: PageInput): ProjectConnection!
 
-  board(id: ID!): Board
+  board(id: ID, page: PageInput): Board!
   settings: Settings!
   taskEvents(taskId: ID!): [DomainEvent!]!
+  domainEvents(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
+  domainEventsConnection(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
 }
 ```
+
+分页 connection 类型统一返回 `nodes` 和 `totalCount`。`projectsConnection`、`workersConnection`、`domainEventsConnection` 默认最新记录优先；旧列表字段继续保留用于兼容和表单候选项加载。
 
 ### 8.3 Mutation
 

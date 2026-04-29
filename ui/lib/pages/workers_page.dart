@@ -15,6 +15,7 @@ class WorkersPage extends StatefulWidget {
 }
 
 class _WorkersPageState extends State<WorkersPage> {
+  PageRequest _page = const PageRequest();
   late Future<_WorkersData> _future;
   _WorkersData? _lastData;
   RealtimeRefreshController? _realtime;
@@ -25,7 +26,7 @@ class _WorkersPageState extends State<WorkersPage> {
     _future = _load();
     _realtime = RealtimeRefreshController(
       events: widget.apiClient.subscribeDomainEvents(),
-      reload: _reload,
+      reload: () => _reload(),
       shouldReload: (event) =>
           event.aggregateType == 'Worker' || event.aggregateType == 'Project',
     );
@@ -39,22 +40,45 @@ class _WorkersPageState extends State<WorkersPage> {
 
   Future<_WorkersData> _load() async {
     final results = await Future.wait([
-      widget.apiClient.fetchWorkers(),
+      widget.apiClient.fetchWorkersPage(page: _page),
       widget.apiClient.fetchProjects(),
     ]);
+    var workersPage = results[0] as PagedResult<WorkerItem>;
+    if (workersPage.items.isEmpty &&
+        workersPage.totalCount > 0 &&
+        _page.offset > 0) {
+      final corrected = _page.withOffset(_page.lastOffset(workersPage.totalCount));
+      if (corrected.offset != _page.offset) {
+        _page = corrected;
+        workersPage = await widget.apiClient.fetchWorkersPage(page: _page);
+      }
+    }
     final data = _WorkersData(
-      workers: results[0] as List<WorkerItem>,
+      workersPage: workersPage,
       projects: results[1] as List<ProjectItem>,
     );
     _lastData = data;
     return data;
   }
 
-  void _reload() {
+  void _reload({bool firstPage = false}) {
     if (!mounted) {
       return;
     }
     setState(() {
+      if (firstPage) {
+        _page = _page.first();
+      }
+      _future = _load();
+    });
+  }
+
+  void _goToPage(PageRequest page) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _page = page;
       _future = _load();
     });
   }
@@ -67,7 +91,7 @@ class _WorkersPageState extends State<WorkersPage> {
       actions: [
         IconButton(
           tooltip: 'Refresh workers',
-          onPressed: _reload,
+          onPressed: () => _reload(),
           icon: const Icon(Icons.refresh),
         ),
         FilledButton.icon(
@@ -87,10 +111,10 @@ class _WorkersPageState extends State<WorkersPage> {
           if (snapshot.hasError && data == null) {
             return ErrorView(
               message: snapshot.error.toString(),
-              onRetry: _reload,
+              onRetry: () => _reload(),
             );
           }
-          final items = data?.workers ?? const <WorkerItem>[];
+          final items = data?.workersPage.items ?? const <WorkerItem>[];
           if (items.isEmpty) {
             return const EmptyState(
               icon: Icons.memory_outlined,
@@ -100,62 +124,76 @@ class _WorkersPageState extends State<WorkersPage> {
           }
           return Stack(
             children: [
-              ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemBuilder: (context, index) {
-                  final worker = items[index];
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.memory_outlined),
-                      title: Text(worker.name),
-                      subtitle: Text(
-                        '${worker.workDir}\n${worker.supportedAgents.join(', ')}  ${worker.projectBindingMode}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Wrap(
-                        spacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          StatusPill(value: worker.status),
-                          Text(
-                            worker.currentTaskIds.isEmpty
-                                ? 'No running tasks'
-                                : '${worker.currentTaskIds.length} running',
-                          ),
-                          IconButton(
-                            tooltip: 'Edit worker',
-                            onPressed: () => _openWorkerDialog(worker),
-                            icon: const Icon(Icons.edit_outlined),
-                          ),
-                          IconButton(
-                            tooltip: 'Enable worker',
-                            onPressed: () => _run(
-                              () => widget.apiClient.enableWorker(worker.id),
+              Column(
+                children: [
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemBuilder: (context, index) {
+                        final worker = items[index];
+                        return Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.memory_outlined),
+                            title: Text(worker.name),
+                            subtitle: Text(
+                              '${worker.workDir}\n${worker.supportedAgents.join(', ')}  ${worker.projectBindingMode}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            icon: const Icon(Icons.toggle_on_outlined),
-                          ),
-                          IconButton(
-                            tooltip: 'Disable worker',
-                            onPressed: () => _run(
-                              () => widget.apiClient.disableWorker(worker.id),
+                            trailing: Wrap(
+                              spacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                StatusPill(value: worker.status),
+                                Text(
+                                  worker.currentTaskIds.isEmpty
+                                      ? 'No running tasks'
+                                      : '${worker.currentTaskIds.length} running',
+                                ),
+                                IconButton(
+                                  tooltip: 'Edit worker',
+                                  onPressed: () => _openWorkerDialog(worker),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: 'Enable worker',
+                                  onPressed: () => _run(
+                                    () => widget.apiClient
+                                        .enableWorker(worker.id),
+                                  ),
+                                  icon: const Icon(Icons.toggle_on_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: 'Disable worker',
+                                  onPressed: () => _run(
+                                    () => widget.apiClient
+                                        .disableWorker(worker.id),
+                                  ),
+                                  icon: const Icon(Icons.toggle_off_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: 'Delete worker',
+                                  onPressed: worker.currentTaskIds.isEmpty
+                                      ? () => _deleteWorker(worker)
+                                      : null,
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
                             ),
-                            icon: const Icon(Icons.toggle_off_outlined),
                           ),
-                          IconButton(
-                            tooltip: 'Delete worker',
-                            onPressed: worker.currentTaskIds.isEmpty
-                                ? () => _deleteWorker(worker)
-                                : null,
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 8),
+                      itemCount: items.length,
                     ),
-                  );
-                },
-                separatorBuilder: (context, index) => const SizedBox(height: 8),
-                itemCount: items.length,
+                  ),
+                  PaginationBar(
+                    page: _page,
+                    totalCount: data?.workersPage.totalCount ?? 0,
+                    onPageChanged: _goToPage,
+                  ),
+                ],
               ),
               if (snapshot.connectionState != ConnectionState.done)
                 const Positioned(
@@ -180,7 +218,7 @@ class _WorkersPageState extends State<WorkersPage> {
       worker: worker,
     );
     if (saved == true) {
-      _reload();
+      _reload(firstPage: worker == null);
     }
   }
 
@@ -205,9 +243,9 @@ class _WorkersPageState extends State<WorkersPage> {
 }
 
 class _WorkersData {
-  const _WorkersData({required this.workers, required this.projects});
+  const _WorkersData({required this.workersPage, required this.projects});
 
-  final List<WorkerItem> workers;
+  final PagedResult<WorkerItem> workersPage;
   final List<ProjectItem> projects;
 }
 

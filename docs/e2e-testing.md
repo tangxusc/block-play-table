@@ -33,7 +33,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发和 Calendar 日/周/月/年视图。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Board/Projects/Workers/Events 分页和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -218,6 +218,7 @@ npm run e2e:real-agents
 | Manager | GraphQL trusted mode 不要求鉴权头 | L1 | [待补齐] |
 | Project | 创建 Project 并使用默认分支/worktree 前缀 | L1/L2 | [已实现] |
 | Project | 更新 Project 名称、Git URL、默认分支、worktree 前缀 | L1/L2 | [待补齐] |
+| UI | Board、Projects、Workers、Events 后端分页与翻页控件 | L1/L2 | [已实现] |
 | Project | 归档 Project 后默认列表不展示，includeArchived 可查询 | L1/L2 | [待补齐] |
 | Project | Worker 绑定 SPECIFIC_PROJECTS 时只接收绑定 Project 的任务 | L1/L2 | [已实现] |
 | Worker | 通过 GraphQL 注册 Worker | L2 | [已实现] |

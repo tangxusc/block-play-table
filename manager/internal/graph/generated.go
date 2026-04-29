@@ -58,6 +58,7 @@ type ComplexityRoot struct {
 		ID            func(childComplexity int) int
 		Name          func(childComplexity int) int
 		Tasks         func(childComplexity int) int
+		TotalCount    func(childComplexity int) int
 		Type          func(childComplexity int) int
 	}
 
@@ -111,6 +112,11 @@ type ComplexityRoot struct {
 		Payload          func(childComplexity int) int
 	}
 
+	DomainEventConnection struct {
+		Nodes      func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	KeyValue struct {
 		Key   func(childComplexity int) int
 		Value func(childComplexity int) int
@@ -159,22 +165,30 @@ type ComplexityRoot struct {
 		WorktreeNamePrefix func(childComplexity int) int
 	}
 
+	ProjectConnection struct {
+		Nodes      func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	Query struct {
-		Board             func(childComplexity int, id *string) int
-		DomainEvents      func(childComplexity int, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) int
-		OutboxMessages    func(childComplexity int, includePublished *bool) int
-		Project           func(childComplexity int, id string) int
-		Projects          func(childComplexity int, filter *model.ProjectFilter) int
-		Settings          func(childComplexity int) int
-		Task              func(childComplexity int, id string) int
-		TaskConversations func(childComplexity int, taskID string) int
-		TaskEvents        func(childComplexity int, taskID string) int
-		TaskInteractions  func(childComplexity int, taskID string, status *model.TaskInteractionStatus) int
-		TaskList          func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
-		TaskLogs          func(childComplexity int, taskID string) int
-		Tasks             func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
-		Worker            func(childComplexity int, id string) int
-		Workers           func(childComplexity int, filter *model.WorkerFilter) int
+		Board                  func(childComplexity int, id *string, page *model.PageInput) int
+		DomainEvents           func(childComplexity int, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) int
+		DomainEventsConnection func(childComplexity int, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) int
+		OutboxMessages         func(childComplexity int, includePublished *bool) int
+		Project                func(childComplexity int, id string) int
+		Projects               func(childComplexity int, filter *model.ProjectFilter) int
+		ProjectsConnection     func(childComplexity int, filter *model.ProjectFilter, page *model.PageInput) int
+		Settings               func(childComplexity int) int
+		Task                   func(childComplexity int, id string) int
+		TaskConversations      func(childComplexity int, taskID string) int
+		TaskEvents             func(childComplexity int, taskID string) int
+		TaskInteractions       func(childComplexity int, taskID string, status *model.TaskInteractionStatus) int
+		TaskList               func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
+		TaskLogs               func(childComplexity int, taskID string) int
+		Tasks                  func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
+		Worker                 func(childComplexity int, id string) int
+		Workers                func(childComplexity int, filter *model.WorkerFilter) int
+		WorkersConnection      func(childComplexity int, filter *model.WorkerFilter, page *model.PageInput) int
 	}
 
 	Settings struct {
@@ -267,6 +281,11 @@ type ComplexityRoot struct {
 		AgentType func(childComplexity int) int
 		Vars      func(childComplexity int) int
 	}
+
+	WorkerConnection struct {
+		Nodes      func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
 }
 
 type MutationResolver interface {
@@ -297,12 +316,15 @@ type QueryResolver interface {
 	TaskList(ctx context.Context, filter *model.TaskFilter, page *model.PageInput) ([]*model.Task, error)
 	Worker(ctx context.Context, id string) (*model.Worker, error)
 	Workers(ctx context.Context, filter *model.WorkerFilter) ([]*model.Worker, error)
+	WorkersConnection(ctx context.Context, filter *model.WorkerFilter, page *model.PageInput) (*model.WorkerConnection, error)
 	Project(ctx context.Context, id string) (*model.Project, error)
 	Projects(ctx context.Context, filter *model.ProjectFilter) ([]*model.Project, error)
-	Board(ctx context.Context, id *string) (*model.Board, error)
+	ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, page *model.PageInput) (*model.ProjectConnection, error)
+	Board(ctx context.Context, id *string, page *model.PageInput) (*model.Board, error)
 	Settings(ctx context.Context) (*model.Settings, error)
 	TaskEvents(ctx context.Context, taskID string) ([]*model.DomainEvent, error)
 	DomainEvents(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) ([]*model.DomainEvent, error)
+	DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error)
 	OutboxMessages(ctx context.Context, includePublished *bool) ([]*model.OutboxMessage, error)
 	TaskLogs(ctx context.Context, taskID string) ([]*model.TaskLog, error)
 	TaskConversations(ctx context.Context, taskID string) ([]*model.ConversationMessage, error)
@@ -410,6 +432,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Board.Tasks(childComplexity), true
+	case "Board.totalCount":
+		if e.ComplexityRoot.Board.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Board.TotalCount(childComplexity), true
 	case "Board.type":
 		if e.ComplexityRoot.Board.Type == nil {
 			break
@@ -614,6 +642,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.DomainEvent.Payload(childComplexity), true
+
+	case "DomainEventConnection.nodes":
+		if e.ComplexityRoot.DomainEventConnection.Nodes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.DomainEventConnection.Nodes(childComplexity), true
+	case "DomainEventConnection.totalCount":
+		if e.ComplexityRoot.DomainEventConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.DomainEventConnection.TotalCount(childComplexity), true
 
 	case "KeyValue.key":
 		if e.ComplexityRoot.KeyValue.Key == nil {
@@ -935,6 +976,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Project.WorktreeNamePrefix(childComplexity), true
 
+	case "ProjectConnection.nodes":
+		if e.ComplexityRoot.ProjectConnection.Nodes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProjectConnection.Nodes(childComplexity), true
+	case "ProjectConnection.totalCount":
+		if e.ComplexityRoot.ProjectConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProjectConnection.TotalCount(childComplexity), true
+
 	case "Query.board":
 		if e.ComplexityRoot.Query.Board == nil {
 			break
@@ -945,7 +999,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Board(childComplexity, args["id"].(*string)), true
+		return e.ComplexityRoot.Query.Board(childComplexity, args["id"].(*string), args["page"].(*model.PageInput)), true
 	case "Query.domainEvents":
 		if e.ComplexityRoot.Query.DomainEvents == nil {
 			break
@@ -957,6 +1011,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.DomainEvents(childComplexity, args["filter"].(*model.DomainEventFilter), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string)), true
+	case "Query.domainEventsConnection":
+		if e.ComplexityRoot.Query.DomainEventsConnection == nil {
+			break
+		}
+
+		args, err := ec.field_Query_domainEventsConnection_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.DomainEventsConnection(childComplexity, args["filter"].(*model.DomainEventFilter), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string), args["page"].(*model.PageInput)), true
 
 	case "Query.outboxMessages":
 		if e.ComplexityRoot.Query.OutboxMessages == nil {
@@ -991,6 +1056,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Projects(childComplexity, args["filter"].(*model.ProjectFilter)), true
+	case "Query.projectsConnection":
+		if e.ComplexityRoot.Query.ProjectsConnection == nil {
+			break
+		}
+
+		args, err := ec.field_Query_projectsConnection_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.ProjectsConnection(childComplexity, args["filter"].(*model.ProjectFilter), args["page"].(*model.PageInput)), true
 	case "Query.settings":
 		if e.ComplexityRoot.Query.Settings == nil {
 			break
@@ -1096,6 +1172,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Workers(childComplexity, args["filter"].(*model.WorkerFilter)), true
+	case "Query.workersConnection":
+		if e.ComplexityRoot.Query.WorkersConnection == nil {
+			break
+		}
+
+		args, err := ec.field_Query_workersConnection_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.WorkersConnection(childComplexity, args["filter"].(*model.WorkerFilter), args["page"].(*model.PageInput)), true
 
 	case "Settings.createdAt":
 		if e.ComplexityRoot.Settings.CreatedAt == nil {
@@ -1532,6 +1619,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.WorkerAgentRuntimeEnv.Vars(childComplexity), true
 
+	case "WorkerConnection.nodes":
+		if e.ComplexityRoot.WorkerConnection.Nodes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WorkerConnection.Nodes(childComplexity), true
+	case "WorkerConnection.totalCount":
+		if e.ComplexityRoot.WorkerConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WorkerConnection.TotalCount(childComplexity), true
+
 	}
 	return 0, false
 }
@@ -1948,6 +2048,42 @@ func (ec *executionContext) field_Query_board_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_domainEventsConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalODomainEventFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventFilter)
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["aggregateId"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateType", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["aggregateType"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "eventType", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["eventType"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg4
 	return args, nil
 }
 
@@ -1996,6 +2132,22 @@ func (ec *executionContext) field_Query_project_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_projectsConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalOProjectFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectFilter)
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg1
 	return args, nil
 }
 
@@ -2110,6 +2262,22 @@ func (ec *executionContext) field_Query_worker_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_workersConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalOWorkerFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerFilter)
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg1
 	return args, nil
 }
 
@@ -2567,6 +2735,35 @@ func (ec *executionContext) fieldContext_Board_type(_ context.Context, field gra
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type BoardType does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Board_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.Board) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Board_totalCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Board_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Board",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3728,6 +3925,84 @@ func (ec *executionContext) fieldContext_DomainEvent_causationId(_ context.Conte
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DomainEventConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.DomainEventConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DomainEventConnection_nodes,
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		ec.marshalNDomainEvent2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DomainEventConnection_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DomainEventConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "eventId":
+				return ec.fieldContext_DomainEvent_eventId(ctx, field)
+			case "eventType":
+				return ec.fieldContext_DomainEvent_eventType(ctx, field)
+			case "aggregateType":
+				return ec.fieldContext_DomainEvent_aggregateType(ctx, field)
+			case "aggregateId":
+				return ec.fieldContext_DomainEvent_aggregateId(ctx, field)
+			case "aggregateVersion":
+				return ec.fieldContext_DomainEvent_aggregateVersion(ctx, field)
+			case "payload":
+				return ec.fieldContext_DomainEvent_payload(ctx, field)
+			case "occurredAt":
+				return ec.fieldContext_DomainEvent_occurredAt(ctx, field)
+			case "correlationId":
+				return ec.fieldContext_DomainEvent_correlationId(ctx, field)
+			case "causationId":
+				return ec.fieldContext_DomainEvent_causationId(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DomainEvent", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DomainEventConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.DomainEventConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DomainEventConnection_totalCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DomainEventConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DomainEventConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -5651,6 +5926,84 @@ func (ec *executionContext) fieldContext_Project_updatedAt(_ context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _ProjectConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.ProjectConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ProjectConnection_nodes,
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		ec.marshalNProject2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ProjectConnection_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ProjectConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Project_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Project_name(ctx, field)
+			case "gitUrl":
+				return ec.fieldContext_Project_gitUrl(ctx, field)
+			case "defaultBranch":
+				return ec.fieldContext_Project_defaultBranch(ctx, field)
+			case "worktreeNamePrefix":
+				return ec.fieldContext_Project_worktreeNamePrefix(ctx, field)
+			case "archived":
+				return ec.fieldContext_Project_archived(ctx, field)
+			case "version":
+				return ec.fieldContext_Project_version(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Project_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Project_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Project", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ProjectConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.ProjectConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ProjectConnection_totalCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ProjectConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ProjectConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_task(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6006,6 +6359,53 @@ func (ec *executionContext) fieldContext_Query_workers(ctx context.Context, fiel
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_workersConnection(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_workersConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().WorkersConnection(ctx, fc.Args["filter"].(*model.WorkerFilter), fc.Args["page"].(*model.PageInput))
+		},
+		nil,
+		ec.marshalNWorkerConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerConnection,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_workersConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "nodes":
+				return ec.fieldContext_WorkerConnection_nodes(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_WorkerConnection_totalCount(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WorkerConnection", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_workersConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_project(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6128,6 +6528,53 @@ func (ec *executionContext) fieldContext_Query_projects(ctx context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_projectsConnection(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_projectsConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().ProjectsConnection(ctx, fc.Args["filter"].(*model.ProjectFilter), fc.Args["page"].(*model.PageInput))
+		},
+		nil,
+		ec.marshalNProjectConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectConnection,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_projectsConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "nodes":
+				return ec.fieldContext_ProjectConnection_nodes(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_ProjectConnection_totalCount(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ProjectConnection", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_projectsConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_board(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6136,7 +6583,7 @@ func (ec *executionContext) _Query_board(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_board,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Board(ctx, fc.Args["id"].(*string))
+			return ec.Resolvers.Query().Board(ctx, fc.Args["id"].(*string), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNBoard2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐBoard,
@@ -6159,6 +6606,8 @@ func (ec *executionContext) fieldContext_Query_board(ctx context.Context, field 
 				return ec.fieldContext_Board_name(ctx, field)
 			case "type":
 				return ec.fieldContext_Board_type(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_Board_totalCount(ctx, field)
 			case "columns":
 				return ec.fieldContext_Board_columns(ctx, field)
 			case "calendarItems":
@@ -6342,6 +6791,53 @@ func (ec *executionContext) fieldContext_Query_domainEvents(ctx context.Context,
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_domainEvents_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_domainEventsConnection(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_domainEventsConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().DomainEventsConnection(ctx, fc.Args["filter"].(*model.DomainEventFilter), fc.Args["aggregateId"].(*string), fc.Args["aggregateType"].(*string), fc.Args["eventType"].(*string), fc.Args["page"].(*model.PageInput))
+		},
+		nil,
+		ec.marshalNDomainEventConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventConnection,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_domainEventsConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "nodes":
+				return ec.fieldContext_DomainEventConnection_nodes(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_DomainEventConnection_totalCount(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DomainEventConnection", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_domainEventsConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -8842,6 +9338,96 @@ func (ec *executionContext) fieldContext_WorkerAgentRuntimeEnv_vars(_ context.Co
 				return ec.fieldContext_AgentRuntimeEnvVar_sensitive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type AgentRuntimeEnvVar", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkerConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.WorkerConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkerConnection_nodes,
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		ec.marshalNWorker2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkerConnection_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkerConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Worker_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Worker_name(ctx, field)
+			case "status":
+				return ec.fieldContext_Worker_status(ctx, field)
+			case "capabilities":
+				return ec.fieldContext_Worker_capabilities(ctx, field)
+			case "supportedAgents":
+				return ec.fieldContext_Worker_supportedAgents(ctx, field)
+			case "workDir":
+				return ec.fieldContext_Worker_workDir(ctx, field)
+			case "startupCommand":
+				return ec.fieldContext_Worker_startupCommand(ctx, field)
+			case "projectBindingMode":
+				return ec.fieldContext_Worker_projectBindingMode(ctx, field)
+			case "boundProjectIds":
+				return ec.fieldContext_Worker_boundProjectIds(ctx, field)
+			case "agentRuntimeEnv":
+				return ec.fieldContext_Worker_agentRuntimeEnv(ctx, field)
+			case "currentTaskIds":
+				return ec.fieldContext_Worker_currentTaskIds(ctx, field)
+			case "lastHeartbeatAt":
+				return ec.fieldContext_Worker_lastHeartbeatAt(ctx, field)
+			case "version":
+				return ec.fieldContext_Worker_version(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Worker_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Worker_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Worker", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkerConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.WorkerConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkerConnection_totalCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkerConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkerConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -11701,6 +12287,11 @@ func (ec *executionContext) _Board(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "totalCount":
+			out.Values[i] = ec._Board_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "columns":
 			out.Values[i] = ec._Board_columns(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -12053,6 +12644,50 @@ func (ec *executionContext) _DomainEvent(ctx context.Context, sel ast.SelectionS
 			out.Values[i] = ec._DomainEvent_correlationId(ctx, field, obj)
 		case "causationId":
 			out.Values[i] = ec._DomainEvent_causationId(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var domainEventConnectionImplementors = []string{"DomainEventConnection"}
+
+func (ec *executionContext) _DomainEventConnection(ctx context.Context, sel ast.SelectionSet, obj *model.DomainEventConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, domainEventConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("DomainEventConnection")
+		case "nodes":
+			out.Values[i] = ec._DomainEventConnection_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._DomainEventConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -12437,6 +13072,50 @@ func (ec *executionContext) _Project(ctx context.Context, sel ast.SelectionSet, 
 	return out
 }
 
+var projectConnectionImplementors = []string{"ProjectConnection"}
+
+func (ec *executionContext) _ProjectConnection(ctx context.Context, sel ast.SelectionSet, obj *model.ProjectConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, projectConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ProjectConnection")
+		case "nodes":
+			out.Values[i] = ec._ProjectConnection_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._ProjectConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var queryImplementors = []string{"Query"}
 
 func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) graphql.Marshaler {
@@ -12560,6 +13239,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "workersConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_workersConnection(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "project":
 			field := field
 
@@ -12589,6 +13290,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_projects(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "projectsConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_projectsConnection(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -12677,6 +13400,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_domainEvents(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "domainEventsConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_domainEventsConnection(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -13354,6 +14099,50 @@ func (ec *executionContext) _WorkerAgentRuntimeEnv(ctx context.Context, sel ast.
 	return out
 }
 
+var workerConnectionImplementors = []string{"WorkerConnection"}
+
+func (ec *executionContext) _WorkerConnection(ctx context.Context, sel ast.SelectionSet, obj *model.WorkerConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, workerConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WorkerConnection")
+		case "nodes":
+			out.Values[i] = ec._WorkerConnection_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._WorkerConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var __DirectiveImplementors = []string{"__Directive"}
 
 func (ec *executionContext) ___Directive(ctx context.Context, sel ast.SelectionSet, obj *introspection.Directive) graphql.Marshaler {
@@ -13958,6 +14747,20 @@ func (ec *executionContext) marshalNDomainEvent2ᚖgithubᚗcomᚋtangxuscᚋblo
 	return ec._DomainEvent(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNDomainEventConnection2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventConnection(ctx context.Context, sel ast.SelectionSet, v model.DomainEventConnection) graphql.Marshaler {
+	return ec._DomainEventConnection(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNDomainEventConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventConnection(ctx context.Context, sel ast.SelectionSet, v *model.DomainEventConnection) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._DomainEventConnection(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
 	res, err := graphql.UnmarshalID(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -14105,6 +14908,20 @@ func (ec *executionContext) marshalNProject2ᚖgithubᚗcomᚋtangxuscᚋblock�
 		return graphql.Null
 	}
 	return ec._Project(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNProjectConnection2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectConnection(ctx context.Context, sel ast.SelectionSet, v model.ProjectConnection) graphql.Marshaler {
+	return ec._ProjectConnection(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNProjectConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectConnection(ctx context.Context, sel ast.SelectionSet, v *model.ProjectConnection) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ProjectConnection(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNRegisterWorkerInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐRegisterWorkerInput(ctx context.Context, v any) (model.RegisterWorkerInput, error) {
@@ -14406,6 +15223,20 @@ func (ec *executionContext) marshalNWorkerAgentRuntimeEnv2ᚖgithubᚗcomᚋtang
 func (ec *executionContext) unmarshalNWorkerAgentRuntimeEnvInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerAgentRuntimeEnvInput(ctx context.Context, v any) (*model.WorkerAgentRuntimeEnvInput, error) {
 	res, err := ec.unmarshalInputWorkerAgentRuntimeEnvInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWorkerConnection2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerConnection(ctx context.Context, sel ast.SelectionSet, v model.WorkerConnection) graphql.Marshaler {
+	return ec._WorkerConnection(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNWorkerConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerConnection(ctx context.Context, sel ast.SelectionSet, v *model.WorkerConnection) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WorkerConnection(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNWorkerProjectBindingMode2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerProjectBindingMode(ctx context.Context, v any) (model.WorkerProjectBindingMode, error) {

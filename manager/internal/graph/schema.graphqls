@@ -149,6 +149,21 @@ type TaskConnection {
   totalCount: Int!
 }
 
+type ProjectConnection {
+  nodes: [Project!]!
+  totalCount: Int!
+}
+
+type WorkerConnection {
+  nodes: [Worker!]!
+  totalCount: Int!
+}
+
+type DomainEventConnection {
+  nodes: [DomainEvent!]!
+  totalCount: Int!
+}
+
 type TaskLog {
   id: ID!
   taskId: ID!
@@ -258,6 +273,7 @@ type Board {
   id: ID!
   name: String!
   type: BoardType!
+  totalCount: Int!
   columns: [BoardColumn!]!
   calendarItems: [BoardCalendarItem!]!
   tasks: [Task!]!
@@ -464,12 +480,15 @@ type Query {
   taskList(filter: TaskFilter, page: PageInput): [Task!]!
   worker(id: ID!): Worker
   workers(filter: WorkerFilter): [Worker!]!
+  workersConnection(filter: WorkerFilter, page: PageInput): WorkerConnection!
   project(id: ID!): Project
   projects(filter: ProjectFilter): [Project!]!
-  board(id: ID): Board!
+  projectsConnection(filter: ProjectFilter, page: PageInput): ProjectConnection!
+  board(id: ID, page: PageInput): Board!
   settings: Settings!
   taskEvents(taskId: ID!): [DomainEvent!]!
   domainEvents(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
+  domainEventsConnection(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
   outboxMessages(includePublished: Boolean): [OutboxMessage!]!
   taskLogs(taskId: ID!): [TaskLog!]!
   taskConversations(taskId: ID!): [ConversationMessage!]!
