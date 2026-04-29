@@ -218,7 +218,7 @@ test("board kanban groups task statuses into three visual columns", async ({
     .toEqual({ pending: true, running: true, complete: true });
 
   await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible();
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
   await page.waitForTimeout(2000);
 
   await page.screenshot({

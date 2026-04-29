@@ -2415,6 +2415,61 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     final currentTask = _lastDetail?.task ?? widget.task;
     final waitingForInput = currentTask.status == 'WAITING_INPUT';
     final taskId = currentTask.id;
+    final actions = [
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-close'),
+        label: 'Close',
+        icon: Icons.close,
+        onPressed: () => Navigator.of(context).pop(false),
+      ),
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-assign'),
+        label: 'Assign',
+        icon: Icons.person_add_alt_1,
+        onPressed: _assign,
+      ),
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-start'),
+        label: 'Start',
+        icon: Icons.play_arrow,
+        onPressed: waitingForInput
+            ? null
+            : () => _run(() => widget.apiClient.startTask(currentTask.id!)),
+      ),
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-interrupt'),
+        label: 'Interrupt',
+        icon: Icons.stop,
+        onPressed: () =>
+            _run(() => widget.apiClient.interruptTask(currentTask.id!)),
+      ),
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-retry'),
+        label: 'Retry',
+        icon: Icons.replay,
+        onPressed: waitingForInput
+            ? null
+            : () => _run(() => widget.apiClient.retryTask(currentTask.id!)),
+      ),
+      _TaskDetailAction(
+        key: const ValueKey('task-detail-action-archive'),
+        label: 'Archive',
+        icon: Icons.archive_outlined,
+        emphasis: _TaskDetailActionEmphasis.filled,
+        onPressed: () async {
+          final confirmed = await confirmAction(
+            context,
+            title: 'Archive task',
+            message: 'Archive "${currentTask.title}"?',
+            confirmLabel: 'Archive',
+          );
+          if (!confirmed) {
+            return;
+          }
+          await _run(() => widget.apiClient.archiveTask(currentTask.id!));
+        },
+      ),
+    ];
     return AlertDialog(
       title: Row(
         children: [
@@ -2457,6 +2512,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                 _TaskDetailBody(
                   detail: detail!,
                   projects: widget.boardData.projects,
+                  actions: actions,
                   onContinue: _continueTask,
                   onRespondInteraction: _respondInteraction,
                 ),
@@ -2472,53 +2528,6 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
           },
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Close'),
-        ),
-        TextButton.icon(
-          onPressed: _assign,
-          icon: const Icon(Icons.person_add_alt_1),
-          label: const Text('Assign'),
-        ),
-        TextButton.icon(
-          onPressed: waitingForInput
-              ? null
-              : () => _run(() => widget.apiClient.startTask(currentTask.id!)),
-          icon: const Icon(Icons.play_arrow),
-          label: const Text('Start'),
-        ),
-        TextButton.icon(
-          onPressed: () =>
-              _run(() => widget.apiClient.interruptTask(currentTask.id!)),
-          icon: const Icon(Icons.stop),
-          label: const Text('Interrupt'),
-        ),
-        TextButton.icon(
-          onPressed: waitingForInput
-              ? null
-              : () => _run(() => widget.apiClient.retryTask(currentTask.id!)),
-          icon: const Icon(Icons.replay),
-          label: const Text('Retry'),
-        ),
-        FilledButton.icon(
-          onPressed: () async {
-            final confirmed = await confirmAction(
-              context,
-              title: 'Archive task',
-              message: 'Archive "${widget.task.title}"?',
-              confirmLabel: 'Archive',
-            );
-            if (!confirmed) {
-              return;
-            }
-            await _run(() => widget.apiClient.archiveTask(widget.task.id!));
-          },
-          icon: const Icon(Icons.archive_outlined),
-          label: const Text('Archive'),
-        ),
-      ],
     );
   }
 
@@ -2703,92 +2712,332 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   }
 }
 
-class _TaskDetailBody extends StatelessWidget {
+enum _TaskDetailSection { conversation, logs, events }
+
+IconData _taskDetailSectionIcon(_TaskDetailSection section) =>
+    switch (section) {
+      _TaskDetailSection.conversation => Icons.chat_bubble_outline,
+      _TaskDetailSection.logs => Icons.article_outlined,
+      _TaskDetailSection.events => Icons.event_note_outlined,
+    };
+
+String _taskDetailSectionLabel(_TaskDetailSection section) => switch (section) {
+      _TaskDetailSection.conversation => 'Conversation',
+      _TaskDetailSection.logs => 'Logs',
+      _TaskDetailSection.events => 'Domain events',
+    };
+
+Key _taskDetailSectionKey(_TaskDetailSection section) => switch (section) {
+      _TaskDetailSection.conversation =>
+        const ValueKey('task-detail-section-conversation'),
+      _TaskDetailSection.logs => const ValueKey('task-detail-section-logs'),
+      _TaskDetailSection.events =>
+        const ValueKey('task-detail-section-domain-events'),
+    };
+
+enum _TaskDetailActionEmphasis { normal, filled }
+
+class _TaskDetailAction {
+  const _TaskDetailAction({
+    required this.key,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.emphasis = _TaskDetailActionEmphasis.normal,
+  });
+
+  final Key key;
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final _TaskDetailActionEmphasis emphasis;
+}
+
+class _TaskDetailBody extends StatefulWidget {
   const _TaskDetailBody({
     required this.detail,
     required this.projects,
+    required this.actions,
     required this.onContinue,
     required this.onRespondInteraction,
   });
 
   final TaskDetailData detail;
   final List<ProjectItem> projects;
+  final List<_TaskDetailAction> actions;
   final Future<void> Function(String message) onContinue;
   final _TaskInteractionResponder onRespondInteraction;
 
   @override
+  State<_TaskDetailBody> createState() => _TaskDetailBodyState();
+}
+
+class _TaskDetailBodyState extends State<_TaskDetailBody> {
+  _TaskDetailSection _selectedSection = _TaskDetailSection.conversation;
+
+  @override
   Widget build(BuildContext context) {
-    final task = detail.task;
-    final projectName = _projectName(projects, task.projectId);
-    return DefaultTabController(
-      initialIndex: 0,
-      length: 3,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              StatusPill(value: task.status),
-              if (task.agentType.isNotEmpty)
-                DetailText(icon: Icons.terminal, text: task.agentType),
-              DetailText(
-                icon: Icons.folder_copy,
-                text: projectName ?? task.projectId,
-              ),
-              DetailText(
-                icon: Icons.date_range,
-                text: _taskDateRangeLabel(task),
-              ),
-              if ((task.workerId ?? '').isNotEmpty)
-                DetailText(icon: Icons.memory, text: task.workerId!),
-              ..._agentConfigDetailWidgets(task),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const TabBar(
-            tabs: [
-              Tab(
-                icon: Icon(Icons.chat_bubble_outline),
-                text: 'Conversation',
-              ),
-              Tab(icon: Icon(Icons.article_outlined), text: 'Logs'),
-              Tab(
-                icon: Icon(Icons.event_note_outlined),
-                text: 'Domain events',
-              ),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _ConversationTab(
-                  conversations: detail.conversations,
-                  interactions: detail.interactions,
-                  onRespondInteraction: onRespondInteraction,
-                  footer: _ContinuationComposer(
-                    task: task,
-                    onContinue: onContinue,
+    final task = widget.detail.task;
+    final projectName = _projectName(widget.projects, task.projectId);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        final railWidth = compact ? 52.0 : 168.0;
+        return Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.only(right: railWidth + 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      StatusPill(value: task.status),
+                      if (task.agentType.isNotEmpty)
+                        DetailText(icon: Icons.terminal, text: task.agentType),
+                      DetailText(
+                        icon: Icons.folder_copy,
+                        text: projectName ?? task.projectId,
+                      ),
+                      DetailText(
+                        icon: Icons.date_range,
+                        text: _taskDateRangeLabel(task),
+                      ),
+                      if ((task.workerId ?? '').isNotEmpty)
+                        DetailText(icon: Icons.memory, text: task.workerId!),
+                      ..._agentConfigDetailWidgets(task),
+                    ],
                   ),
-                ),
-                _RuntimeTab(
-                  children: detail.logs
-                      .map((item) => '[${item.stream}] ${item.content}')
-                      .toList(),
-                ),
-                _RuntimeTab(
-                  children: detail.events
-                      .map(
-                        (item) =>
-                            '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
-                      )
-                      .toList(),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  Expanded(child: _selectedPanel(task)),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              child: _FloatingCommandRail(
+                compact: compact,
+                selected: _selectedSection,
+                actions: widget.actions,
+                onSelected: (section) =>
+                    setState(() => _selectedSection = section),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _selectedPanel(TaskItem task) => switch (_selectedSection) {
+        _TaskDetailSection.conversation => _ConversationTab(
+            conversations: widget.detail.conversations,
+            interactions: widget.detail.interactions,
+            onRespondInteraction: widget.onRespondInteraction,
+            footer: _ContinuationComposer(
+              task: task,
+              onContinue: widget.onContinue,
             ),
           ),
+        _TaskDetailSection.logs => _RuntimeTab(
+            children: widget.detail.logs
+                .map((item) => '[${item.stream}] ${item.content}')
+                .toList(),
+          ),
+        _TaskDetailSection.events => _RuntimeTab(
+            children: widget.detail.events
+                .map(
+                  (item) =>
+                      '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
+                )
+                .toList(),
+          ),
+      };
+}
+
+class _FloatingCommandRail extends StatelessWidget {
+  const _FloatingCommandRail({
+    required this.compact,
+    required this.selected,
+    required this.actions,
+    required this.onSelected,
+  });
+
+  final bool compact;
+  final _TaskDetailSection selected;
+  final List<_TaskDetailAction> actions;
+  final ValueChanged<_TaskDetailSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FloatingRailFrame(
+      key: const ValueKey('task-detail-floating-command-rail'),
+      width: compact ? 52 : 168,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final section in _TaskDetailSection.values)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _SectionRailButton(
+                section: section,
+                selected: selected == section,
+                compact: compact,
+                onPressed: () => onSelected(section),
+              ),
+            ),
+          Divider(
+            height: 16,
+            color: Theme.of(context).dividerColor,
+          ),
+          for (final action in actions)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _ActionRailButton(action: action, compact: compact),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _SectionRailButton extends StatelessWidget {
+  const _SectionRailButton({
+    required this.section,
+    required this.selected,
+    required this.compact,
+    required this.onPressed,
+  });
+
+  final _TaskDetailSection section;
+  final bool selected;
+  final bool compact;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _taskDetailSectionLabel(section);
+    final icon = Icon(_taskDetailSectionIcon(section));
+    if (compact) {
+      if (selected) {
+        return IconButton.filledTonal(
+          key: _taskDetailSectionKey(section),
+          tooltip: label,
+          onPressed: onPressed,
+          icon: icon,
+        );
+      }
+      return IconButton(
+        key: _taskDetailSectionKey(section),
+        tooltip: label,
+        onPressed: onPressed,
+        icon: icon,
+      );
+    }
+    final text = Text(label, overflow: TextOverflow.ellipsis);
+    if (selected) {
+      return FilledButton.tonalIcon(
+        key: _taskDetailSectionKey(section),
+        onPressed: onPressed,
+        icon: icon,
+        label: text,
+      );
+    }
+    return TextButton.icon(
+      key: _taskDetailSectionKey(section),
+      onPressed: onPressed,
+      icon: icon,
+      label: text,
+    );
+  }
+}
+
+class _ActionRailButton extends StatelessWidget {
+  const _ActionRailButton({
+    required this.action,
+    required this.compact,
+  });
+
+  final _TaskDetailAction action;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(action.icon);
+    if (compact) {
+      if (action.emphasis == _TaskDetailActionEmphasis.filled) {
+        return IconButton.filled(
+          key: action.key,
+          tooltip: action.label,
+          onPressed: action.onPressed,
+          icon: icon,
+        );
+      }
+      return IconButton(
+        key: action.key,
+        tooltip: action.label,
+        onPressed: action.onPressed,
+        icon: icon,
+      );
+    }
+    final label = Text(action.label, overflow: TextOverflow.ellipsis);
+    if (action.emphasis == _TaskDetailActionEmphasis.filled) {
+      return FilledButton.icon(
+        key: action.key,
+        onPressed: action.onPressed,
+        icon: icon,
+        label: label,
+      );
+    }
+    return OutlinedButton.icon(
+      key: action.key,
+      onPressed: action.onPressed,
+      icon: icon,
+      label: label,
+    );
+  }
+}
+
+class _FloatingRailFrame extends StatelessWidget {
+  const _FloatingRailFrame({
+    super.key,
+    required this.width,
+    required this.child,
+  });
+
+  final double width;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: width,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: constraints.maxHeight),
+            child: Material(
+              elevation: 3,
+              color: scheme.surface,
+              shadowColor: scheme.shadow.withOpacity(0.22),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: BorderSide(color: Theme.of(context).dividerColor),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                child: SingleChildScrollView(child: child),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

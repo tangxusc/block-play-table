@@ -366,7 +366,7 @@ void main() {
 
     await tester.tap(find.text('Refresh board').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(TextButton, 'Assign'));
+    await tester.tap(find.byKey(const ValueKey('task-detail-action-assign')));
     await tester.pumpAndSettle();
 
     expect(find.text('Assign worker'), findsOneWidget);
@@ -518,25 +518,57 @@ void main() {
     expect(apiClient.detailFetches, greaterThan(1));
     expect(find.text('COMPLETED'), findsWidgets);
     expect(find.text('done'), findsNothing);
-    expect(find.text('Logs'), findsOneWidget);
-    expect(find.text('Conversation'), findsOneWidget);
-    expect(find.text('Domain events'), findsOneWidget);
-    final tabLabels = tester
-        .widgetList<Tab>(find.byType(Tab))
-        .map((tab) => tab.text)
-        .toList();
-    expect(tabLabels, ['Conversation', 'Logs', 'Domain events']);
+    final floatingRail =
+        find.byKey(const ValueKey('task-detail-floating-command-rail'));
+    expect(floatingRail, findsOneWidget);
+    expect(find.byKey(const ValueKey('task-detail-section-conversation')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('task-detail-section-logs')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-detail-section-domain-events')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('task-detail-action-close')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-detail-action-assign')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('task-detail-action-start')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-detail-action-interrupt')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('task-detail-action-retry')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-detail-action-archive')),
+        findsOneWidget);
+    for (final key in const [
+      ValueKey('task-detail-section-conversation'),
+      ValueKey('task-detail-section-logs'),
+      ValueKey('task-detail-section-domain-events'),
+      ValueKey('task-detail-action-close'),
+      ValueKey('task-detail-action-assign'),
+      ValueKey('task-detail-action-start'),
+      ValueKey('task-detail-action-interrupt'),
+      ValueKey('task-detail-action-retry'),
+      ValueKey('task-detail-action-archive'),
+    ]) {
+      expect(
+        find.descendant(of: floatingRail, matching: find.byKey(key)),
+        findsOneWidget,
+      );
+    }
+    expect(find.byType(TabBar), findsNothing);
+    expect(find.byType(TabBarView), findsNothing);
     expect(
         find.textContaining('conversation from subscription'), findsOneWidget);
     expect(find.textContaining('done from subscription'), findsNothing);
     expect(find.textContaining('TaskCompleted v2: {}'), findsNothing);
 
-    await tester.tap(find.text('Logs'));
+    await tester.tap(find.byKey(const ValueKey('task-detail-section-logs')));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('done from subscription'), findsOneWidget);
 
-    await tester.tap(find.text('Domain events'));
+    await tester
+        .tap(find.byKey(const ValueKey('task-detail-section-domain-events')));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('TaskCompleted v2: {}'), findsOneWidget);

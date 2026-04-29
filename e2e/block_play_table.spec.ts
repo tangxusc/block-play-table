@@ -1144,7 +1144,9 @@ test("task detail continues a completed task with the same agent session", async
   await page.waitForTimeout(1500);
   await enableFlutterAccessibility(page);
   await openTaskFromList(page, taskTitle);
-  await expect(page.getByRole("tab", { name: "Conversation" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Conversation$/ }),
+  ).toBeVisible();
   await page.getByLabel("Continue conversation").click();
   await page.waitForTimeout(100);
   await page.keyboard.type("follow up from ui");
