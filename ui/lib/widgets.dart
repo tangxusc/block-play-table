@@ -86,6 +86,7 @@ class SearchSortToolbar extends StatelessWidget {
     required this.sortOptions,
     required this.onSearchChanged,
     required this.onSortChanged,
+    this.extraControls = const [],
   });
 
   final String keyPrefix;
@@ -94,13 +95,14 @@ class SearchSortToolbar extends StatelessWidget {
   final List<SortOption> sortOptions;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<SortRequest> onSortChanged;
+  final List<Widget> extraControls;
 
   @override
   Widget build(BuildContext context) {
     final selectedField =
         sortOptions.any((option) => option.field == sort.field)
-            ? sort.field
-            : sortOptions.first.field;
+        ? sort.field
+        : sortOptions.first.field;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       decoration: BoxDecoration(
@@ -129,8 +131,10 @@ class SearchSortToolbar extends StatelessWidget {
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.search),
                     hintText: 'Search',
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                   ),
                 ),
               ),
@@ -172,6 +176,7 @@ class SearchSortToolbar extends StatelessWidget {
                       : Icons.arrow_downward,
                 ),
               ),
+              ...extraControls,
             ],
           );
         },
@@ -233,8 +238,8 @@ class EmptyState extends StatelessWidget {
                 message,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ],
@@ -310,9 +315,7 @@ class PaginationBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Row(
         children: [
@@ -324,8 +327,9 @@ class PaginationBar extends StatelessWidget {
           const Spacer(),
           IconButton(
             tooltip: 'First page',
-            onPressed:
-                canGoBack ? () => onPageChanged(page.withOffset(0)) : null,
+            onPressed: canGoBack
+                ? () => onPageChanged(page.withOffset(0))
+                : null,
             icon: const Icon(Icons.first_page),
           ),
           IconButton(
@@ -413,8 +417,7 @@ Color _statusColor(BuildContext context, String status) {
     'ARCHIVED' ||
     'DISABLED' ||
     'OFFLINE' ||
-    'INTERRUPTED' =>
-      scheme.onSurfaceVariant,
+    'INTERRUPTED' => scheme.onSurfaceVariant,
     _ => scheme.primary,
   };
 }

@@ -26,54 +26,84 @@ void main() {
     expect(secret.valueInput, isEmpty);
   });
 
-  test('updateWorker sends public env values and preserves blank secrets',
-      () async {
-    final apiClient = RecordingApiClient();
+  test(
+    'updateWorker sends public env values and preserves blank secrets',
+    () async {
+      final apiClient = RecordingApiClient();
 
-    await apiClient.updateWorker(
-      WorkerItem(
-        id: 'worker-1',
-        name: 'Local worker',
-        status: 'ONLINE',
-        supportedAgents: const ['codex'],
-        workDir: '/tmp/worker',
-        startupCommand: '',
-        projectBindingMode: 'ALL_PROJECTS',
-        boundProjectIds: const [],
-        currentTaskIds: const [],
-        agentRuntimeEnv: const [
-          WorkerAgentRuntimeEnvItem(
-            agentType: 'codex',
-            vars: [
-              EnvVarItem(
-                key: 'PUBLIC_EMPTY',
-                valueMasked: '',
-                description: '',
-                enabled: true,
-                sensitive: false,
-              ),
-              EnvVarItem(
-                key: 'SECRET',
-                valueMasked: '********',
-                description: '',
-                enabled: true,
-                sensitive: true,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+      await apiClient.updateWorker(
+        WorkerItem(
+          id: 'worker-1',
+          name: 'Local worker',
+          status: 'ONLINE',
+          supportedAgents: const ['codex'],
+          workDir: '/tmp/worker',
+          startupCommand: '',
+          projectBindingMode: 'ALL_PROJECTS',
+          boundProjectIds: const [],
+          currentTaskIds: const [],
+          agentRuntimeEnv: const [
+            WorkerAgentRuntimeEnvItem(
+              agentType: 'codex',
+              vars: [
+                EnvVarItem(
+                  key: 'PUBLIC_EMPTY',
+                  valueMasked: '',
+                  description: '',
+                  enabled: true,
+                  sensitive: false,
+                ),
+                EnvVarItem(
+                  key: 'SECRET',
+                  valueMasked: '********',
+                  description: '',
+                  enabled: true,
+                  sensitive: true,
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
 
-    final input = apiClient.lastVariables!['input'] as Map<String, dynamic>;
-    final agentEnv = input['agentRuntimeEnv'] as List<dynamic>;
-    final vars = (agentEnv[0] as Map<String, dynamic>)['vars'] as List<dynamic>;
-    final public = vars[0] as Map<String, dynamic>;
-    final secret = vars[1] as Map<String, dynamic>;
+      final input = apiClient.lastVariables!['input'] as Map<String, dynamic>;
+      final agentEnv = input['agentRuntimeEnv'] as List<dynamic>;
+      final vars =
+          (agentEnv[0] as Map<String, dynamic>)['vars'] as List<dynamic>;
+      final public = vars[0] as Map<String, dynamic>;
+      final secret = vars[1] as Map<String, dynamic>;
 
-    expect(public, containsPair('value', ''));
-    expect(secret.containsKey('value'), isFalse);
-  });
+      expect(public, containsPair('value', ''));
+      expect(secret.containsKey('value'), isFalse);
+    },
+  );
+
+  test(
+    'fetchBoardData sends project filter with page search and sort',
+    () async {
+      final apiClient = BoardRecordingApiClient();
+
+      await apiClient.fetchBoardData(
+        'KANBAN',
+        page: const PageRequest(offset: 20, limit: 20),
+        search: 'Needle',
+        sort: const SortRequest(
+          field: 'TITLE',
+          direction: SortRequest.ascending,
+        ),
+        projectId: 'project-2',
+      );
+
+      final variables = apiClient.boardVariables!;
+      expect(variables['page'], {'offset': 20, 'limit': 20});
+      expect(variables['sort'], {'field': 'TITLE', 'direction': 'ASC'});
+      expect(variables['filter'], {
+        'includeArchived': true,
+        'projectId': 'project-2',
+        'search': 'Needle',
+      });
+    },
+  );
 
   testWidgets(
     'renders workspace navigation without Tasks and opens task dialog',
@@ -117,12 +147,15 @@ void main() {
 
     expect(tester.takeException(), isNull);
 
-    final pendingRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-pending')));
-    final runningRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-running')));
-    final completeRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-complete')));
+    final pendingRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-pending')),
+    );
+    final runningRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-running')),
+    );
+    final completeRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-complete')),
+    );
 
     expect(pendingRect.width, greaterThan(260));
     expect(runningRect.width, closeTo(pendingRect.width, 0.5));
@@ -144,12 +177,15 @@ void main() {
 
     expect(tester.takeException(), isNull);
 
-    final pendingRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-pending')));
-    final runningRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-running')));
-    final completeRect =
-        tester.getRect(find.byKey(const ValueKey('kanban-column-complete')));
+    final pendingRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-pending')),
+    );
+    final runningRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-running')),
+    );
+    final completeRect = tester.getRect(
+      find.byKey(const ValueKey('kanban-column-complete')),
+    );
 
     expect(pendingRect.width, closeTo(260, 0.5));
     expect(runningRect.width, closeTo(260, 0.5));
@@ -346,6 +382,97 @@ void main() {
     expect(find.text('Paged task 0'), findsNothing);
   });
 
+  testWidgets(
+    'board project filter applies before pagination search and sort',
+    (tester) async {
+      const surfaceSize = Size(1200, 800);
+      _setSurfaceSize(tester, surfaceSize);
+      const otherProject = ProjectItem(
+        id: 'project-2',
+        name: 'Mobile',
+        gitUrl: 'git@example.com:mobile.git',
+        defaultBranch: 'main',
+        worktreeNamePrefix: 'mobile',
+        archived: false,
+      );
+      final targetTasks = List.generate(
+        21,
+        (index) => _taskWith(
+          id: 'target-task-$index',
+          title: 'Project filtered task $index',
+          projectId: otherProject.id,
+          createdAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+          updatedAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+        ),
+      );
+      final apiClient = FakeApiClient(
+        projects: [_project, otherProject],
+        tasks: [
+          _taskWith(
+            id: 'other-project-task',
+            title: 'Other project task',
+            projectId: _project.id,
+            createdAt: '2026-04-25T00:59:00Z',
+            updatedAt: '2026-04-25T00:59:00Z',
+          ),
+          ...targetTasks,
+        ],
+      );
+
+      await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Other project task'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('board-project-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Mobile').last);
+      await tester.pumpAndSettle();
+
+      expect(apiClient.lastBoardProjectId, otherProject.id);
+      expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+      expect(find.text('Project filtered task 20'), findsOneWidget);
+      expect(find.text('Other project task'), findsNothing);
+
+      await tester.tap(find.byTooltip('Next page'));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.lastBoardProjectId, otherProject.id);
+      expect(find.text('Showing 21-21 of 21'), findsOneWidget);
+      expect(find.text('Project filtered task 0'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('board-search-field')),
+        'Project filtered task 20',
+      );
+      await tester.pumpAndSettle();
+
+      expect(apiClient.lastBoardProjectId, otherProject.id);
+      expect(find.text('Showing 1-1 of 1'), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.text('Project filtered task 20'),
+          matching: find.byType(InkWell),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Project filtered task 0'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('board-search-field')),
+        'Project filtered task',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('board-sort-direction')));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.lastBoardProjectId, otherProject.id);
+      expect(apiClient.lastBoardSort?.direction, SortRequest.ascending);
+      expect(find.text('Showing 1-20 of 21'), findsOneWidget);
+      expect(find.text('Project filtered task 0'), findsOneWidget);
+    },
+  );
+
   testWidgets('projects workers and events paginate with shared controls', (
     tester,
   ) async {
@@ -476,7 +603,9 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-        find.byKey(const ValueKey('board-search-field')), 'Needle');
+      find.byKey(const ValueKey('board-search-field')),
+      'Needle',
+    );
     await tester.pumpAndSettle();
     expect(find.text('Needle task'), findsOneWidget);
     expect(find.text('Hay task 0'), findsNothing);
@@ -504,7 +633,9 @@ void main() {
     await tester.tap(find.text('Events').first);
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byKey(const ValueKey('events-search-field')), 'Needle');
+      find.byKey(const ValueKey('events-search-field')),
+      'Needle',
+    );
     await tester.pumpAndSettle();
     expect(find.text('NeedleEvent'), findsOneWidget);
     expect(find.text('HayEvent0'), findsNothing);
@@ -788,27 +919,46 @@ void main() {
     expect(apiClient.detailFetches, greaterThan(1));
     expect(find.text('COMPLETED'), findsWidgets);
     expect(find.text('done'), findsNothing);
-    final floatingRail =
-        find.byKey(const ValueKey('task-detail-floating-command-rail'));
+    final floatingRail = find.byKey(
+      const ValueKey('task-detail-floating-command-rail'),
+    );
     expect(floatingRail, findsOneWidget);
-    expect(find.byKey(const ValueKey('task-detail-section-conversation')),
-        findsOneWidget);
     expect(
-        find.byKey(const ValueKey('task-detail-section-logs')), findsOneWidget);
-    expect(find.byKey(const ValueKey('task-detail-section-domain-events')),
-        findsOneWidget);
+      find.byKey(const ValueKey('task-detail-section-conversation')),
+      findsOneWidget,
+    );
     expect(
-        find.byKey(const ValueKey('task-detail-action-close')), findsOneWidget);
-    expect(find.byKey(const ValueKey('task-detail-action-assign')),
-        findsOneWidget);
+      find.byKey(const ValueKey('task-detail-section-logs')),
+      findsOneWidget,
+    );
     expect(
-        find.byKey(const ValueKey('task-detail-action-start')), findsOneWidget);
-    expect(find.byKey(const ValueKey('task-detail-action-interrupt')),
-        findsOneWidget);
+      find.byKey(const ValueKey('task-detail-section-domain-events')),
+      findsOneWidget,
+    );
     expect(
-        find.byKey(const ValueKey('task-detail-action-retry')), findsOneWidget);
-    expect(find.byKey(const ValueKey('task-detail-action-archive')),
-        findsOneWidget);
+      find.byKey(const ValueKey('task-detail-action-close')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-assign')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-start')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-interrupt')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-retry')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-archive')),
+      findsOneWidget,
+    );
     for (final key in const [
       ValueKey('task-detail-section-conversation'),
       ValueKey('task-detail-section-logs'),
@@ -828,7 +978,9 @@ void main() {
     expect(find.byType(TabBar), findsNothing);
     expect(find.byType(TabBarView), findsNothing);
     expect(
-        find.textContaining('conversation from subscription'), findsOneWidget);
+      find.textContaining('conversation from subscription'),
+      findsOneWidget,
+    );
     expect(find.textContaining('done from subscription'), findsNothing);
     expect(find.textContaining('TaskCompleted v2: {}'), findsNothing);
 
@@ -837,16 +989,15 @@ void main() {
 
     expect(find.textContaining('done from subscription'), findsOneWidget);
 
-    await tester
-        .tap(find.byKey(const ValueKey('task-detail-section-domain-events')));
+    await tester.tap(
+      find.byKey(const ValueKey('task-detail-section-domain-events')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('TaskCompleted v2: {}'), findsOneWidget);
   });
 
-  testWidgets('task detail title copies task id to clipboard', (
-    tester,
-  ) async {
+  testWidgets('task detail title copies task id to clipboard', (tester) async {
     String? clipboardText;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -1006,12 +1157,12 @@ class FakeApiClient extends ApiClient {
     List<ProjectItem>? projects,
     List<WorkerItem>? workers,
     List<DomainEventItem>? events,
-  })  : _settings = settings ?? const SettingsData(),
-        _tasks = tasks ?? [_task],
-        _projects = projects ?? [_project],
-        _workers = workers ?? [worker ?? _defaultWorker],
-        _domainEvents = events ?? const [],
-        super('http://manager/graphql');
+  }) : _settings = settings ?? const SettingsData(),
+       _tasks = tasks ?? [_task],
+       _projects = projects ?? [_project],
+       _workers = workers ?? [worker ?? _defaultWorker],
+       _domainEvents = events ?? const [],
+       super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
@@ -1033,6 +1184,8 @@ class FakeApiClient extends ApiClient {
   String? continuedMessage;
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
+  String? lastBoardProjectId;
+  SortRequest? lastBoardSort;
 
   void emit(DomainEventItem event) => _events.add(event);
 
@@ -1048,9 +1201,15 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
+    String projectId = '',
   }) async {
     boardFetches++;
-    final tasks = _sortTasks(_filterTasks(_tasks, search), sort);
+    lastBoardProjectId = projectId;
+    lastBoardSort = sort;
+    final filteredByProject = projectId.isEmpty
+        ? List<TaskItem>.from(_tasks)
+        : _tasks.where((task) => task.projectId == projectId).toList();
+    final tasks = _sortTasks(_filterTasks(filteredByProject, search), sort);
     final pageTasks = page.slice(tasks);
     return BoardData(
       id: 'default',
@@ -1089,12 +1248,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async =>
-      PagedResult(
-        items:
-            page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
-        totalCount: _filterProjects(_projects, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
+    totalCount: _filterProjects(_projects, search).length,
+  );
 
   @override
   Future<List<WorkerItem>> fetchWorkers() async => _workers;
@@ -1104,11 +1261,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async =>
-      PagedResult(
-        items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
-        totalCount: _filterWorkers(_workers, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
+    totalCount: _filterWorkers(_workers, search).length,
+  );
 
   @override
   Future<List<DomainEventItem>> fetchEvents() async => _domainEvents;
@@ -1118,13 +1274,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'OCCURRED_AT'),
-  }) async =>
-      PagedResult(
-        items: page.slice(
-          _sortEvents(_filterEvents(_domainEvents, search), sort),
-        ),
-        totalCount: _filterEvents(_domainEvents, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortEvents(_filterEvents(_domainEvents, search), sort)),
+    totalCount: _filterEvents(_domainEvents, search).length,
+  );
 
   @override
   Future<SettingsData> fetchSettings() async => _settings;
@@ -1180,8 +1333,7 @@ class FakeApiClient extends ApiClient {
     String? aggregateId,
     String? aggregateType,
     String? eventType,
-  }) =>
-      _events.stream;
+  }) => _events.stream;
 
   @override
   Future<TaskDetailData> fetchTaskDetail(String taskId) async {
@@ -1341,8 +1493,9 @@ List<ProjectItem> _sortProjects(List<ProjectItem> projects, SortRequest sort) {
       'UPDATED_AT' => a.updatedAt.compareTo(b.updatedAt),
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'GIT_URL' => a.gitUrl.toLowerCase().compareTo(b.gitUrl.toLowerCase()),
-      'DEFAULT_BRANCH' =>
-        a.defaultBranch.toLowerCase().compareTo(b.defaultBranch.toLowerCase()),
+      'DEFAULT_BRANCH' => a.defaultBranch.toLowerCase().compareTo(
+        b.defaultBranch.toLowerCase(),
+      ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1360,8 +1513,9 @@ List<WorkerItem> _sortWorkers(List<WorkerItem> workers, SortRequest sort) {
       'UPDATED_AT' => a.updatedAt.compareTo(b.updatedAt),
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'STATUS' => a.status.compareTo(b.status),
-      'LAST_HEARTBEAT_AT' =>
-        (a.lastHeartbeatAt ?? '').compareTo(b.lastHeartbeatAt ?? ''),
+      'LAST_HEARTBEAT_AT' => (a.lastHeartbeatAt ?? '').compareTo(
+        b.lastHeartbeatAt ?? '',
+      ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1379,12 +1533,15 @@ List<DomainEventItem> _sortEvents(
   final out = List<DomainEventItem>.from(events);
   out.sort((a, b) {
     final cmp = switch (sort.field) {
-      'EVENT_TYPE' =>
-        a.eventType.toLowerCase().compareTo(b.eventType.toLowerCase()),
-      'AGGREGATE_TYPE' =>
-        a.aggregateType.toLowerCase().compareTo(b.aggregateType.toLowerCase()),
-      'AGGREGATE_ID' =>
-        a.aggregateId.toLowerCase().compareTo(b.aggregateId.toLowerCase()),
+      'EVENT_TYPE' => a.eventType.toLowerCase().compareTo(
+        b.eventType.toLowerCase(),
+      ),
+      'AGGREGATE_TYPE' => a.aggregateType.toLowerCase().compareTo(
+        b.aggregateType.toLowerCase(),
+      ),
+      'AGGREGATE_ID' => a.aggregateId.toLowerCase().compareTo(
+        b.aggregateId.toLowerCase(),
+      ),
       _ => a.occurredAt.compareTo(b.occurredAt),
     };
     if (cmp != 0) {
@@ -1418,6 +1575,40 @@ class RecordingApiClient extends ApiClient {
   }) async {
     lastVariables = variables;
     return <String, dynamic>{};
+  }
+}
+
+class BoardRecordingApiClient extends ApiClient {
+  BoardRecordingApiClient() : super('http://manager/graphql');
+
+  Map<String, dynamic>? boardVariables;
+
+  @override
+  Future<Map<String, dynamic>> graphQL(
+    String query, {
+    Map<String, dynamic>? variables,
+  }) async {
+    if (query.contains('query Board')) {
+      boardVariables = variables;
+      return {
+        'board': {
+          'id': 'default',
+          'name': 'Default Board',
+          'type': 'KANBAN',
+          'totalCount': 0,
+          'columns': [],
+          'calendarItems': [],
+          'tasks': [],
+        },
+      };
+    }
+    if (query.contains('query Projects')) {
+      return {'projects': []};
+    }
+    if (query.contains('query Workers')) {
+      return {'workers': []};
+    }
+    return const <String, dynamic>{};
   }
 }
 
@@ -1468,27 +1659,27 @@ TaskItem _taskWith({
   String? endDate,
   String? createdAt,
   String? updatedAt,
-}) =>
-    TaskItem(
-      id: id,
-      title: title,
-      description: description ?? _task.description,
-      status: status ?? _task.status,
-      projectId: _task.projectId,
-      agentType: _task.agentType,
-      agentConfig: _task.agentConfig,
-      baseBranch: _task.baseBranch,
-      preCommands: _task.preCommands,
-      postCommands: _task.postCommands,
-      startDate: startDate ?? _task.startDate,
-      endDate: endDate ?? _task.endDate,
-      createdAt: createdAt ?? _task.createdAt,
-      updatedAt: updatedAt ?? _task.updatedAt,
-      workerId: _task.workerId,
-      worktreePath: _task.worktreePath,
-      agentSessionId: _task.agentSessionId,
-      result: _task.result,
-    );
+  String? projectId,
+}) => TaskItem(
+  id: id,
+  title: title,
+  description: description ?? _task.description,
+  status: status ?? _task.status,
+  projectId: projectId ?? _task.projectId,
+  agentType: _task.agentType,
+  agentConfig: _task.agentConfig,
+  baseBranch: _task.baseBranch,
+  preCommands: _task.preCommands,
+  postCommands: _task.postCommands,
+  startDate: startDate ?? _task.startDate,
+  endDate: endDate ?? _task.endDate,
+  createdAt: createdAt ?? _task.createdAt,
+  updatedAt: updatedAt ?? _task.updatedAt,
+  workerId: _task.workerId,
+  worktreePath: _task.worktreePath,
+  agentSessionId: _task.agentSessionId,
+  result: _task.result,
+);
 
 final _completedTask = TaskItem(
   id: 'task-1',

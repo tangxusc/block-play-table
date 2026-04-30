@@ -727,13 +727,14 @@ Kanban 展示规则：
 2. 状态列内容超过可视高度时，列内任务列表独立垂直滚动，并显示滚动条。
 3. 看板横向空间不足时，列区域整体水平滚动，列宽仍保留最小可读宽度。
 4. Board 查询使用全局任务分页，默认每页 20 条；当前页任务再按状态分组到 Kanban 列，列头数量表示当前页内数量，`totalCount` 表示符合条件的全量任务数。
+5. Board 顶部 Project 过滤默认为全部项目；选择具体 Project 后，Kanban、List、Calendar 的搜索、排序、分页和空页纠正都必须继续携带同一个 `projectId`。
 
 Calendar 展示规则：
 
 1. Calendar 页面使用任务已有的 `startDate` 和 `endDate` 字段作为全天日期范围，不引入小时级时间轴。
 2. 月视图按周一到周日排列，跨多日任务渲染为连续任务条，跨周时拆分为多段。
 3. 周视图展示一周内的任务范围，日视图展示当天覆盖到的任务列表，年视图展示每月任务数量和有任务日期标记。
-4. Board 顶部搜索是服务端全局任务过滤条件，Kanban、List、Calendar 三种视图共享同一搜索结果；Calendar 在搜索结果变化后聚焦第一条匹配任务的开始日期。
+4. Board 顶部搜索和 Project 过滤都是服务端全局任务过滤条件，Kanban、List、Calendar 三种视图共享同一过滤结果；Calendar 在搜索结果变化后聚焦第一条匹配任务的开始日期。
 
 ## 6. 领域事件设计
 
@@ -1237,7 +1238,7 @@ type Query {
 }
 ```
 
-分页 connection 类型统一返回 `nodes` 和 `totalCount`。`TaskFilter`、`ProjectFilter`、`WorkerFilter`、`DomainEventFilter` 均支持大小写不敏感的全文 `search`。`tasks`/`board`、`projects`、`workers`、`domainEvents` 均支持显式 `sort`；默认排序为任务、项目、Worker 按 `createdAt DESC`，事件按 `occurredAt DESC`。旧列表字段继续保留用于兼容和表单候选项加载。
+分页 connection 类型统一返回 `nodes` 和 `totalCount`。`TaskFilter`、`ProjectFilter`、`WorkerFilter`、`DomainEventFilter` 均支持大小写不敏感的全文 `search`；`TaskFilter.projectId` 用于 Board 和任务查询按 Project 过滤。`tasks`/`board`、`projects`、`workers`、`domainEvents` 均支持显式 `sort`；默认排序为任务、项目、Worker 按 `createdAt DESC`，事件按 `occurredAt DESC`。旧列表字段继续保留用于兼容和表单候选项加载。
 
 ### 8.3 Mutation
 
