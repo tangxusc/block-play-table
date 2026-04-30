@@ -82,7 +82,8 @@ void main() {
       await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
       await tester.pumpAndSettle();
 
-      expect(find.text('Block Play Table'), findsOneWidget);
+      expect(find.text('Block Play Table'), findsNothing);
+      expect(find.byType(AppBar), findsNothing);
       expect(find.text('Tasks'), findsNothing);
       expect(find.text('Board'), findsWidgets);
       expect(find.text('Projects'), findsWidgets);

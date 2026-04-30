@@ -76,16 +76,6 @@ class _HomePageState extends State<HomePage> {
       SettingsPage(apiClient: widget.apiClient),
     ];
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
-        title: const Text('Block Play Table'),
-        centerTitle: false,
-        scrolledUnderElevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Divider(height: 1, color: Theme.of(context).dividerColor),
-        ),
-      ),
       body: Row(
         children: [
           NavigationRail(
