@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Search and Sort Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f8fa;
+        color: #1d2329;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+
+      .surface {
+        max-width: 960px;
+        min-height: 560px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #d9dee5;
+        border-radius: 8px;
+        background: #fff;
+        overflow: hidden;
+      }
+
+      header,
+      .toolbar,
+      footer {
+        min-height: 56px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid #e3e7ed;
+      }
+
+      header {
+        gap: 10px;
+        padding: 0 20px;
+        font-weight: 600;
+      }
+
+      .toolbar {
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 10px 16px;
+      }
+
+      input,
+      select {
+        height: 38px;
+        border: 1px solid #cfd7df;
+        border-radius: 6px;
+        background: #fff;
+        color: #1d2329;
+        font: inherit;
+      }
+
+      input {
+        width: 320px;
+        padding: 0 12px;
+      }
+
+      select {
+        width: 210px;
+        padding: 0 10px;
+      }
+
+      .direction {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 19px;
+        background: transparent;
+        color: #26323d;
+        font-size: 20px;
+      }
+
+      .direction:hover {
+        background: #edf1f5;
+      }
+
+      main {
+        flex: 1;
+        padding: 16px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+
+      .row {
+        min-height: 66px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 14px;
+        border: 1px solid #e1e6ec;
+        border-radius: 8px;
+      }
+
+      .icon {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: #e9f2f2;
+        color: #1f6666;
+        font-weight: 700;
+      }
+
+      .meta {
+        color: #65717d;
+        font-size: 13px;
+      }
+
+      footer {
+        justify-content: space-between;
+        padding: 0 16px;
+        border-top: 1px solid #e3e7ed;
+        border-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="surface" aria-label="Projects page search and sort preview">
+      <header>
+        <span aria-hidden="true">folder</span>
+        <span>Projects</span>
+      </header>
+      <div class="toolbar">
+        <input aria-label="Search" placeholder="Search" value="worker runtime">
+        <select aria-label="Sort by">
+          <option>Created</option>
+          <option selected>Name</option>
+          <option>Updated</option>
+        </select>
+        <button class="direction" title="Sort descending" aria-label="Sort descending">↓</button>
+      </div>
+      <main>
+        <div class="row">
+          <div class="icon" aria-hidden="true">P</div>
+          <div>
+            <div>Worker Runtime</div>
+            <div class="meta">git@example.com:worker.git / main / worker</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="icon" aria-hidden="true">P</div>
+          <div>
+            <div>Worker Runtime Sandbox</div>
+            <div class="meta">git@example.com:sandbox.git / main / worker-sandbox</div>
+          </div>
+        </div>
+      </main>
+      <footer>
+        <span>Showing 1-2 of 2</span>
+        <span aria-hidden="true">|&lt; &lt; &gt; &gt;|</span>
+      </footer>
+    </section>
+  </body>
+</html>

@@ -52,16 +52,23 @@ func (s *Service) DomainEvents(ctx context.Context, filter domain.EventFilter) (
 }
 
 func (s *Service) DomainEventsPage(ctx context.Context, filter domain.EventFilter, page PageInput) ([]domain.DomainEvent, int, error) {
+	return s.DomainEventsPageSorted(ctx, filter, DomainEventSort{}, page)
+}
+
+func (s *Service) DomainEventsSorted(ctx context.Context, filter domain.EventFilter, sort DomainEventSort) ([]domain.DomainEvent, error) {
 	events, err := s.store.DomainEvents(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	sortDomainEvents(events, sort)
+	return events, nil
+}
+
+func (s *Service) DomainEventsPageSorted(ctx context.Context, filter domain.EventFilter, sort DomainEventSort, page PageInput) ([]domain.DomainEvent, int, error) {
+	events, err := s.DomainEventsSorted(ctx, filter, sort)
 	if err != nil {
 		return nil, 0, err
 	}
-	slices.SortFunc(events, func(a, b domain.DomainEvent) int {
-		if cmp := b.OccurredAt.Compare(a.OccurredAt); cmp != 0 {
-			return cmp
-		}
-		return strings.Compare(b.EventID, a.EventID)
-	})
 	pageItems, total := paginateItems(events, page)
 	return pageItems, total, nil
 }
@@ -109,6 +116,11 @@ type UpdateProjectInput struct {
 	WorktreeNamePrefix string `json:"worktreeNamePrefix"`
 }
 
+type ProjectFilter struct {
+	IncludeArchived bool
+	Search          string
+}
+
 func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (*domain.Project, error) {
 	now := s.clock()
 	project, err := domain.NewProject(domain.NewProjectInput{
@@ -141,32 +153,42 @@ func (s *Service) Projects(ctx context.Context) ([]*domain.Project, error) {
 }
 
 func (s *Service) ProjectsFiltered(ctx context.Context, includeArchived bool) ([]*domain.Project, error) {
-	return s.filteredProjects(ctx, includeArchived)
+	return s.ProjectsFilteredSorted(ctx, ProjectFilter{IncludeArchived: includeArchived}, ProjectSort{})
 }
 
 func (s *Service) ProjectsFilteredPage(ctx context.Context, includeArchived bool, page PageInput) ([]*domain.Project, int, error) {
-	projects, err := s.filteredProjects(ctx, includeArchived)
+	return s.ProjectsFilteredPageSorted(ctx, ProjectFilter{IncludeArchived: includeArchived}, ProjectSort{}, page)
+}
+
+func (s *Service) ProjectsFilteredSorted(ctx context.Context, filter ProjectFilter, sort ProjectSort) ([]*domain.Project, error) {
+	projects, err := s.filteredProjects(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	sortProjects(projects, sort)
+	return projects, nil
+}
+
+func (s *Service) ProjectsFilteredPageSorted(ctx context.Context, filter ProjectFilter, sort ProjectSort, page PageInput) ([]*domain.Project, int, error) {
+	projects, err := s.ProjectsFilteredSorted(ctx, filter, sort)
 	if err != nil {
 		return nil, 0, err
 	}
-	slices.SortFunc(projects, func(a, b *domain.Project) int {
-		if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
-			return cmp
-		}
-		return strings.Compare(b.ID, a.ID)
-	})
 	pageItems, total := paginateItems(projects, page)
 	return pageItems, total, nil
 }
 
-func (s *Service) filteredProjects(ctx context.Context, includeArchived bool) ([]*domain.Project, error) {
+func (s *Service) filteredProjects(ctx context.Context, filter ProjectFilter) ([]*domain.Project, error) {
 	projects, err := s.store.Projects(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*domain.Project, 0, len(projects))
 	for _, project := range projects {
-		if !includeArchived && project.Archived {
+		if !filter.IncludeArchived && project.Archived {
+			continue
+		}
+		if !matchesSearch(filter.Search, project.ID, project.Name, project.GitURL, project.DefaultBranch, project.WorktreeNamePrefix) {
 			continue
 		}
 		out = append(out, project)
@@ -275,11 +297,79 @@ type TaskFilter struct {
 	WorkerID        string
 	AgentType       domain.AgentType
 	IncludeArchived bool
+	Search          string
 }
 
 type PageInput struct {
 	Offset int
 	Limit  int
+}
+
+type SortDirection string
+
+const (
+	SortDirectionAsc  SortDirection = "ASC"
+	SortDirectionDesc SortDirection = "DESC"
+)
+
+type TaskSortField string
+
+const (
+	TaskSortCreatedAt TaskSortField = "CREATED_AT"
+	TaskSortUpdatedAt TaskSortField = "UPDATED_AT"
+	TaskSortTitle     TaskSortField = "TITLE"
+	TaskSortStatus    TaskSortField = "STATUS"
+	TaskSortStartDate TaskSortField = "START_DATE"
+	TaskSortEndDate   TaskSortField = "END_DATE"
+)
+
+type TaskSort struct {
+	Field     TaskSortField
+	Direction SortDirection
+}
+
+type ProjectSortField string
+
+const (
+	ProjectSortCreatedAt     ProjectSortField = "CREATED_AT"
+	ProjectSortUpdatedAt     ProjectSortField = "UPDATED_AT"
+	ProjectSortName          ProjectSortField = "NAME"
+	ProjectSortGitURL        ProjectSortField = "GIT_URL"
+	ProjectSortDefaultBranch ProjectSortField = "DEFAULT_BRANCH"
+)
+
+type ProjectSort struct {
+	Field     ProjectSortField
+	Direction SortDirection
+}
+
+type WorkerSortField string
+
+const (
+	WorkerSortCreatedAt       WorkerSortField = "CREATED_AT"
+	WorkerSortUpdatedAt       WorkerSortField = "UPDATED_AT"
+	WorkerSortName            WorkerSortField = "NAME"
+	WorkerSortStatus          WorkerSortField = "STATUS"
+	WorkerSortLastHeartbeatAt WorkerSortField = "LAST_HEARTBEAT_AT"
+)
+
+type WorkerSort struct {
+	Field     WorkerSortField
+	Direction SortDirection
+}
+
+type DomainEventSortField string
+
+const (
+	DomainEventSortOccurredAt    DomainEventSortField = "OCCURRED_AT"
+	DomainEventSortEventType     DomainEventSortField = "EVENT_TYPE"
+	DomainEventSortAggregateType DomainEventSortField = "AGGREGATE_TYPE"
+	DomainEventSortAggregateID   DomainEventSortField = "AGGREGATE_ID"
+)
+
+type DomainEventSort struct {
+	Field     DomainEventSortField
+	Direction SortDirection
 }
 
 func paginateItems[T any](items []T, page PageInput) ([]T, int) {
@@ -296,6 +386,188 @@ func paginateItems[T any](items []T, page PageInput) ([]T, int) {
 		end = start + page.Limit
 	}
 	return items[start:end], total
+}
+
+func matchesSearch(search string, fields ...string) bool {
+	query := strings.ToLower(strings.TrimSpace(search))
+	if query == "" {
+		return true
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func compareStrings(a, b string) int {
+	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+}
+
+func compareTimes(a, b time.Time) int {
+	return a.Compare(b)
+}
+
+func compareOptionalTimes(a, b *time.Time) int {
+	return compareTimes(valueTime(a), valueTime(b))
+}
+
+func valueTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func applyDirection(cmp int, direction SortDirection) int {
+	if cmp == 0 {
+		return 0
+	}
+	if direction == SortDirectionAsc {
+		return cmp
+	}
+	return -cmp
+}
+
+func sortTasks(tasks []*domain.Task, sort TaskSort) {
+	field := sort.Field
+	if field == "" {
+		field = TaskSortCreatedAt
+	}
+	slices.SortFunc(tasks, func(a, b *domain.Task) int {
+		var cmp int
+		switch field {
+		case TaskSortUpdatedAt:
+			cmp = compareTimes(a.UpdatedAt, b.UpdatedAt)
+		case TaskSortTitle:
+			cmp = compareStrings(a.Title, b.Title)
+		case TaskSortStatus:
+			cmp = compareStrings(string(a.Status), string(b.Status))
+		case TaskSortStartDate:
+			cmp = compareTimes(a.StartDate, b.StartDate)
+		case TaskSortEndDate:
+			cmp = compareTimes(a.EndDate, b.EndDate)
+		default:
+			cmp = compareTimes(a.CreatedAt, b.CreatedAt)
+		}
+		if cmp != 0 {
+			return applyDirection(cmp, sort.Direction)
+		}
+		return compareTaskFallback(a, b)
+	})
+}
+
+func compareTaskFallback(a, b *domain.Task) int {
+	if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(b.ID, a.ID)
+}
+
+func sortProjects(projects []*domain.Project, sort ProjectSort) {
+	field := sort.Field
+	if field == "" {
+		field = ProjectSortCreatedAt
+	}
+	slices.SortFunc(projects, func(a, b *domain.Project) int {
+		var cmp int
+		switch field {
+		case ProjectSortUpdatedAt:
+			cmp = compareTimes(a.UpdatedAt, b.UpdatedAt)
+		case ProjectSortName:
+			cmp = compareStrings(a.Name, b.Name)
+		case ProjectSortGitURL:
+			cmp = compareStrings(a.GitURL, b.GitURL)
+		case ProjectSortDefaultBranch:
+			cmp = compareStrings(a.DefaultBranch, b.DefaultBranch)
+		default:
+			cmp = compareTimes(a.CreatedAt, b.CreatedAt)
+		}
+		if cmp != 0 {
+			return applyDirection(cmp, sort.Direction)
+		}
+		return compareProjectFallback(a, b)
+	})
+}
+
+func compareProjectFallback(a, b *domain.Project) int {
+	if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(b.ID, a.ID)
+}
+
+func sortWorkers(workers []*domain.Worker, sort WorkerSort) {
+	field := sort.Field
+	if field == "" {
+		field = WorkerSortCreatedAt
+	}
+	slices.SortFunc(workers, func(a, b *domain.Worker) int {
+		var cmp int
+		switch field {
+		case WorkerSortUpdatedAt:
+			cmp = compareTimes(a.UpdatedAt, b.UpdatedAt)
+		case WorkerSortName:
+			cmp = compareStrings(a.Name, b.Name)
+		case WorkerSortStatus:
+			cmp = compareStrings(string(a.Status), string(b.Status))
+		case WorkerSortLastHeartbeatAt:
+			cmp = compareOptionalTimes(a.LastHeartbeatAt, b.LastHeartbeatAt)
+		default:
+			cmp = compareTimes(a.CreatedAt, b.CreatedAt)
+		}
+		if cmp != 0 {
+			return applyDirection(cmp, sort.Direction)
+		}
+		return compareWorkerFallback(a, b)
+	})
+}
+
+func compareWorkerFallback(a, b *domain.Worker) int {
+	if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(b.ID, a.ID)
+}
+
+func sortDomainEvents(events []domain.DomainEvent, sort DomainEventSort) {
+	field := sort.Field
+	if field == "" {
+		field = DomainEventSortOccurredAt
+	}
+	slices.SortFunc(events, func(a, b domain.DomainEvent) int {
+		var cmp int
+		switch field {
+		case DomainEventSortEventType:
+			cmp = compareStrings(a.EventType, b.EventType)
+		case DomainEventSortAggregateType:
+			cmp = compareStrings(a.AggregateType, b.AggregateType)
+		case DomainEventSortAggregateID:
+			cmp = compareStrings(a.AggregateID, b.AggregateID)
+		default:
+			cmp = compareTimes(a.OccurredAt, b.OccurredAt)
+		}
+		if cmp != 0 {
+			return applyDirection(cmp, sort.Direction)
+		}
+		return compareDomainEventFallback(a, b)
+	})
+}
+
+func compareDomainEventFallback(a, b domain.DomainEvent) int {
+	if cmp := b.OccurredAt.Compare(a.OccurredAt); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(b.EventID, a.EventID)
+}
+
+func domainAgentStrings(agents []domain.AgentType) []string {
+	out := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, string(agent))
+	}
+	return out
 }
 
 func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domain.Task, error) {
@@ -356,6 +628,10 @@ func (s *Service) Tasks(ctx context.Context) ([]*domain.Task, error) {
 }
 
 func (s *Service) TasksFiltered(ctx context.Context, filter TaskFilter, page PageInput) ([]*domain.Task, int, error) {
+	return s.TasksFilteredSorted(ctx, filter, TaskSort{}, page)
+}
+
+func (s *Service) TasksFilteredSorted(ctx context.Context, filter TaskFilter, sort TaskSort, page PageInput) ([]*domain.Task, int, error) {
 	tasks, err := s.store.Tasks(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -377,8 +653,25 @@ func (s *Service) TasksFiltered(ctx context.Context, filter TaskFilter, page Pag
 		if !filter.IncludeArchived && task.Status == domain.TaskArchived {
 			continue
 		}
+		if !matchesSearch(
+			filter.Search,
+			task.ID,
+			task.Title,
+			task.Description,
+			string(task.Status),
+			task.ProjectID,
+			task.WorkerID,
+			string(task.AgentType),
+			task.BaseBranch,
+			task.WorktreePath,
+			task.AgentSessionID,
+			task.Result,
+		) {
+			continue
+		}
 		filtered = append(filtered, task)
 	}
+	sortTasks(filtered, sort)
 	pageItems, total := paginateItems(filtered, page)
 	return pageItems, total, nil
 }
@@ -547,6 +840,7 @@ type WorkerFilter struct {
 	ProjectID       string
 	AgentType       domain.AgentType
 	IncludeDisabled bool
+	Search          string
 }
 
 func (s *Service) Worker(ctx context.Context, id string) (*domain.Worker, error) {
@@ -554,20 +848,27 @@ func (s *Service) Worker(ctx context.Context, id string) (*domain.Worker, error)
 }
 
 func (s *Service) WorkersFiltered(ctx context.Context, filter WorkerFilter) ([]*domain.Worker, error) {
-	return s.filteredWorkers(ctx, filter)
+	return s.WorkersFilteredSorted(ctx, filter, WorkerSort{})
 }
 
 func (s *Service) WorkersFilteredPage(ctx context.Context, filter WorkerFilter, page PageInput) ([]*domain.Worker, int, error) {
+	return s.WorkersFilteredPageSorted(ctx, filter, WorkerSort{}, page)
+}
+
+func (s *Service) WorkersFilteredSorted(ctx context.Context, filter WorkerFilter, sort WorkerSort) ([]*domain.Worker, error) {
 	workers, err := s.filteredWorkers(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	sortWorkers(workers, sort)
+	return workers, nil
+}
+
+func (s *Service) WorkersFilteredPageSorted(ctx context.Context, filter WorkerFilter, sort WorkerSort, page PageInput) ([]*domain.Worker, int, error) {
+	workers, err := s.WorkersFilteredSorted(ctx, filter, sort)
 	if err != nil {
 		return nil, 0, err
 	}
-	slices.SortFunc(workers, func(a, b *domain.Worker) int {
-		if cmp := b.CreatedAt.Compare(a.CreatedAt); cmp != 0 {
-			return cmp
-		}
-		return strings.Compare(b.ID, a.ID)
-	})
 	pageItems, total := paginateItems(workers, page)
 	return pageItems, total, nil
 }
@@ -589,6 +890,20 @@ func (s *Service) filteredWorkers(ctx context.Context, filter WorkerFilter) ([]*
 			continue
 		}
 		if filter.ProjectID != "" && !workerAllowsProject(worker, filter.ProjectID) {
+			continue
+		}
+		workerFields := []string{
+			worker.ID,
+			worker.Name,
+			string(worker.Status),
+			worker.WorkDir,
+			worker.StartupCommand,
+			string(worker.ProjectBindingMode),
+		}
+		workerFields = append(workerFields, domainAgentStrings(worker.SupportedAgents)...)
+		workerFields = append(workerFields, worker.BoundProjectIDs...)
+		workerFields = append(workerFields, worker.CurrentTaskIDs...)
+		if !matchesSearch(filter.Search, workerFields...) {
 			continue
 		}
 		out = append(out, worker)

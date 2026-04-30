@@ -39,6 +39,30 @@ class PageRequest {
       };
 }
 
+class SortRequest {
+  const SortRequest({required this.field, this.direction = descending});
+
+  static const ascending = 'ASC';
+  static const descending = 'DESC';
+
+  final String field;
+  final String direction;
+
+  SortRequest copyWith({String? field, String? direction}) => SortRequest(
+        field: field ?? this.field,
+        direction: direction ?? this.direction,
+      );
+
+  SortRequest toggledDirection() => copyWith(
+        direction: direction == ascending ? descending : ascending,
+      );
+
+  Map<String, dynamic> toGraphQLInput() => {
+        'field': field,
+        'direction': direction,
+      };
+}
+
 class PagedResult<T> {
   const PagedResult({required this.items, required this.totalCount});
 
@@ -509,6 +533,8 @@ class ProjectItem {
     required this.defaultBranch,
     required this.worktreeNamePrefix,
     required this.archived,
+    this.createdAt = '',
+    this.updatedAt = '',
   });
 
   factory ProjectItem.fromJson(Map<String, dynamic> json) => ProjectItem(
@@ -518,6 +544,8 @@ class ProjectItem {
         defaultBranch: json['defaultBranch'] as String? ?? 'main',
         worktreeNamePrefix: json['worktreeNamePrefix'] as String? ?? '',
         archived: json['archived'] as bool? ?? false,
+        createdAt: json['createdAt'] as String? ?? '',
+        updatedAt: json['updatedAt'] as String? ?? '',
       );
 
   final String id;
@@ -526,6 +554,8 @@ class ProjectItem {
   final String defaultBranch;
   final String worktreeNamePrefix;
   final bool archived;
+  final String createdAt;
+  final String updatedAt;
 }
 
 class WorkerItem {
@@ -541,6 +571,8 @@ class WorkerItem {
     required this.currentTaskIds,
     this.agentRuntimeEnv = const [],
     this.lastHeartbeatAt,
+    this.createdAt = '',
+    this.updatedAt = '',
   });
 
   factory WorkerItem.fromJson(Map<String, dynamic> json) => WorkerItem(
@@ -561,6 +593,8 @@ class WorkerItem {
             )
             .toList(),
         lastHeartbeatAt: json['lastHeartbeatAt'] as String?,
+        createdAt: json['createdAt'] as String? ?? '',
+        updatedAt: json['updatedAt'] as String? ?? '',
       );
 
   final String id;
@@ -574,6 +608,8 @@ class WorkerItem {
   final List<String> currentTaskIds;
   final List<WorkerAgentRuntimeEnvItem> agentRuntimeEnv;
   final String? lastHeartbeatAt;
+  final String createdAt;
+  final String updatedAt;
 
   WorkerItem copyWith({
     String? id,
@@ -587,6 +623,8 @@ class WorkerItem {
     List<String>? currentTaskIds,
     List<WorkerAgentRuntimeEnvItem>? agentRuntimeEnv,
     String? lastHeartbeatAt,
+    String? createdAt,
+    String? updatedAt,
   }) =>
       WorkerItem(
         id: id ?? this.id,
@@ -600,6 +638,8 @@ class WorkerItem {
         currentTaskIds: currentTaskIds ?? this.currentTaskIds,
         agentRuntimeEnv: agentRuntimeEnv ?? this.agentRuntimeEnv,
         lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
       );
 }
 

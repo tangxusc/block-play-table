@@ -166,6 +166,8 @@ void main() {
       (index) => _taskWith(
         id: 'overflow-task-$index',
         title: 'Overflow task $index',
+        createdAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+        updatedAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
       ),
     );
     final apiClient = FakeApiClient(tasks: overflowTasks);
@@ -175,14 +177,14 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byType(Scrollbar), findsWidgets);
-    expect(find.text('Overflow task 0'), findsOneWidget);
-    expect(find.text('Overflow task 17'), findsNothing);
+    expect(find.text('Overflow task 17'), findsOneWidget);
+    expect(find.text('Overflow task 0'), findsNothing);
 
-    await tester.drag(find.text('Overflow task 0'), const Offset(0, -2400));
+    await tester.drag(find.text('Overflow task 17'), const Offset(0, -2400));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Overflow task 17'), findsOneWidget);
+    expect(find.text('Overflow task 0'), findsOneWidget);
   });
 
   testWidgets('calendar month view renders ranged task bars', (tester) async {
@@ -270,7 +272,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-      find.byKey(const ValueKey('calendar-search-field')),
+      find.byKey(const ValueKey('board-search-field')),
       'Backend',
     );
     await tester.pumpAndSettle();
@@ -280,7 +282,7 @@ void main() {
     expect(find.text('Refresh board'), findsNothing);
 
     await tester.enterText(
-      find.byKey(const ValueKey('calendar-search-field')),
+      find.byKey(const ValueKey('board-search-field')),
       '',
     );
     await tester.pumpAndSettle();
@@ -313,7 +315,12 @@ void main() {
     _setSurfaceSize(tester, surfaceSize);
     final tasks = List.generate(
       21,
-      (index) => _taskWith(id: 'task-$index', title: 'Paged task $index'),
+      (index) => _taskWith(
+        id: 'task-$index',
+        title: 'Paged task $index',
+        createdAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+        updatedAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+      ),
     );
     final apiClient = FakeApiClient(tasks: tasks);
 
@@ -321,21 +328,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Showing 1-20 of 21'), findsOneWidget);
-    expect(find.text('Paged task 0'), findsOneWidget);
-    expect(find.text('Paged task 20'), findsNothing);
+    expect(find.text('Paged task 20'), findsOneWidget);
+    expect(find.text('Paged task 0'), findsNothing);
 
     await tester.tap(find.byTooltip('Next page'));
     await tester.pumpAndSettle();
 
     expect(find.text('Showing 21-21 of 21'), findsOneWidget);
-    expect(find.text('Paged task 20'), findsOneWidget);
+    expect(find.text('Paged task 0'), findsOneWidget);
 
     await tester.tap(find.text('List'));
     await tester.pumpAndSettle();
 
     expect(find.text('Showing 1-20 of 21'), findsOneWidget);
-    expect(find.text('Paged task 0'), findsOneWidget);
-    expect(find.text('Paged task 20'), findsNothing);
+    expect(find.text('Paged task 20'), findsOneWidget);
+    expect(find.text('Paged task 0'), findsNothing);
   });
 
   testWidgets('projects workers and events paginate with shared controls', (
@@ -352,6 +359,8 @@ void main() {
         defaultBranch: 'main',
         worktreeNamePrefix: 'project-$index',
         archived: false,
+        createdAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+        updatedAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
       ),
     );
     final workers = List.generate(
@@ -359,6 +368,8 @@ void main() {
       (index) => _defaultWorker.copyWith(
         id: 'worker-$index',
         name: 'Paged worker $index',
+        createdAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+        updatedAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
       ),
     );
     final events = List.generate(
@@ -385,32 +396,167 @@ void main() {
     await tester.tap(find.text('Projects').first);
     await tester.pumpAndSettle();
     expect(find.text('Showing 1-20 of 21'), findsOneWidget);
-    expect(find.text('Paged project 0'), findsOneWidget);
-    expect(find.text('Paged project 20'), findsNothing);
+    expect(find.text('Paged project 20'), findsOneWidget);
+    expect(find.text('Paged project 0'), findsNothing);
     await tester.tap(find.byTooltip('Next page'));
     await tester.pumpAndSettle();
     expect(find.text('Showing 21-21 of 21'), findsOneWidget);
-    expect(find.text('Paged project 20'), findsOneWidget);
+    expect(find.text('Paged project 0'), findsOneWidget);
 
     await tester.tap(find.text('Workers').first);
     await tester.pumpAndSettle();
     expect(find.text('Showing 1-20 of 21'), findsOneWidget);
-    expect(find.text('Paged worker 0'), findsOneWidget);
-    expect(find.text('Paged worker 20'), findsNothing);
+    expect(find.text('Paged worker 20'), findsOneWidget);
+    expect(find.text('Paged worker 0'), findsNothing);
     await tester.tap(find.byTooltip('Next page'));
     await tester.pumpAndSettle();
     expect(find.text('Showing 21-21 of 21'), findsOneWidget);
-    expect(find.text('Paged worker 20'), findsOneWidget);
+    expect(find.text('Paged worker 0'), findsOneWidget);
 
     await tester.tap(find.text('Events').first);
     await tester.pumpAndSettle();
     expect(find.text('Showing 1-20 of 21'), findsOneWidget);
-    expect(find.text('PagedEvent0'), findsOneWidget);
-    expect(find.text('PagedEvent20'), findsNothing);
+    expect(find.text('PagedEvent20'), findsOneWidget);
+    expect(find.text('PagedEvent0'), findsNothing);
     await tester.tap(find.byTooltip('Next page'));
     await tester.pumpAndSettle();
     expect(find.text('Showing 21-21 of 21'), findsOneWidget);
-    expect(find.text('PagedEvent20'), findsOneWidget);
+    expect(find.text('PagedEvent0'), findsOneWidget);
+  });
+
+  testWidgets('resource pages search before pagination', (tester) async {
+    const surfaceSize = Size(1200, 900);
+    _setSurfaceSize(tester, surfaceSize);
+    final tasks = List.generate(
+      21,
+      (index) => _taskWith(
+        id: 'task-search-$index',
+        title: index == 20 ? 'Needle task' : 'Hay task $index',
+      ),
+    );
+    final projects = List.generate(
+      21,
+      (index) => ProjectItem(
+        id: 'project-search-$index',
+        name: index == 20 ? 'Needle project' : 'Hay project $index',
+        gitUrl: 'git://project-$index',
+        defaultBranch: 'main',
+        worktreeNamePrefix: 'project-$index',
+        archived: false,
+      ),
+    );
+    final workers = List.generate(
+      21,
+      (index) => _defaultWorker.copyWith(
+        id: 'worker-search-$index',
+        name: index == 20 ? 'Needle worker' : 'Hay worker $index',
+      ),
+    );
+    final events = List.generate(
+      21,
+      (index) => DomainEventItem(
+        eventId: 'event-search-$index',
+        eventType: index == 20 ? 'NeedleEvent' : 'HayEvent$index',
+        aggregateType: 'Task',
+        aggregateId: 'task-$index',
+        aggregateVersion: 1,
+        payload: '{}',
+        occurredAt: '2026-04-25T00:${index.toString().padLeft(2, '0')}:00Z',
+      ),
+    );
+    final apiClient = FakeApiClient(
+      tasks: tasks,
+      projects: projects,
+      workers: workers,
+      events: events,
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byKey(const ValueKey('board-search-field')), 'Needle');
+    await tester.pumpAndSettle();
+    expect(find.text('Needle task'), findsOneWidget);
+    expect(find.text('Hay task 0'), findsNothing);
+
+    await tester.tap(find.text('Projects').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('projects-search-field')),
+      'Needle',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Needle project'), findsOneWidget);
+    expect(find.text('Hay project 0'), findsNothing);
+
+    await tester.tap(find.text('Workers').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('workers-search-field')),
+      'Needle',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Needle worker'), findsOneWidget);
+    expect(find.text('Hay worker 0'), findsNothing);
+
+    await tester.tap(find.text('Events').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('events-search-field')), 'Needle');
+    await tester.pumpAndSettle();
+    expect(find.text('NeedleEvent'), findsOneWidget);
+    expect(find.text('HayEvent0'), findsNothing);
+  });
+
+  testWidgets('projects page switches sort field and direction', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 700);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient(
+      projects: const [
+        ProjectItem(
+          id: 'project-alpha',
+          name: 'Alpha Project',
+          gitUrl: 'git://alpha',
+          defaultBranch: 'main',
+          worktreeNamePrefix: 'alpha',
+          archived: false,
+        ),
+        ProjectItem(
+          id: 'project-zulu',
+          name: 'Zulu Project',
+          gitUrl: 'git://zulu',
+          defaultBranch: 'main',
+          worktreeNamePrefix: 'zulu',
+          archived: false,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Projects').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('projects-sort-field')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Name').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Zulu Project')).dy,
+      lessThan(tester.getTopLeft(find.text('Alpha Project')).dy),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('projects-sort-direction')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Alpha Project')).dy,
+      lessThan(tester.getTopLeft(find.text('Zulu Project')).dy),
+    );
   });
 
   testWidgets('create task can save without worker or agent', (tester) async {
@@ -420,7 +566,15 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'New task'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, 'Agentless task');
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          )
+          .first,
+      'Agentless task',
+    );
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
@@ -441,7 +595,15 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'New task'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, 'Worker task');
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          )
+          .first,
+      'Worker task',
+    );
     await tester.pump();
     await tester.tap(find.text('Unassigned').last);
     await tester.pumpAndSettle();
@@ -883,14 +1045,17 @@ class FakeApiClient extends ApiClient {
   Future<BoardData> fetchBoardData(
     String view, {
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async {
     boardFetches++;
-    final pageTasks = page.slice(_tasks);
+    final tasks = _sortTasks(_filterTasks(_tasks, search), sort);
+    final pageTasks = page.slice(tasks);
     return BoardData(
       id: 'default',
       name: 'Default Board',
       type: view,
-      totalCount: _tasks.length,
+      totalCount: tasks.length,
       tasks: pageTasks,
       columns: [
         BoardColumnData(
@@ -921,8 +1086,14 @@ class FakeApiClient extends ApiClient {
   @override
   Future<PagedResult<ProjectItem>> fetchProjectsPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async =>
-      PagedResult(items: page.slice(_projects), totalCount: _projects.length);
+      PagedResult(
+        items:
+            page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
+        totalCount: _filterProjects(_projects, search).length,
+      );
 
   @override
   Future<List<WorkerItem>> fetchWorkers() async => _workers;
@@ -930,8 +1101,13 @@ class FakeApiClient extends ApiClient {
   @override
   Future<PagedResult<WorkerItem>> fetchWorkersPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async =>
-      PagedResult(items: page.slice(_workers), totalCount: _workers.length);
+      PagedResult(
+        items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
+        totalCount: _filterWorkers(_workers, search).length,
+      );
 
   @override
   Future<List<DomainEventItem>> fetchEvents() async => _domainEvents;
@@ -939,10 +1115,14 @@ class FakeApiClient extends ApiClient {
   @override
   Future<PagedResult<DomainEventItem>> fetchEventsPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'OCCURRED_AT'),
   }) async =>
       PagedResult(
-        items: page.slice(_domainEvents),
-        totalCount: _domainEvents.length,
+        items: page.slice(
+          _sortEvents(_filterEvents(_domainEvents, search), sort),
+        ),
+        totalCount: _filterEvents(_domainEvents, search).length,
       );
 
   @override
@@ -1046,6 +1226,185 @@ class FakeApiClient extends ApiClient {
   }
 }
 
+List<TaskItem> _filterTasks(List<TaskItem> tasks, String search) {
+  final query = search.trim().toLowerCase();
+  if (query.isEmpty) {
+    return List<TaskItem>.from(tasks);
+  }
+  return tasks
+      .where(
+        (task) => _containsQuery(query, [
+          task.id ?? '',
+          task.title,
+          task.description,
+          task.status,
+          task.projectId,
+          task.workerId ?? '',
+          task.agentType,
+          task.baseBranch,
+          task.worktreePath ?? '',
+          task.agentSessionId ?? '',
+          task.result ?? '',
+        ]),
+      )
+      .toList();
+}
+
+List<ProjectItem> _filterProjects(List<ProjectItem> projects, String search) {
+  final query = search.trim().toLowerCase();
+  if (query.isEmpty) {
+    return List<ProjectItem>.from(projects);
+  }
+  return projects
+      .where(
+        (project) => _containsQuery(query, [
+          project.id,
+          project.name,
+          project.gitUrl,
+          project.defaultBranch,
+          project.worktreeNamePrefix,
+        ]),
+      )
+      .toList();
+}
+
+List<WorkerItem> _filterWorkers(List<WorkerItem> workers, String search) {
+  final query = search.trim().toLowerCase();
+  if (query.isEmpty) {
+    return List<WorkerItem>.from(workers);
+  }
+  return workers
+      .where(
+        (worker) => _containsQuery(query, [
+          worker.id,
+          worker.name,
+          worker.status,
+          ...worker.supportedAgents,
+          worker.workDir,
+          worker.startupCommand,
+          worker.projectBindingMode,
+          ...worker.boundProjectIds,
+          ...worker.currentTaskIds,
+        ]),
+      )
+      .toList();
+}
+
+List<DomainEventItem> _filterEvents(
+  List<DomainEventItem> events,
+  String search,
+) {
+  final query = search.trim().toLowerCase();
+  if (query.isEmpty) {
+    return List<DomainEventItem>.from(events);
+  }
+  return events
+      .where(
+        (event) => _containsQuery(query, [
+          event.eventId,
+          event.eventType,
+          event.aggregateType,
+          event.aggregateId,
+          event.payload,
+        ]),
+      )
+      .toList();
+}
+
+bool _containsQuery(String query, List<String> fields) =>
+    fields.any((field) => field.toLowerCase().contains(query));
+
+List<TaskItem> _sortTasks(List<TaskItem> tasks, SortRequest sort) {
+  final out = List<TaskItem>.from(tasks);
+  out.sort((a, b) {
+    final cmp = switch (sort.field) {
+      'UPDATED_AT' => a.updatedAt.compareTo(b.updatedAt),
+      'TITLE' => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      'STATUS' => a.status.compareTo(b.status),
+      'START_DATE' => a.startDate.compareTo(b.startDate),
+      'END_DATE' => a.endDate.compareTo(b.endDate),
+      _ => a.createdAt.compareTo(b.createdAt),
+    };
+    if (cmp != 0) {
+      return _directed(cmp, sort.direction);
+    }
+    return _fallback(a.createdAt, b.createdAt, a.id ?? '', b.id ?? '');
+  });
+  return out;
+}
+
+List<ProjectItem> _sortProjects(List<ProjectItem> projects, SortRequest sort) {
+  final out = List<ProjectItem>.from(projects);
+  out.sort((a, b) {
+    final cmp = switch (sort.field) {
+      'UPDATED_AT' => a.updatedAt.compareTo(b.updatedAt),
+      'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      'GIT_URL' => a.gitUrl.toLowerCase().compareTo(b.gitUrl.toLowerCase()),
+      'DEFAULT_BRANCH' =>
+        a.defaultBranch.toLowerCase().compareTo(b.defaultBranch.toLowerCase()),
+      _ => a.createdAt.compareTo(b.createdAt),
+    };
+    if (cmp != 0) {
+      return _directed(cmp, sort.direction);
+    }
+    return _fallback(a.createdAt, b.createdAt, a.id, b.id);
+  });
+  return out;
+}
+
+List<WorkerItem> _sortWorkers(List<WorkerItem> workers, SortRequest sort) {
+  final out = List<WorkerItem>.from(workers);
+  out.sort((a, b) {
+    final cmp = switch (sort.field) {
+      'UPDATED_AT' => a.updatedAt.compareTo(b.updatedAt),
+      'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      'STATUS' => a.status.compareTo(b.status),
+      'LAST_HEARTBEAT_AT' =>
+        (a.lastHeartbeatAt ?? '').compareTo(b.lastHeartbeatAt ?? ''),
+      _ => a.createdAt.compareTo(b.createdAt),
+    };
+    if (cmp != 0) {
+      return _directed(cmp, sort.direction);
+    }
+    return _fallback(a.createdAt, b.createdAt, a.id, b.id);
+  });
+  return out;
+}
+
+List<DomainEventItem> _sortEvents(
+  List<DomainEventItem> events,
+  SortRequest sort,
+) {
+  final out = List<DomainEventItem>.from(events);
+  out.sort((a, b) {
+    final cmp = switch (sort.field) {
+      'EVENT_TYPE' =>
+        a.eventType.toLowerCase().compareTo(b.eventType.toLowerCase()),
+      'AGGREGATE_TYPE' =>
+        a.aggregateType.toLowerCase().compareTo(b.aggregateType.toLowerCase()),
+      'AGGREGATE_ID' =>
+        a.aggregateId.toLowerCase().compareTo(b.aggregateId.toLowerCase()),
+      _ => a.occurredAt.compareTo(b.occurredAt),
+    };
+    if (cmp != 0) {
+      return _directed(cmp, sort.direction);
+    }
+    return _fallback(a.occurredAt, b.occurredAt, a.eventId, b.eventId);
+  });
+  return out;
+}
+
+int _directed(int cmp, String direction) =>
+    direction == SortRequest.ascending ? cmp : -cmp;
+
+int _fallback(String aCreated, String bCreated, String aId, String bId) {
+  final created = bCreated.compareTo(aCreated);
+  if (created != 0) {
+    return created;
+  }
+  return bId.compareTo(aId);
+}
+
 class RecordingApiClient extends ApiClient {
   RecordingApiClient() : super('http://manager/graphql');
 
@@ -1106,6 +1465,8 @@ TaskItem _taskWith({
   String? status,
   String? startDate,
   String? endDate,
+  String? createdAt,
+  String? updatedAt,
 }) =>
     TaskItem(
       id: id,
@@ -1120,8 +1481,8 @@ TaskItem _taskWith({
       postCommands: _task.postCommands,
       startDate: startDate ?? _task.startDate,
       endDate: endDate ?? _task.endDate,
-      createdAt: _task.createdAt,
-      updatedAt: _task.updatedAt,
+      createdAt: createdAt ?? _task.createdAt,
+      updatedAt: updatedAt ?? _task.updatedAt,
       workerId: _task.workerId,
       worktreePath: _task.worktreePath,
       agentSessionId: _task.agentSessionId,

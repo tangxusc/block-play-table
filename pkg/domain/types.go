@@ -60,6 +60,7 @@ type EventFilter struct {
 	AggregateID   string `json:"aggregateId"`
 	AggregateType string `json:"aggregateType"`
 	EventType     string `json:"eventType"`
+	Search        string `json:"search"`
 }
 
 func newEvent(eventType, aggregateType, aggregateID string, version int, payload any, occurredAt time.Time) DomainEvent {

@@ -475,6 +475,98 @@ func TestServicePaginatesProjectsWorkersAndEventsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestServiceSearchesSortsAndPaginatesResources(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		current := now
+		now = now.Add(time.Minute)
+		return current
+	}))
+
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "Search Base", GitURL: "git://search-base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []CreateTaskInput{
+		{Title: "Alpha target", Description: "first target", ProjectID: project.ID, AgentType: domain.AgentCodex},
+		{Title: "Beta target", Description: "second target", ProjectID: project.ID, AgentType: domain.AgentCodex},
+		{Title: "Gamma target", Description: "third target", ProjectID: project.ID, AgentType: domain.AgentCodex},
+	} {
+		if _, err := service.CreateTask(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks, taskTotal, err := service.TasksFilteredSorted(ctx, TaskFilter{Search: "target", IncludeArchived: true}, TaskSort{Field: TaskSortTitle, Direction: SortDirectionAsc}, PageInput{Offset: 1, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskTotal != 3 || len(tasks) != 1 || tasks[0].Title != "Beta target" {
+		t.Fatalf("searched task page = len %d total %d tasks %+v", len(tasks), taskTotal, tasks)
+	}
+
+	alphaProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Alpha Search Project", GitURL: "git://alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gammaProject, err := service.CreateProject(ctx, CreateProjectInput{Name: "Gamma Search Project", GitURL: "git://gamma"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, projectTotal, err := service.ProjectsFilteredPageSorted(ctx, ProjectFilter{IncludeArchived: true, Search: "search project"}, ProjectSort{Field: ProjectSortName, Direction: SortDirectionDesc}, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectTotal != 2 || len(projects) != 1 || projects[0].ID != gammaProject.ID {
+		t.Fatalf("searched project page = len %d total %d projects %+v", len(projects), projectTotal, projects)
+	}
+	_ = alphaProject
+
+	if _, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-alpha-search", Name: "Alpha Runner", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/alpha-runner"}); err != nil {
+		t.Fatal(err)
+	}
+	gammaWorker, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-gamma-search", Name: "Gamma Runner", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/gamma-runner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers, workerTotal, err := service.WorkersFilteredPageSorted(ctx, WorkerFilter{IncludeDisabled: true, Search: "runner"}, WorkerSort{Field: WorkerSortName, Direction: SortDirectionDesc}, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workerTotal != 2 || len(workers) != 1 || workers[0].ID != gammaWorker.ID {
+		t.Fatalf("searched worker page = len %d total %d workers %+v", len(workers), workerTotal, workers)
+	}
+
+	firstEvent := domain.DomainEvent{
+		EventID:          "evt-search-first",
+		EventType:        "AlphaEvent",
+		AggregateType:    "Task",
+		AggregateID:      "task-alpha",
+		AggregateVersion: 1,
+		Payload:          []byte(`{"message":"search payload first"}`),
+		OccurredAt:       now,
+	}
+	secondEvent := domain.DomainEvent{
+		EventID:          "evt-search-second",
+		EventType:        "GammaEvent",
+		AggregateType:    "Task",
+		AggregateID:      "task-gamma",
+		AggregateVersion: 1,
+		Payload:          []byte(`{"message":"search payload second"}`),
+		OccurredAt:       now.Add(time.Minute),
+	}
+	if err := service.appendEvents(ctx, []domain.DomainEvent{firstEvent, secondEvent}); err != nil {
+		t.Fatal(err)
+	}
+	events, eventTotal, err := service.DomainEventsPageSorted(ctx, domain.EventFilter{Search: "search payload"}, DomainEventSort{Field: DomainEventSortEventType, Direction: SortDirectionDesc}, PageInput{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventTotal != 2 || len(events) != 1 || events[0].EventID != secondEvent.EventID {
+		t.Fatalf("searched event page = len %d total %d events %+v", len(events), eventTotal, events)
+	}
+}
+
 func TestServiceSchedulingHelpers(t *testing.T) {
 	worker := &domain.Worker{
 		ID:                 "worker-helper",

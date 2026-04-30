@@ -16,6 +16,8 @@ class EventsPage extends StatefulWidget {
 
 class _EventsPageState extends State<EventsPage> {
   PageRequest _page = const PageRequest();
+  final TextEditingController _searchController = TextEditingController();
+  SortRequest _sort = const SortRequest(field: 'OCCURRED_AT');
   late Future<PagedResult<DomainEventItem>> _future;
   PagedResult<DomainEventItem>? _lastPage;
   RealtimeRefreshController? _realtime;
@@ -30,6 +32,12 @@ class _EventsPageState extends State<EventsPage> {
       shouldReload: (_) => true,
       onEvent: (event) {
         if (!mounted) {
+          return;
+        }
+        if (_page.offset != 0 ||
+            _searchController.text.trim().isNotEmpty ||
+            _sort.field != 'OCCURRED_AT' ||
+            _sort.direction != SortRequest.descending) {
           return;
         }
         setState(() {
@@ -51,16 +59,25 @@ class _EventsPageState extends State<EventsPage> {
   @override
   void dispose() {
     _realtime?.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<PagedResult<DomainEventItem>> _load() async {
-    var page = await widget.apiClient.fetchEventsPage(page: _page);
+    var page = await widget.apiClient.fetchEventsPage(
+      page: _page,
+      search: _searchController.text,
+      sort: _sort,
+    );
     if (page.items.isEmpty && page.totalCount > 0 && _page.offset > 0) {
       final corrected = _page.withOffset(_page.lastOffset(page.totalCount));
       if (corrected.offset != _page.offset) {
         _page = corrected;
-        page = await widget.apiClient.fetchEventsPage(page: _page);
+        page = await widget.apiClient.fetchEventsPage(
+          page: _page,
+          search: _searchController.text,
+          sort: _sort,
+        );
       }
     }
     _lastPage = page;
@@ -86,6 +103,21 @@ class _EventsPageState extends State<EventsPage> {
     });
   }
 
+  void _setSearch(String value) {
+    setState(() {
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
+  void _setSort(SortRequest sort) {
+    setState(() {
+      _sort = sort;
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
@@ -98,80 +130,100 @@ class _EventsPageState extends State<EventsPage> {
           icon: const Icon(Icons.refresh),
         ),
       ],
-      child: FutureBuilder<PagedResult<DomainEventItem>>(
-        future: _future,
-        builder: (context, snapshot) {
-          final page = snapshot.data ?? _lastPage;
-          if (snapshot.connectionState != ConnectionState.done &&
-              page == null) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError && page == null) {
-            return ErrorView(
-              message: snapshot.error.toString(),
-              onRetry: _reload,
-            );
-          }
-          final items = page?.items ?? const <DomainEventItem>[];
-          if (items.isEmpty) {
-            return const EmptyState(
-              icon: Icons.event_note_outlined,
-              title: 'No domain events',
-              message:
-                  'Events will appear here as tasks, workers, and projects change.',
-            );
-          }
-          return Stack(
-            children: [
-              Column(
-                children: [
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemBuilder: (context, index) {
-                        final event = items[index];
-                        return Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.event_note_outlined),
-                            title: Text(event.eventType),
-                            subtitle: Text(
-                              '${event.aggregateType} ${event.aggregateId}\n${event.payload}',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: SizedBox(
-                              width: 190,
-                              child: Text(
-                                event.occurredAt,
-                                textAlign: TextAlign.end,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 8),
-                      itemCount: items.length,
-                    ),
-                  ),
-                  PaginationBar(
-                    page: _page,
-                    totalCount: page?.totalCount ?? 0,
-                    onPageChanged: _goToPage,
-                  ),
-                ],
-              ),
-              if (snapshot.connectionState != ConnectionState.done)
-                const Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  child: LinearProgressIndicator(minHeight: 2),
-                ),
+      child: Column(
+        children: [
+          SearchSortToolbar(
+            keyPrefix: 'events',
+            searchController: _searchController,
+            sort: _sort,
+            sortOptions: const [
+              SortOption(field: 'OCCURRED_AT', label: 'Created'),
+              SortOption(field: 'EVENT_TYPE', label: 'Event type'),
+              SortOption(field: 'AGGREGATE_TYPE', label: 'Aggregate type'),
+              SortOption(field: 'AGGREGATE_ID', label: 'Aggregate ID'),
             ],
-          );
-        },
+            onSearchChanged: _setSearch,
+            onSortChanged: _setSort,
+          ),
+          Expanded(
+            child: FutureBuilder<PagedResult<DomainEventItem>>(
+              future: _future,
+              builder: (context, snapshot) {
+                final page = snapshot.data ?? _lastPage;
+                if (snapshot.connectionState != ConnectionState.done &&
+                    page == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError && page == null) {
+                  return ErrorView(
+                    message: snapshot.error.toString(),
+                    onRetry: _reload,
+                  );
+                }
+                final items = page?.items ?? const <DomainEventItem>[];
+                if (items.isEmpty) {
+                  return const EmptyState(
+                    icon: Icons.event_note_outlined,
+                    title: 'No domain events',
+                    message:
+                        'Events will appear here as tasks, workers, and projects change.',
+                  );
+                }
+                return Stack(
+                  children: [
+                    Column(
+                      children: [
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemBuilder: (context, index) {
+                              final event = items[index];
+                              return Card(
+                                child: ListTile(
+                                  leading:
+                                      const Icon(Icons.event_note_outlined),
+                                  title: Text(event.eventType),
+                                  subtitle: Text(
+                                    '${event.aggregateType} ${event.aggregateId}\n${event.payload}',
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: SizedBox(
+                                    width: 190,
+                                    child: Text(
+                                      event.occurredAt,
+                                      textAlign: TextAlign.end,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 8),
+                            itemCount: items.length,
+                          ),
+                        ),
+                        PaginationBar(
+                          page: _page,
+                          totalCount: page?.totalCount ?? 0,
+                          onPageChanged: _goToPage,
+                        ),
+                      ],
+                    ),
+                    if (snapshot.connectionState != ConnectionState.done)
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

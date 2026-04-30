@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -302,9 +303,34 @@ func (s *MemoryStore) DomainEvents(ctx context.Context, filter domain.EventFilte
 		if filter.EventType != "" && event.EventType != filter.EventType {
 			continue
 		}
+		if !eventMatchesSearch(event, filter.Search) {
+			continue
+		}
 		out = append(out, event)
 	}
 	return out, nil
+}
+
+func eventMatchesSearch(event domain.DomainEvent, search string) bool {
+	query := strings.ToLower(strings.TrimSpace(search))
+	if query == "" {
+		return true
+	}
+	fields := []string{
+		event.EventID,
+		event.EventType,
+		event.AggregateType,
+		event.AggregateID,
+		string(event.Payload),
+		event.CorrelationID,
+		event.CausationID,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *MemoryStore) OutboxMessages(ctx context.Context, includePublished bool) ([]domain.OutboxMessage, error) {

@@ -218,6 +218,10 @@ func TestMemoryStoreListsDeletesAndFiltersEvents(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].AggregateID != "worker-1" {
 		t.Fatalf("filtered events = %+v, %v", events, err)
 	}
+	events, err = s.DomainEvents(ctx, domain.EventFilter{Search: "workerconnected"})
+	if err != nil || len(events) != 1 || events[0].EventType != "WorkerConnected" {
+		t.Fatalf("searched events = %+v, %v", events, err)
+	}
 	if err := s.MarkOutboxPublished(ctx, nil, now); err != nil {
 		t.Fatalf("MarkOutboxPublished(nil) returned error: %v", err)
 	}

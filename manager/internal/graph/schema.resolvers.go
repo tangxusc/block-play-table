@@ -305,8 +305,8 @@ func (r *queryResolver) Task(ctx context.Context, id string) (*model.Task, error
 }
 
 // Tasks is the resolver for the tasks field.
-func (r *queryResolver) Tasks(ctx context.Context, filter *model.TaskFilter, page *model.PageInput) (*model.TaskConnection, error) {
-	tasks, total, err := r.Service.TasksFiltered(ctx, taskFilter(filter), pageInput(page))
+func (r *queryResolver) Tasks(ctx context.Context, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) (*model.TaskConnection, error) {
+	tasks, total, err := r.Service.TasksFilteredSorted(ctx, taskFilter(filter), taskSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err
 	}
@@ -314,8 +314,8 @@ func (r *queryResolver) Tasks(ctx context.Context, filter *model.TaskFilter, pag
 }
 
 // TaskList is the resolver for the taskList field.
-func (r *queryResolver) TaskList(ctx context.Context, filter *model.TaskFilter, page *model.PageInput) ([]*model.Task, error) {
-	tasks, _, err := r.Service.TasksFiltered(ctx, taskFilter(filter), pageInput(page))
+func (r *queryResolver) TaskList(ctx context.Context, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) ([]*model.Task, error) {
+	tasks, _, err := r.Service.TasksFilteredSorted(ctx, taskFilter(filter), taskSort(sort), pageInput(page))
 	return toModelTasks(tasks), err
 }
 
@@ -329,14 +329,14 @@ func (r *queryResolver) Worker(ctx context.Context, id string) (*model.Worker, e
 }
 
 // Workers is the resolver for the workers field.
-func (r *queryResolver) Workers(ctx context.Context, filter *model.WorkerFilter) ([]*model.Worker, error) {
-	workers, err := r.Service.WorkersFiltered(ctx, workerFilter(filter))
+func (r *queryResolver) Workers(ctx context.Context, filter *model.WorkerFilter, sort *model.WorkerSortInput) ([]*model.Worker, error) {
+	workers, err := r.Service.WorkersFilteredSorted(ctx, workerFilter(filter), workerSort(sort))
 	return toModelWorkers(workers), err
 }
 
 // WorkersConnection is the resolver for the workersConnection field.
-func (r *queryResolver) WorkersConnection(ctx context.Context, filter *model.WorkerFilter, page *model.PageInput) (*model.WorkerConnection, error) {
-	workers, total, err := r.Service.WorkersFilteredPage(ctx, workerFilter(filter), pageInput(page))
+func (r *queryResolver) WorkersConnection(ctx context.Context, filter *model.WorkerFilter, sort *model.WorkerSortInput, page *model.PageInput) (*model.WorkerConnection, error) {
+	workers, total, err := r.Service.WorkersFilteredPageSorted(ctx, workerFilter(filter), workerSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err
 	}
@@ -353,22 +353,14 @@ func (r *queryResolver) Project(ctx context.Context, id string) (*model.Project,
 }
 
 // Projects is the resolver for the projects field.
-func (r *queryResolver) Projects(ctx context.Context, filter *model.ProjectFilter) ([]*model.Project, error) {
-	includeArchived := false
-	if filter != nil && filter.IncludeArchived != nil {
-		includeArchived = *filter.IncludeArchived
-	}
-	projects, err := r.Service.ProjectsFiltered(ctx, includeArchived)
+func (r *queryResolver) Projects(ctx context.Context, filter *model.ProjectFilter, sort *model.ProjectSortInput) ([]*model.Project, error) {
+	projects, err := r.Service.ProjectsFilteredSorted(ctx, projectFilter(filter), projectSort(sort))
 	return toModelProjects(projects), err
 }
 
 // ProjectsConnection is the resolver for the projectsConnection field.
-func (r *queryResolver) ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, page *model.PageInput) (*model.ProjectConnection, error) {
-	includeArchived := false
-	if filter != nil && filter.IncludeArchived != nil {
-		includeArchived = *filter.IncludeArchived
-	}
-	projects, total, err := r.Service.ProjectsFilteredPage(ctx, includeArchived, pageInput(page))
+func (r *queryResolver) ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, sort *model.ProjectSortInput, page *model.PageInput) (*model.ProjectConnection, error) {
+	projects, total, err := r.Service.ProjectsFilteredPageSorted(ctx, projectFilter(filter), projectSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err
 	}
@@ -376,12 +368,13 @@ func (r *queryResolver) ProjectsConnection(ctx context.Context, filter *model.Pr
 }
 
 // Board is the resolver for the board field.
-func (r *queryResolver) Board(ctx context.Context, id *string, page *model.PageInput) (*model.Board, error) {
-	tasks, _, err := r.Service.TasksFiltered(ctx, app.TaskFilter{IncludeArchived: true}, app.PageInput{})
+func (r *queryResolver) Board(ctx context.Context, id *string, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) (*model.Board, error) {
+	boardFilter := taskFilter(filter)
+	boardFilter.IncludeArchived = true
+	tasks, total, err := r.Service.TasksFilteredSorted(ctx, boardFilter, taskSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err
 	}
-	tasks, total := taskPageNewestFirst(tasks, pageInput(page))
 	boardType := model.BoardTypeKanban
 	name := "Default Board"
 	boardID := "default"
@@ -418,7 +411,7 @@ func (r *queryResolver) TaskEvents(ctx context.Context, taskID string) ([]*model
 }
 
 // DomainEvents is the resolver for the domainEvents field.
-func (r *queryResolver) DomainEvents(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) ([]*model.DomainEvent, error) {
+func (r *queryResolver) DomainEvents(ctx context.Context, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string) ([]*model.DomainEvent, error) {
 	domainFilter := eventFilter(filter)
 	if aggregateID != nil {
 		domainFilter.AggregateID = *aggregateID
@@ -429,12 +422,12 @@ func (r *queryResolver) DomainEvents(ctx context.Context, filter *model.DomainEv
 	if eventType != nil {
 		domainFilter.EventType = *eventType
 	}
-	events, err := r.Service.DomainEvents(ctx, domainFilter)
+	events, err := r.Service.DomainEventsSorted(ctx, domainFilter, domainEventSort(sort))
 	return toModelEvents(events), err
 }
 
 // DomainEventsConnection is the resolver for the domainEventsConnection field.
-func (r *queryResolver) DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error) {
+func (r *queryResolver) DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error) {
 	domainFilter := eventFilter(filter)
 	if aggregateID != nil {
 		domainFilter.AggregateID = *aggregateID
@@ -445,7 +438,7 @@ func (r *queryResolver) DomainEventsConnection(ctx context.Context, filter *mode
 	if eventType != nil {
 		domainFilter.EventType = *eventType
 	}
-	events, total, err := r.Service.DomainEventsPage(ctx, domainFilter, pageInput(page))
+	events, total, err := r.Service.DomainEventsPageSorted(ctx, domainFilter, domainEventSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err
 	}

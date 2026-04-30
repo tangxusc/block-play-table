@@ -666,6 +666,23 @@ func taskFilter(filter *model.TaskFilter) app.TaskFilter {
 	if filter.IncludeArchived != nil {
 		out.IncludeArchived = *filter.IncludeArchived
 	}
+	if filter.Search != nil {
+		out.Search = *filter.Search
+	}
+	return out
+}
+
+func taskSort(sort *model.TaskSortInput) app.TaskSort {
+	if sort == nil {
+		return app.TaskSort{}
+	}
+	out := app.TaskSort{}
+	if sort.Field != nil {
+		out.Field = app.TaskSortField(*sort.Field)
+	}
+	if sort.Direction != nil {
+		out.Direction = app.SortDirection(*sort.Direction)
+	}
 	return out
 }
 
@@ -685,6 +702,51 @@ func workerFilter(filter *model.WorkerFilter) app.WorkerFilter {
 	}
 	if filter.IncludeDisabled != nil {
 		out.IncludeDisabled = *filter.IncludeDisabled
+	}
+	if filter.Search != nil {
+		out.Search = *filter.Search
+	}
+	return out
+}
+
+func workerSort(sort *model.WorkerSortInput) app.WorkerSort {
+	if sort == nil {
+		return app.WorkerSort{}
+	}
+	out := app.WorkerSort{}
+	if sort.Field != nil {
+		out.Field = app.WorkerSortField(*sort.Field)
+	}
+	if sort.Direction != nil {
+		out.Direction = app.SortDirection(*sort.Direction)
+	}
+	return out
+}
+
+func projectFilter(filter *model.ProjectFilter) app.ProjectFilter {
+	if filter == nil {
+		return app.ProjectFilter{}
+	}
+	out := app.ProjectFilter{}
+	if filter.IncludeArchived != nil {
+		out.IncludeArchived = *filter.IncludeArchived
+	}
+	if filter.Search != nil {
+		out.Search = *filter.Search
+	}
+	return out
+}
+
+func projectSort(sort *model.ProjectSortInput) app.ProjectSort {
+	if sort == nil {
+		return app.ProjectSort{}
+	}
+	out := app.ProjectSort{}
+	if sort.Field != nil {
+		out.Field = app.ProjectSortField(*sort.Field)
+	}
+	if sort.Direction != nil {
+		out.Direction = app.SortDirection(*sort.Direction)
 	}
 	return out
 }
@@ -716,6 +778,23 @@ func eventFilter(filter *model.DomainEventFilter) domain.EventFilter {
 	}
 	if filter.EventType != nil {
 		out.EventType = *filter.EventType
+	}
+	if filter.Search != nil {
+		out.Search = *filter.Search
+	}
+	return out
+}
+
+func domainEventSort(sort *model.DomainEventSortInput) app.DomainEventSort {
+	if sort == nil {
+		return app.DomainEventSort{}
+	}
+	out := app.DomainEventSort{}
+	if sort.Field != nil {
+		out.Field = app.DomainEventSortField(*sort.Field)
+	}
+	if sort.Direction != nil {
+		out.Direction = app.SortDirection(*sort.Direction)
 	}
 	return out
 }

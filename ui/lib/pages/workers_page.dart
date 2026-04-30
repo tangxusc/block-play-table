@@ -16,6 +16,8 @@ class WorkersPage extends StatefulWidget {
 
 class _WorkersPageState extends State<WorkersPage> {
   PageRequest _page = const PageRequest();
+  final TextEditingController _searchController = TextEditingController();
+  SortRequest _sort = const SortRequest(field: 'CREATED_AT');
   late Future<_WorkersData> _future;
   _WorkersData? _lastData;
   RealtimeRefreshController? _realtime;
@@ -35,22 +37,32 @@ class _WorkersPageState extends State<WorkersPage> {
   @override
   void dispose() {
     _realtime?.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<_WorkersData> _load() async {
     final results = await Future.wait([
-      widget.apiClient.fetchWorkersPage(page: _page),
+      widget.apiClient.fetchWorkersPage(
+        page: _page,
+        search: _searchController.text,
+        sort: _sort,
+      ),
       widget.apiClient.fetchProjects(),
     ]);
     var workersPage = results[0] as PagedResult<WorkerItem>;
     if (workersPage.items.isEmpty &&
         workersPage.totalCount > 0 &&
         _page.offset > 0) {
-      final corrected = _page.withOffset(_page.lastOffset(workersPage.totalCount));
+      final corrected =
+          _page.withOffset(_page.lastOffset(workersPage.totalCount));
       if (corrected.offset != _page.offset) {
         _page = corrected;
-        workersPage = await widget.apiClient.fetchWorkersPage(page: _page);
+        workersPage = await widget.apiClient.fetchWorkersPage(
+          page: _page,
+          search: _searchController.text,
+          sort: _sort,
+        );
       }
     }
     final data = _WorkersData(
@@ -83,6 +95,21 @@ class _WorkersPageState extends State<WorkersPage> {
     });
   }
 
+  void _setSearch(String value) {
+    setState(() {
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
+  void _setSort(SortRequest sort) {
+    setState(() {
+      _sort = sort;
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
@@ -100,111 +127,136 @@ class _WorkersPageState extends State<WorkersPage> {
           label: const Text('New worker'),
         ),
       ],
-      child: FutureBuilder<_WorkersData>(
-        future: _future,
-        builder: (context, snapshot) {
-          final data = snapshot.data ?? _lastData;
-          if (snapshot.connectionState != ConnectionState.done &&
-              data == null) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError && data == null) {
-            return ErrorView(
-              message: snapshot.error.toString(),
-              onRetry: () => _reload(),
-            );
-          }
-          final items = data?.workersPage.items ?? const <WorkerItem>[];
-          if (items.isEmpty) {
-            return const EmptyState(
-              icon: Icons.memory_outlined,
-              title: 'No workers',
-              message: 'Create or register a worker to execute tasks.',
-            );
-          }
-          return Stack(
-            children: [
-              Column(
-                children: [
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemBuilder: (context, index) {
-                        final worker = items[index];
-                        return Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.memory_outlined),
-                            title: Text(worker.name),
-                            subtitle: Text(
-                              '${worker.workDir}\n${worker.supportedAgents.join(', ')}  ${worker.projectBindingMode}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: Wrap(
-                              spacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                StatusPill(value: worker.status),
-                                Text(
-                                  worker.currentTaskIds.isEmpty
-                                      ? 'No running tasks'
-                                      : '${worker.currentTaskIds.length} running',
-                                ),
-                                IconButton(
-                                  tooltip: 'Edit worker',
-                                  onPressed: () => _openWorkerDialog(worker),
-                                  icon: const Icon(Icons.edit_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Enable worker',
-                                  onPressed: () => _run(
-                                    () => widget.apiClient
-                                        .enableWorker(worker.id),
-                                  ),
-                                  icon: const Icon(Icons.toggle_on_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Disable worker',
-                                  onPressed: () => _run(
-                                    () => widget.apiClient
-                                        .disableWorker(worker.id),
-                                  ),
-                                  icon: const Icon(Icons.toggle_off_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Delete worker',
-                                  onPressed: worker.currentTaskIds.isEmpty
-                                      ? () => _deleteWorker(worker)
-                                      : null,
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 8),
-                      itemCount: items.length,
-                    ),
-                  ),
-                  PaginationBar(
-                    page: _page,
-                    totalCount: data?.workersPage.totalCount ?? 0,
-                    onPageChanged: _goToPage,
-                  ),
-                ],
-              ),
-              if (snapshot.connectionState != ConnectionState.done)
-                const Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  child: LinearProgressIndicator(minHeight: 2),
-                ),
+      child: Column(
+        children: [
+          SearchSortToolbar(
+            keyPrefix: 'workers',
+            searchController: _searchController,
+            sort: _sort,
+            sortOptions: const [
+              SortOption(field: 'CREATED_AT', label: 'Created'),
+              SortOption(field: 'UPDATED_AT', label: 'Updated'),
+              SortOption(field: 'NAME', label: 'Name'),
+              SortOption(field: 'STATUS', label: 'Status'),
+              SortOption(field: 'LAST_HEARTBEAT_AT', label: 'Last heartbeat'),
             ],
-          );
-        },
+            onSearchChanged: _setSearch,
+            onSortChanged: _setSort,
+          ),
+          Expanded(
+            child: FutureBuilder<_WorkersData>(
+              future: _future,
+              builder: (context, snapshot) {
+                final data = snapshot.data ?? _lastData;
+                if (snapshot.connectionState != ConnectionState.done &&
+                    data == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError && data == null) {
+                  return ErrorView(
+                    message: snapshot.error.toString(),
+                    onRetry: () => _reload(),
+                  );
+                }
+                final items = data?.workersPage.items ?? const <WorkerItem>[];
+                if (items.isEmpty) {
+                  return const EmptyState(
+                    icon: Icons.memory_outlined,
+                    title: 'No workers',
+                    message: 'Create or register a worker to execute tasks.',
+                  );
+                }
+                return Stack(
+                  children: [
+                    Column(
+                      children: [
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemBuilder: (context, index) {
+                              final worker = items[index];
+                              return Card(
+                                child: ListTile(
+                                  leading: const Icon(Icons.memory_outlined),
+                                  title: Text(worker.name),
+                                  subtitle: Text(
+                                    '${worker.workDir}\n${worker.supportedAgents.join(', ')}  ${worker.projectBindingMode}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: Wrap(
+                                    spacing: 8,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      StatusPill(value: worker.status),
+                                      Text(
+                                        worker.currentTaskIds.isEmpty
+                                            ? 'No running tasks'
+                                            : '${worker.currentTaskIds.length} running',
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Edit worker',
+                                        onPressed: () =>
+                                            _openWorkerDialog(worker),
+                                        icon: const Icon(Icons.edit_outlined),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Enable worker',
+                                        onPressed: () => _run(
+                                          () => widget.apiClient
+                                              .enableWorker(worker.id),
+                                        ),
+                                        icon: const Icon(
+                                            Icons.toggle_on_outlined),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Disable worker',
+                                        onPressed: () => _run(
+                                          () => widget.apiClient
+                                              .disableWorker(worker.id),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.toggle_off_outlined,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Delete worker',
+                                        onPressed: worker.currentTaskIds.isEmpty
+                                            ? () => _deleteWorker(worker)
+                                            : null,
+                                        icon: const Icon(Icons.delete_outline),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 8),
+                            itemCount: items.length,
+                          ),
+                        ),
+                        PaginationBar(
+                          page: _page,
+                          totalCount: data?.workersPage.totalCount ?? 0,
+                          onPageChanged: _goToPage,
+                        ),
+                      ],
+                    ),
+                    if (snapshot.connectionState != ConnectionState.done)
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

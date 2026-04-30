@@ -22,6 +22,8 @@ class BoardPage extends StatefulWidget {
 class _BoardPageState extends State<BoardPage> {
   String _view = 'KANBAN';
   PageRequest _page = const PageRequest();
+  final TextEditingController _searchController = TextEditingController();
+  SortRequest _sort = const SortRequest(field: 'CREATED_AT');
   late Future<BoardData> _future;
   BoardData? _lastData;
   RealtimeRefreshController? _realtime;
@@ -46,16 +48,27 @@ class _BoardPageState extends State<BoardPage> {
   @override
   void dispose() {
     _realtime?.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<BoardData> _load() async {
-    var data = await widget.apiClient.fetchBoardData(_view, page: _page);
+    var data = await widget.apiClient.fetchBoardData(
+      _view,
+      page: _page,
+      search: _searchController.text,
+      sort: _sort,
+    );
     if (data.tasks.isEmpty && data.totalCount > 0 && _page.offset > 0) {
       final corrected = _page.withOffset(_page.lastOffset(data.totalCount));
       if (corrected.offset != _page.offset) {
         _page = corrected;
-        data = await widget.apiClient.fetchBoardData(_view, page: _page);
+        data = await widget.apiClient.fetchBoardData(
+          _view,
+          page: _page,
+          search: _searchController.text,
+          sort: _sort,
+        );
       }
     }
     _lastData = data;
@@ -80,6 +93,21 @@ class _BoardPageState extends State<BoardPage> {
     }
     setState(() {
       _page = page;
+      _future = _load();
+    });
+  }
+
+  void _setSearch(String value) {
+    setState(() {
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
+  void _setSort(SortRequest sort) {
+    setState(() {
+      _sort = sort;
+      _page = _page.first();
       _future = _load();
     });
   }
@@ -139,50 +167,71 @@ class _BoardPageState extends State<BoardPage> {
           label: const Text('New task'),
         ),
       ],
-      child: FutureBuilder<BoardData>(
-        future: _future,
-        builder: (context, snapshot) {
-          final data = snapshot.data ?? _lastData;
-          if (snapshot.connectionState != ConnectionState.done &&
-              data == null) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError && data == null) {
-            return ErrorView(
-              message: snapshot.error.toString(),
-              onRetry: () => _reload(),
-            );
-          }
-          final board = data ?? BoardData.empty();
-          return Column(
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    _BoardContent(
-                      view: _view,
-                      data: board,
-                      onTaskSelected: _openTaskDetail,
-                      onTaskEdit: _openTaskDialog,
-                    ),
-                    if (snapshot.connectionState != ConnectionState.done)
-                      const Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 0,
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
-                  ],
-                ),
-              ),
-              PaginationBar(
-                page: _page,
-                totalCount: board.totalCount,
-                onPageChanged: _goToPage,
-              ),
+      child: Column(
+        children: [
+          SearchSortToolbar(
+            keyPrefix: 'board',
+            searchController: _searchController,
+            sort: _sort,
+            sortOptions: const [
+              SortOption(field: 'CREATED_AT', label: 'Created'),
+              SortOption(field: 'UPDATED_AT', label: 'Updated'),
+              SortOption(field: 'TITLE', label: 'Title'),
+              SortOption(field: 'STATUS', label: 'Status'),
+              SortOption(field: 'START_DATE', label: 'Start date'),
+              SortOption(field: 'END_DATE', label: 'End date'),
             ],
-          );
-        },
+            onSearchChanged: _setSearch,
+            onSortChanged: _setSort,
+          ),
+          Expanded(
+            child: FutureBuilder<BoardData>(
+              future: _future,
+              builder: (context, snapshot) {
+                final data = snapshot.data ?? _lastData;
+                if (snapshot.connectionState != ConnectionState.done &&
+                    data == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError && data == null) {
+                  return ErrorView(
+                    message: snapshot.error.toString(),
+                    onRetry: () => _reload(),
+                  );
+                }
+                final board = data ?? BoardData.empty();
+                return Column(
+                  children: [
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          _BoardContent(
+                            view: _view,
+                            data: board,
+                            onTaskSelected: _openTaskDetail,
+                            onTaskEdit: _openTaskDialog,
+                          ),
+                          if (snapshot.connectionState != ConnectionState.done)
+                            const Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              child: LinearProgressIndicator(minHeight: 2),
+                            ),
+                        ],
+                      ),
+                    ),
+                    PaginationBar(
+                      page: _page,
+                      totalCount: board.totalCount,
+                      onPageChanged: _goToPage,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1089,10 +1138,8 @@ class _CalendarView extends StatefulWidget {
 }
 
 class _CalendarViewState extends State<_CalendarView> {
-  final TextEditingController _searchController = TextEditingController();
   _CalendarMode _mode = _CalendarMode.month;
   late DateTime _focusedDate;
-  String _searchQuery = '';
 
   @override
   void initState() {
@@ -1102,15 +1149,9 @@ class _CalendarViewState extends State<_CalendarView> {
   }
 
   @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
   void didUpdateWidget(covariant _CalendarView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.tasks.isEmpty && widget.tasks.isNotEmpty) {
+    if (oldWidget.tasks != widget.tasks && widget.tasks.isNotEmpty) {
       final ranges = _taskRanges(widget.tasks);
       if (ranges.isNotEmpty) {
         _focusedDate = ranges.first.start;
@@ -1126,9 +1167,7 @@ class _CalendarViewState extends State<_CalendarView> {
         _CalendarToolbar(
           mode: _mode,
           title: _calendarTitle(),
-          searchController: _searchController,
           onModeChanged: (mode) => setState(() => _mode = mode),
-          onSearchChanged: _setSearchQuery,
           onPrevious: () => _moveFocus(-1),
           onToday: () => setState(() => _focusedDate = _todayTaskDate()),
           onNext: () => _moveFocus(1),
@@ -1137,12 +1176,8 @@ class _CalendarViewState extends State<_CalendarView> {
           child: ranges.isEmpty
               ? EmptyState(
                   icon: Icons.search_off,
-                  title: _searchQuery.trim().isEmpty
-                      ? 'No scheduled tasks'
-                      : 'No matching tasks',
-                  message: _searchQuery.trim().isEmpty
-                      ? 'Create a task with dates to fill the calendar.'
-                      : 'Clear search or try another term.',
+                  title: 'No scheduled tasks',
+                  message: 'Create a task with dates to fill the calendar.',
                 )
               : switch (_mode) {
                   _CalendarMode.day => _CalendarDayList(
@@ -1176,36 +1211,7 @@ class _CalendarViewState extends State<_CalendarView> {
   }
 
   List<_CalendarTaskRange> _visibleRanges() {
-    final ranges = _taskRanges(widget.tasks);
-    final query = _searchQuery.trim().toLowerCase();
-    if (query.isEmpty) {
-      return ranges;
-    }
-    return ranges.where((range) {
-      final task = range.task;
-      return task.title.toLowerCase().contains(query) ||
-          task.description.toLowerCase().contains(query) ||
-          task.status.toLowerCase().contains(query);
-    }).toList();
-  }
-
-  void _setSearchQuery(String value) {
-    setState(() {
-      _searchQuery = value;
-      final query = value.trim().toLowerCase();
-      if (query.isEmpty) {
-        return;
-      }
-      final matches = _taskRanges(widget.tasks).where((range) {
-        final task = range.task;
-        return task.title.toLowerCase().contains(query) ||
-            task.description.toLowerCase().contains(query) ||
-            task.status.toLowerCase().contains(query);
-      }).toList();
-      if (matches.isNotEmpty) {
-        _focusedDate = matches.first.start;
-      }
-    });
+    return _taskRanges(widget.tasks);
   }
 
   void _moveFocus(int delta) {
@@ -1239,9 +1245,7 @@ class _CalendarToolbar extends StatelessWidget {
   const _CalendarToolbar({
     required this.mode,
     required this.title,
-    required this.searchController,
     required this.onModeChanged,
-    required this.onSearchChanged,
     required this.onPrevious,
     required this.onToday,
     required this.onNext,
@@ -1249,9 +1253,7 @@ class _CalendarToolbar extends StatelessWidget {
 
   final _CalendarMode mode;
   final String title;
-  final TextEditingController searchController;
   final ValueChanged<_CalendarMode> onModeChanged;
-  final ValueChanged<String> onSearchChanged;
   final VoidCallback onPrevious;
   final VoidCallback onToday;
   final VoidCallback onNext;
@@ -1273,20 +1275,6 @@ class _CalendarToolbar extends StatelessWidget {
             .toList(),
         selected: {mode},
         onSelectionChanged: (values) => onModeChanged(values.first),
-      ),
-      SizedBox(
-        width: 260,
-        height: 40,
-        child: TextField(
-          key: const ValueKey('calendar-search-field'),
-          controller: searchController,
-          onChanged: onSearchChanged,
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            hintText: 'Search',
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          ),
-        ),
       ),
       Row(
         mainAxisSize: MainAxisSize.min,

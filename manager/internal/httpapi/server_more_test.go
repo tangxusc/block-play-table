@@ -236,6 +236,50 @@ func TestServerPaginationConnections(t *testing.T) {
 		t.Fatalf("board tasks = %#v, want latest two tasks", taskNodes)
 	}
 
+	searchedBoard := postGraphQL(t, server.URL, `query {
+		board(filter: { includeArchived: true, search: "Task 1" }, sort: { field: TITLE, direction: ASC }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			tasks { title }
+		}
+	}`, nil)["data"].(map[string]any)["board"].(map[string]any)
+	searchedTasks := searchedBoard["tasks"].([]any)
+	if searchedBoard["totalCount"] != float64(1) || len(searchedTasks) != 1 || searchedTasks[0].(map[string]any)["title"] != "Task 1" {
+		t.Fatalf("searched board = %#v", searchedBoard)
+	}
+
+	searchedProjects := postGraphQL(t, server.URL, `query {
+		projectsConnection(filter: { includeArchived: true, search: "First Project" }, sort: { field: NAME, direction: ASC }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { id name }
+		}
+	}`, nil)["data"].(map[string]any)["projectsConnection"].(map[string]any)
+	searchedProjectNodes := searchedProjects["nodes"].([]any)
+	if searchedProjects["totalCount"] != float64(1) || len(searchedProjectNodes) != 1 || searchedProjectNodes[0].(map[string]any)["id"] != firstProjectID {
+		t.Fatalf("searched projects = %#v", searchedProjects)
+	}
+
+	searchedWorkers := postGraphQL(t, server.URL, `query {
+		workersConnection(filter: { includeDisabled: true, search: "First Worker" }, sort: { field: NAME, direction: ASC }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { id name }
+		}
+	}`, nil)["data"].(map[string]any)["workersConnection"].(map[string]any)
+	searchedWorkerNodes := searchedWorkers["nodes"].([]any)
+	if searchedWorkers["totalCount"] != float64(1) || len(searchedWorkerNodes) != 1 || searchedWorkerNodes[0].(map[string]any)["id"] != "worker-page-1" {
+		t.Fatalf("searched workers = %#v", searchedWorkers)
+	}
+
+	searchedEvents := postGraphQL(t, server.URL, `query {
+		domainEventsConnection(filter: { search: "Second Project" }, sort: { field: EVENT_TYPE, direction: ASC }, page: { offset: 0, limit: 1 }) {
+			totalCount
+			nodes { eventType aggregateId }
+		}
+	}`, nil)["data"].(map[string]any)["domainEventsConnection"].(map[string]any)
+	searchedEventNodes := searchedEvents["nodes"].([]any)
+	if searchedEvents["totalCount"] != float64(1) || len(searchedEventNodes) != 1 || searchedEventNodes[0].(map[string]any)["aggregateId"] != secondProjectID {
+		t.Fatalf("searched events = %#v", searchedEvents)
+	}
+
 	legacyEvents := postGraphQL(t, server.URL, `query DomainEvents($aggregateId: ID!) {
 		domainEvents(aggregateId: $aggregateId) { eventType }
 	}`, map[string]any{"aggregateId": firstProjectID})["data"].(map[string]any)["domainEvents"].([]any)
