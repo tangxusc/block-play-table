@@ -259,6 +259,10 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if err != nil || len(filtered) != 1 || filtered[0].AggregateID != task.ID {
 		t.Fatalf("DomainEvents filtered = %+v, %v", filtered, err)
 	}
+	searched, err := sqlStore.DomainEvents(ctx, domain.EventFilter{Search: "taskcreated"})
+	if err != nil || len(searched) != 1 || searched[0].EventType != "TaskCreated" {
+		t.Fatalf("DomainEvents searched = %+v, %v", searched, err)
+	}
 	outbox, err := sqlStore.OutboxMessages(ctx, true)
 	if err != nil || len(outbox) != 1 {
 		t.Fatalf("OutboxMessages = %+v, %v", outbox, err)

@@ -559,6 +559,40 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   ).toBeVisible();
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+  const boardSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(page, boardSearch, `Pagination Task ${suffix}`);
+  await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Sort descending" }).click();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toHaveCount(0);
+  await fillFlutterTextField(
+    page,
+    boardSearch,
+    `Pagination Task ${suffix}-20`,
+  );
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
 
   await page.getByText("Projects").click();
   await expect(
@@ -577,6 +611,22 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       name: new RegExp(`Pagination Project ${suffix}-0`),
     }),
   ).toBeVisible();
+  const projectsSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(
+    page,
+    projectsSearch,
+    `Pagination Project ${suffix}-20`,
+  );
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Project ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Project ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
 
   await page.getByText("Workers").click();
   await expect(
@@ -595,6 +645,22 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       name: new RegExp(`Pagination Worker ${suffix}-0`),
     }),
   ).toBeVisible();
+  const workersSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(
+    page,
+    workersSearch,
+    `Pagination Worker ${suffix}-20`,
+  );
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Worker ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Worker ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
 
   await page.getByText("Events").click();
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
@@ -602,6 +668,18 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   await expect(page.getByText(/Showing 21-40 of \d+/)).toBeVisible();
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
+  const eventsSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(
+    page,
+    eventsSearch,
+    `Pagination Project ${suffix}-20`,
+  );
+  await expect(
+    page.getByText(new RegExp(`Pagination Project ${suffix}-20`)),
+  ).toBeVisible();
+  await expect(
+    page.getByText(new RegExp(`Pagination Project ${suffix}-0`)),
+  ).toHaveCount(0);
 });
 
 test("trusted Flutter web UI covers DDD event-backed task flow", async ({

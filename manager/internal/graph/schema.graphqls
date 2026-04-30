@@ -101,6 +101,43 @@ enum BoardType {
   LIST
 }
 
+enum SortDirection {
+  ASC
+  DESC
+}
+
+enum TaskSortField {
+  CREATED_AT
+  UPDATED_AT
+  TITLE
+  STATUS
+  START_DATE
+  END_DATE
+}
+
+enum ProjectSortField {
+  CREATED_AT
+  UPDATED_AT
+  NAME
+  GIT_URL
+  DEFAULT_BRANCH
+}
+
+enum WorkerSortField {
+  CREATED_AT
+  UPDATED_AT
+  NAME
+  STATUS
+  LAST_HEARTBEAT_AT
+}
+
+enum DomainEventSortField {
+  OCCURRED_AT
+  EVENT_TYPE
+  AGGREGATE_TYPE
+  AGGREGATE_ID
+}
+
 type Task {
   id: ID!
   title: String!
@@ -309,6 +346,7 @@ input TaskFilter {
   workerId: ID
   agentType: AgentType
   includeArchived: Boolean
+  search: String
 }
 
 input WorkerFilter {
@@ -316,16 +354,39 @@ input WorkerFilter {
   projectId: ID
   agentType: AgentType
   includeDisabled: Boolean
+  search: String
 }
 
 input ProjectFilter {
   includeArchived: Boolean
+  search: String
 }
 
 input DomainEventFilter {
   aggregateId: ID
   aggregateType: String
   eventType: String
+  search: String
+}
+
+input TaskSortInput {
+  field: TaskSortField
+  direction: SortDirection
+}
+
+input ProjectSortInput {
+  field: ProjectSortField
+  direction: SortDirection
+}
+
+input WorkerSortInput {
+  field: WorkerSortField
+  direction: SortDirection
+}
+
+input DomainEventSortInput {
+  field: DomainEventSortField
+  direction: SortDirection
 }
 
 input CreateTaskInput {
@@ -476,19 +537,19 @@ input KeyValueInput {
 
 type Query {
   task(id: ID!): Task
-  tasks(filter: TaskFilter, page: PageInput): TaskConnection!
-  taskList(filter: TaskFilter, page: PageInput): [Task!]!
+  tasks(filter: TaskFilter, sort: TaskSortInput, page: PageInput): TaskConnection!
+  taskList(filter: TaskFilter, sort: TaskSortInput, page: PageInput): [Task!]!
   worker(id: ID!): Worker
-  workers(filter: WorkerFilter): [Worker!]!
-  workersConnection(filter: WorkerFilter, page: PageInput): WorkerConnection!
+  workers(filter: WorkerFilter, sort: WorkerSortInput): [Worker!]!
+  workersConnection(filter: WorkerFilter, sort: WorkerSortInput, page: PageInput): WorkerConnection!
   project(id: ID!): Project
-  projects(filter: ProjectFilter): [Project!]!
-  projectsConnection(filter: ProjectFilter, page: PageInput): ProjectConnection!
-  board(id: ID, page: PageInput): Board!
+  projects(filter: ProjectFilter, sort: ProjectSortInput): [Project!]!
+  projectsConnection(filter: ProjectFilter, sort: ProjectSortInput, page: PageInput): ProjectConnection!
+  board(id: ID, filter: TaskFilter, sort: TaskSortInput, page: PageInput): Board!
   settings: Settings!
   taskEvents(taskId: ID!): [DomainEvent!]!
-  domainEvents(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
-  domainEventsConnection(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
+  domainEvents(filter: DomainEventFilter, sort: DomainEventSortInput, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
+  domainEventsConnection(filter: DomainEventFilter, sort: DomainEventSortInput, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
   outboxMessages(includePublished: Boolean): [OutboxMessage!]!
   taskLogs(taskId: ID!): [TaskLog!]!
   taskConversations(taskId: ID!): [ConversationMessage!]!

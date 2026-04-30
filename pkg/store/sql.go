@@ -702,6 +702,9 @@ func (s *SQLStore) DomainEvents(ctx context.Context, filter domain.EventFilter) 
 		if err != nil {
 			return nil, err
 		}
+		if !eventMatchesSearch(event, filter.Search) {
+			continue
+		}
 		out = append(out, event)
 	}
 	return out, rows.Err()

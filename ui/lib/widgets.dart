@@ -70,6 +70,116 @@ List<Widget> _spacedActions(List<Widget> actions) {
   return out;
 }
 
+class SortOption {
+  const SortOption({required this.field, required this.label});
+
+  final String field;
+  final String label;
+}
+
+class SearchSortToolbar extends StatelessWidget {
+  const SearchSortToolbar({
+    super.key,
+    required this.keyPrefix,
+    required this.searchController,
+    required this.sort,
+    required this.sortOptions,
+    required this.onSearchChanged,
+    required this.onSortChanged,
+  });
+
+  final String keyPrefix;
+  final TextEditingController searchController;
+  final SortRequest sort;
+  final List<SortOption> sortOptions;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<SortRequest> onSortChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedField =
+        sortOptions.any((option) => option.field == sort.field)
+            ? sort.field
+            : sortOptions.first.field;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 620;
+          final searchWidth = compact ? constraints.maxWidth : 320.0;
+          final sortWidth = compact ? constraints.maxWidth - 44 : 220.0;
+          return Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: searchWidth,
+                height: 40,
+                child: TextField(
+                  key: ValueKey('$keyPrefix-search-field'),
+                  controller: searchController,
+                  onChanged: onSearchChanged,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Search',
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: sortWidth < 160 ? 160 : sortWidth,
+                height: 40,
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey('$keyPrefix-sort-field'),
+                  isExpanded: true,
+                  value: selectedField,
+                  decoration: const InputDecoration(labelText: 'Sort by'),
+                  items: sortOptions
+                      .map(
+                        (option) => DropdownMenuItem(
+                          value: option.field,
+                          child: Text(
+                            option.label,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      onSortChanged(sort.copyWith(field: value));
+                    }
+                  },
+                ),
+              ),
+              IconButton(
+                key: ValueKey('$keyPrefix-sort-direction'),
+                tooltip: sort.direction == SortRequest.ascending
+                    ? 'Sort ascending'
+                    : 'Sort descending',
+                onPressed: () => onSortChanged(sort.toggledDirection()),
+                icon: Icon(
+                  sort.direction == SortRequest.ascending
+                      ? Icons.arrow_upward
+                      : Icons.arrow_downward,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class StatusPill extends StatelessWidget {
   const StatusPill({super.key, required this.value});
 
@@ -123,8 +233,8 @@ class EmptyState extends StatelessWidget {
                 message,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ],
@@ -193,9 +303,7 @@ class PaginationBar extends StatelessWidget {
     final canGoBack = totalCount > 0 && offset > 0;
     final canGoForward = totalCount > 0 && offset < lastOffset;
     final start = totalCount == 0 ? 0 : offset + 1;
-    final end = totalCount == 0
-        ? 0
-        : math.min(offset + page.limit, totalCount);
+    final end = totalCount == 0 ? 0 : math.min(offset + page.limit, totalCount);
 
     return Container(
       height: 52,
@@ -305,7 +413,8 @@ Color _statusColor(BuildContext context, String status) {
     'ARCHIVED' ||
     'DISABLED' ||
     'OFFLINE' ||
-    'INTERRUPTED' => scheme.onSurfaceVariant,
+    'INTERRUPTED' =>
+      scheme.onSurfaceVariant,
     _ => scheme.primary,
   };
 }

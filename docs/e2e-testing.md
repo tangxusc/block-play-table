@@ -255,7 +255,8 @@ npm run e2e:real-agents
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
 | UI | Flutter Web 首屏可加载并显示 `flutter-view` | L2 | [已实现] |
 | UI | 看板将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED/ARCHIVED 分组成三列 | L2 | [已实现] |
-| UI | Calendar 按任务开始/结束日期在日、周、月、年视图展示任务范围，并支持搜索过滤 | L2 | [已实现] |
+| UI | Board/Projects/Workers/Events 顶部搜索和排序在服务端过滤排序后分页，默认创建时间倒序 | L2 | [已实现] |
+| UI | Calendar 按任务开始/结束日期在日、周、月、年视图展示任务范围，并跟随 Board 全局搜索结果聚焦匹配任务 | L2 | [已实现] |
 | UI | 任务详情展示状态、日志、会话和最终结果 | L2 | [待补齐] |
 | UI | GraphQL subscription 事件到达后看板刷新 | L2 | [待补齐] |
 | UI | subscription 失败时触发兜底 reload/refresh | L2 | [待补齐] |
@@ -265,7 +266,7 @@ npm run e2e:real-agents
 | Settings | 启动任务时仅注入 enabled env vars 到 Worker payload | L1/L3 | [待补齐] |
 | Storage | SQLite 模式跨重启保留 Project/Worker/Task/Event/Log | L1 | [待补齐] |
 | Storage | PostgreSQL 模式应用迁移并通过 readiness | L1/L2 | [待补齐] |
-| Storage | 领域事件可按 aggregateId/aggregateType/eventType 过滤 | L1/L2 | [待补齐] |
+| Storage | 领域事件可按 aggregateId/aggregateType/eventType/search 过滤 | L1/L2 | [已实现] |
 | Storage | Outbox message 可查询 pending/published 状态 | L1/L2 | [待补齐] |
 | Real Agent | Codex CLI 完成固定 fixture 任务，并覆盖 `--model`、推理深度、sandbox/approval 参数构造 | L3 | [发布必跑] |
 | Real Agent | Claude CLI 完成固定 fixture 任务，并覆盖 `--model`、`--effort`、`--permission-mode` 参数构造 | L3 | [发布必跑] |

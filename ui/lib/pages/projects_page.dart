@@ -16,6 +16,8 @@ class ProjectsPage extends StatefulWidget {
 
 class _ProjectsPageState extends State<ProjectsPage> {
   PageRequest _page = const PageRequest();
+  final TextEditingController _searchController = TextEditingController();
+  SortRequest _sort = const SortRequest(field: 'CREATED_AT');
   late Future<PagedResult<ProjectItem>> _future;
   PagedResult<ProjectItem>? _lastPage;
   RealtimeRefreshController? _realtime;
@@ -34,16 +36,25 @@ class _ProjectsPageState extends State<ProjectsPage> {
   @override
   void dispose() {
     _realtime?.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<PagedResult<ProjectItem>> _load() async {
-    var page = await widget.apiClient.fetchProjectsPage(page: _page);
+    var page = await widget.apiClient.fetchProjectsPage(
+      page: _page,
+      search: _searchController.text,
+      sort: _sort,
+    );
     if (page.items.isEmpty && page.totalCount > 0 && _page.offset > 0) {
       final corrected = _page.withOffset(_page.lastOffset(page.totalCount));
       if (corrected.offset != _page.offset) {
         _page = corrected;
-        page = await widget.apiClient.fetchProjectsPage(page: _page);
+        page = await widget.apiClient.fetchProjectsPage(
+          page: _page,
+          search: _searchController.text,
+          sort: _sort,
+        );
       }
     }
     _lastPage = page;
@@ -72,6 +83,21 @@ class _ProjectsPageState extends State<ProjectsPage> {
     });
   }
 
+  void _setSearch(String value) {
+    setState(() {
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
+  void _setSort(SortRequest sort) {
+    setState(() {
+      _sort = sort;
+      _page = _page.first();
+      _future = _load();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
@@ -89,91 +115,115 @@ class _ProjectsPageState extends State<ProjectsPage> {
           label: const Text('New project'),
         ),
       ],
-      child: FutureBuilder<PagedResult<ProjectItem>>(
-        future: _future,
-        builder: (context, snapshot) {
-          final page = snapshot.data ?? _lastPage;
-          if (snapshot.connectionState != ConnectionState.done &&
-              page == null) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError && page == null) {
-            return ErrorView(
-              message: snapshot.error.toString(),
-              onRetry: () => _reload(),
-            );
-          }
-          final items = page?.items ?? const <ProjectItem>[];
-          if (items.isEmpty) {
-            return const EmptyState(
-              icon: Icons.folder_copy_outlined,
-              title: 'No projects',
-              message: 'Create a project before creating tasks.',
-            );
-          }
-          return Stack(
-            children: [
-              Column(
-                children: [
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemBuilder: (context, index) {
-                        final project = items[index];
-                        return Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.folder_copy_outlined),
-                            title: Text(project.name),
-                            subtitle: Text(
-                              '${project.gitUrl}\n${project.defaultBranch}  ${project.worktreeNamePrefix}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: Wrap(
-                              spacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                if (project.archived)
-                                  const StatusPill(value: 'ARCHIVED'),
-                                IconButton(
-                                  tooltip: 'Edit project',
-                                  onPressed: () => _openProjectDialog(project),
-                                  icon: const Icon(Icons.edit_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Archive project',
-                                  onPressed: project.archived
-                                      ? null
-                                      : () => _archiveProject(project),
-                                  icon: const Icon(Icons.archive_outlined),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 8),
-                      itemCount: items.length,
-                    ),
-                  ),
-                  PaginationBar(
-                    page: _page,
-                    totalCount: page?.totalCount ?? 0,
-                    onPageChanged: _goToPage,
-                  ),
-                ],
-              ),
-              if (snapshot.connectionState != ConnectionState.done)
-                const Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  child: LinearProgressIndicator(minHeight: 2),
-                ),
+      child: Column(
+        children: [
+          SearchSortToolbar(
+            keyPrefix: 'projects',
+            searchController: _searchController,
+            sort: _sort,
+            sortOptions: const [
+              SortOption(field: 'CREATED_AT', label: 'Created'),
+              SortOption(field: 'UPDATED_AT', label: 'Updated'),
+              SortOption(field: 'NAME', label: 'Name'),
+              SortOption(field: 'GIT_URL', label: 'Git URL'),
+              SortOption(field: 'DEFAULT_BRANCH', label: 'Default branch'),
             ],
-          );
-        },
+            onSearchChanged: _setSearch,
+            onSortChanged: _setSort,
+          ),
+          Expanded(
+            child: FutureBuilder<PagedResult<ProjectItem>>(
+              future: _future,
+              builder: (context, snapshot) {
+                final page = snapshot.data ?? _lastPage;
+                if (snapshot.connectionState != ConnectionState.done &&
+                    page == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError && page == null) {
+                  return ErrorView(
+                    message: snapshot.error.toString(),
+                    onRetry: () => _reload(),
+                  );
+                }
+                final items = page?.items ?? const <ProjectItem>[];
+                if (items.isEmpty) {
+                  return const EmptyState(
+                    icon: Icons.folder_copy_outlined,
+                    title: 'No projects',
+                    message: 'Create a project before creating tasks.',
+                  );
+                }
+                return Stack(
+                  children: [
+                    Column(
+                      children: [
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemBuilder: (context, index) {
+                              final project = items[index];
+                              return Card(
+                                child: ListTile(
+                                  leading:
+                                      const Icon(Icons.folder_copy_outlined),
+                                  title: Text(project.name),
+                                  subtitle: Text(
+                                    '${project.gitUrl}\n${project.defaultBranch}  ${project.worktreeNamePrefix}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: Wrap(
+                                    spacing: 8,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      if (project.archived)
+                                        const StatusPill(value: 'ARCHIVED'),
+                                      IconButton(
+                                        tooltip: 'Edit project',
+                                        onPressed: () =>
+                                            _openProjectDialog(project),
+                                        icon: const Icon(Icons.edit_outlined),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Archive project',
+                                        onPressed: project.archived
+                                            ? null
+                                            : () => _archiveProject(project),
+                                        icon:
+                                            const Icon(Icons.archive_outlined),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 8),
+                            itemCount: items.length,
+                          ),
+                        ),
+                        PaginationBar(
+                          page: _page,
+                          totalCount: page?.totalCount ?? 0,
+                          onPageChanged: _goToPage,
+                        ),
+                      ],
+                    ),
+                    if (snapshot.connectionState != ConnectionState.done)
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

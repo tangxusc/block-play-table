@@ -167,6 +167,12 @@ type DomainEventFilter struct {
 	AggregateID   *string `json:"aggregateId,omitempty"`
 	AggregateType *string `json:"aggregateType,omitempty"`
 	EventType     *string `json:"eventType,omitempty"`
+	Search        *string `json:"search,omitempty"`
+}
+
+type DomainEventSortInput struct {
+	Field     *DomainEventSortField `json:"field,omitempty"`
+	Direction *SortDirection        `json:"direction,omitempty"`
 }
 
 type KeyValue struct {
@@ -213,7 +219,13 @@ type ProjectConnection struct {
 }
 
 type ProjectFilter struct {
-	IncludeArchived *bool `json:"includeArchived,omitempty"`
+	IncludeArchived *bool   `json:"includeArchived,omitempty"`
+	Search          *string `json:"search,omitempty"`
+}
+
+type ProjectSortInput struct {
+	Field     *ProjectSortField `json:"field,omitempty"`
+	Direction *SortDirection    `json:"direction,omitempty"`
 }
 
 type Query struct {
@@ -287,6 +299,7 @@ type TaskFilter struct {
 	WorkerID        *string     `json:"workerId,omitempty"`
 	AgentType       *AgentType  `json:"agentType,omitempty"`
 	IncludeArchived *bool       `json:"includeArchived,omitempty"`
+	Search          *string     `json:"search,omitempty"`
 }
 
 type TaskInteraction struct {
@@ -311,6 +324,11 @@ type TaskLog struct {
 	Stream    string    `json:"stream"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type TaskSortInput struct {
+	Field     *TaskSortField `json:"field,omitempty"`
+	Direction *SortDirection `json:"direction,omitempty"`
 }
 
 type UpdateProjectInput struct {
@@ -390,6 +408,12 @@ type WorkerFilter struct {
 	ProjectID       *string       `json:"projectId,omitempty"`
 	AgentType       *AgentType    `json:"agentType,omitempty"`
 	IncludeDisabled *bool         `json:"includeDisabled,omitempty"`
+	Search          *string       `json:"search,omitempty"`
+}
+
+type WorkerSortInput struct {
+	Field     *WorkerSortField `json:"field,omitempty"`
+	Direction *SortDirection   `json:"direction,omitempty"`
 }
 
 type AgentType string
@@ -862,6 +886,181 @@ func (e CodexSandboxMode) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type DomainEventSortField string
+
+const (
+	DomainEventSortFieldOccurredAt    DomainEventSortField = "OCCURRED_AT"
+	DomainEventSortFieldEventType     DomainEventSortField = "EVENT_TYPE"
+	DomainEventSortFieldAggregateType DomainEventSortField = "AGGREGATE_TYPE"
+	DomainEventSortFieldAggregateID   DomainEventSortField = "AGGREGATE_ID"
+)
+
+var AllDomainEventSortField = []DomainEventSortField{
+	DomainEventSortFieldOccurredAt,
+	DomainEventSortFieldEventType,
+	DomainEventSortFieldAggregateType,
+	DomainEventSortFieldAggregateID,
+}
+
+func (e DomainEventSortField) IsValid() bool {
+	switch e {
+	case DomainEventSortFieldOccurredAt, DomainEventSortFieldEventType, DomainEventSortFieldAggregateType, DomainEventSortFieldAggregateID:
+		return true
+	}
+	return false
+}
+
+func (e DomainEventSortField) String() string {
+	return string(e)
+}
+
+func (e *DomainEventSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DomainEventSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DomainEventSortField", str)
+	}
+	return nil
+}
+
+func (e DomainEventSortField) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DomainEventSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DomainEventSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type ProjectSortField string
+
+const (
+	ProjectSortFieldCreatedAt     ProjectSortField = "CREATED_AT"
+	ProjectSortFieldUpdatedAt     ProjectSortField = "UPDATED_AT"
+	ProjectSortFieldName          ProjectSortField = "NAME"
+	ProjectSortFieldGitURL        ProjectSortField = "GIT_URL"
+	ProjectSortFieldDefaultBranch ProjectSortField = "DEFAULT_BRANCH"
+)
+
+var AllProjectSortField = []ProjectSortField{
+	ProjectSortFieldCreatedAt,
+	ProjectSortFieldUpdatedAt,
+	ProjectSortFieldName,
+	ProjectSortFieldGitURL,
+	ProjectSortFieldDefaultBranch,
+}
+
+func (e ProjectSortField) IsValid() bool {
+	switch e {
+	case ProjectSortFieldCreatedAt, ProjectSortFieldUpdatedAt, ProjectSortFieldName, ProjectSortFieldGitURL, ProjectSortFieldDefaultBranch:
+		return true
+	}
+	return false
+}
+
+func (e ProjectSortField) String() string {
+	return string(e)
+}
+
+func (e *ProjectSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ProjectSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ProjectSortField", str)
+	}
+	return nil
+}
+
+func (e ProjectSortField) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *ProjectSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e ProjectSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type SortDirection string
+
+const (
+	SortDirectionAsc  SortDirection = "ASC"
+	SortDirectionDesc SortDirection = "DESC"
+)
+
+var AllSortDirection = []SortDirection{
+	SortDirectionAsc,
+	SortDirectionDesc,
+}
+
+func (e SortDirection) IsValid() bool {
+	switch e {
+	case SortDirectionAsc, SortDirectionDesc:
+		return true
+	}
+	return false
+}
+
+func (e SortDirection) String() string {
+	return string(e)
+}
+
+func (e *SortDirection) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = SortDirection(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid SortDirection", str)
+	}
+	return nil
+}
+
+func (e SortDirection) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *SortDirection) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e SortDirection) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type TaskInteractionDecision string
 
 const (
@@ -1037,6 +1236,69 @@ func (e TaskInteractionStatus) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type TaskSortField string
+
+const (
+	TaskSortFieldCreatedAt TaskSortField = "CREATED_AT"
+	TaskSortFieldUpdatedAt TaskSortField = "UPDATED_AT"
+	TaskSortFieldTitle     TaskSortField = "TITLE"
+	TaskSortFieldStatus    TaskSortField = "STATUS"
+	TaskSortFieldStartDate TaskSortField = "START_DATE"
+	TaskSortFieldEndDate   TaskSortField = "END_DATE"
+)
+
+var AllTaskSortField = []TaskSortField{
+	TaskSortFieldCreatedAt,
+	TaskSortFieldUpdatedAt,
+	TaskSortFieldTitle,
+	TaskSortFieldStatus,
+	TaskSortFieldStartDate,
+	TaskSortFieldEndDate,
+}
+
+func (e TaskSortField) IsValid() bool {
+	switch e {
+	case TaskSortFieldCreatedAt, TaskSortFieldUpdatedAt, TaskSortFieldTitle, TaskSortFieldStatus, TaskSortFieldStartDate, TaskSortFieldEndDate:
+		return true
+	}
+	return false
+}
+
+func (e TaskSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskSortField", str)
+	}
+	return nil
+}
+
+func (e TaskSortField) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type TaskStatus string
 
 const (
@@ -1158,6 +1420,67 @@ func (e *WorkerProjectBindingMode) UnmarshalJSON(b []byte) error {
 }
 
 func (e WorkerProjectBindingMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type WorkerSortField string
+
+const (
+	WorkerSortFieldCreatedAt       WorkerSortField = "CREATED_AT"
+	WorkerSortFieldUpdatedAt       WorkerSortField = "UPDATED_AT"
+	WorkerSortFieldName            WorkerSortField = "NAME"
+	WorkerSortFieldStatus          WorkerSortField = "STATUS"
+	WorkerSortFieldLastHeartbeatAt WorkerSortField = "LAST_HEARTBEAT_AT"
+)
+
+var AllWorkerSortField = []WorkerSortField{
+	WorkerSortFieldCreatedAt,
+	WorkerSortFieldUpdatedAt,
+	WorkerSortFieldName,
+	WorkerSortFieldStatus,
+	WorkerSortFieldLastHeartbeatAt,
+}
+
+func (e WorkerSortField) IsValid() bool {
+	switch e {
+	case WorkerSortFieldCreatedAt, WorkerSortFieldUpdatedAt, WorkerSortFieldName, WorkerSortFieldStatus, WorkerSortFieldLastHeartbeatAt:
+		return true
+	}
+	return false
+}
+
+func (e WorkerSortField) String() string {
+	return string(e)
+}
+
+func (e *WorkerSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = WorkerSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid WorkerSortField", str)
+	}
+	return nil
+}
+
+func (e WorkerSortField) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *WorkerSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e WorkerSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

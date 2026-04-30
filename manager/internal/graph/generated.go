@@ -171,24 +171,24 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Board                  func(childComplexity int, id *string, page *model.PageInput) int
-		DomainEvents           func(childComplexity int, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) int
-		DomainEventsConnection func(childComplexity int, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) int
+		Board                  func(childComplexity int, id *string, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) int
+		DomainEvents           func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string) int
+		DomainEventsConnection func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) int
 		OutboxMessages         func(childComplexity int, includePublished *bool) int
 		Project                func(childComplexity int, id string) int
-		Projects               func(childComplexity int, filter *model.ProjectFilter) int
-		ProjectsConnection     func(childComplexity int, filter *model.ProjectFilter, page *model.PageInput) int
+		Projects               func(childComplexity int, filter *model.ProjectFilter, sort *model.ProjectSortInput) int
+		ProjectsConnection     func(childComplexity int, filter *model.ProjectFilter, sort *model.ProjectSortInput, page *model.PageInput) int
 		Settings               func(childComplexity int) int
 		Task                   func(childComplexity int, id string) int
 		TaskConversations      func(childComplexity int, taskID string) int
 		TaskEvents             func(childComplexity int, taskID string) int
 		TaskInteractions       func(childComplexity int, taskID string, status *model.TaskInteractionStatus) int
-		TaskList               func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
+		TaskList               func(childComplexity int, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) int
 		TaskLogs               func(childComplexity int, taskID string) int
-		Tasks                  func(childComplexity int, filter *model.TaskFilter, page *model.PageInput) int
+		Tasks                  func(childComplexity int, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) int
 		Worker                 func(childComplexity int, id string) int
-		Workers                func(childComplexity int, filter *model.WorkerFilter) int
-		WorkersConnection      func(childComplexity int, filter *model.WorkerFilter, page *model.PageInput) int
+		Workers                func(childComplexity int, filter *model.WorkerFilter, sort *model.WorkerSortInput) int
+		WorkersConnection      func(childComplexity int, filter *model.WorkerFilter, sort *model.WorkerSortInput, page *model.PageInput) int
 	}
 
 	Settings struct {
@@ -312,19 +312,19 @@ type MutationResolver interface {
 }
 type QueryResolver interface {
 	Task(ctx context.Context, id string) (*model.Task, error)
-	Tasks(ctx context.Context, filter *model.TaskFilter, page *model.PageInput) (*model.TaskConnection, error)
-	TaskList(ctx context.Context, filter *model.TaskFilter, page *model.PageInput) ([]*model.Task, error)
+	Tasks(ctx context.Context, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) (*model.TaskConnection, error)
+	TaskList(ctx context.Context, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) ([]*model.Task, error)
 	Worker(ctx context.Context, id string) (*model.Worker, error)
-	Workers(ctx context.Context, filter *model.WorkerFilter) ([]*model.Worker, error)
-	WorkersConnection(ctx context.Context, filter *model.WorkerFilter, page *model.PageInput) (*model.WorkerConnection, error)
+	Workers(ctx context.Context, filter *model.WorkerFilter, sort *model.WorkerSortInput) ([]*model.Worker, error)
+	WorkersConnection(ctx context.Context, filter *model.WorkerFilter, sort *model.WorkerSortInput, page *model.PageInput) (*model.WorkerConnection, error)
 	Project(ctx context.Context, id string) (*model.Project, error)
-	Projects(ctx context.Context, filter *model.ProjectFilter) ([]*model.Project, error)
-	ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, page *model.PageInput) (*model.ProjectConnection, error)
-	Board(ctx context.Context, id *string, page *model.PageInput) (*model.Board, error)
+	Projects(ctx context.Context, filter *model.ProjectFilter, sort *model.ProjectSortInput) ([]*model.Project, error)
+	ProjectsConnection(ctx context.Context, filter *model.ProjectFilter, sort *model.ProjectSortInput, page *model.PageInput) (*model.ProjectConnection, error)
+	Board(ctx context.Context, id *string, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) (*model.Board, error)
 	Settings(ctx context.Context) (*model.Settings, error)
 	TaskEvents(ctx context.Context, taskID string) ([]*model.DomainEvent, error)
-	DomainEvents(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string) ([]*model.DomainEvent, error)
-	DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error)
+	DomainEvents(ctx context.Context, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string) ([]*model.DomainEvent, error)
+	DomainEventsConnection(ctx context.Context, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) (*model.DomainEventConnection, error)
 	OutboxMessages(ctx context.Context, includePublished *bool) ([]*model.OutboxMessage, error)
 	TaskLogs(ctx context.Context, taskID string) ([]*model.TaskLog, error)
 	TaskConversations(ctx context.Context, taskID string) ([]*model.ConversationMessage, error)
@@ -999,7 +999,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Board(childComplexity, args["id"].(*string), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.Board(childComplexity, args["id"].(*string), args["filter"].(*model.TaskFilter), args["sort"].(*model.TaskSortInput), args["page"].(*model.PageInput)), true
 	case "Query.domainEvents":
 		if e.ComplexityRoot.Query.DomainEvents == nil {
 			break
@@ -1010,7 +1010,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.DomainEvents(childComplexity, args["filter"].(*model.DomainEventFilter), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string)), true
+		return e.ComplexityRoot.Query.DomainEvents(childComplexity, args["filter"].(*model.DomainEventFilter), args["sort"].(*model.DomainEventSortInput), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string)), true
 	case "Query.domainEventsConnection":
 		if e.ComplexityRoot.Query.DomainEventsConnection == nil {
 			break
@@ -1021,7 +1021,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.DomainEventsConnection(childComplexity, args["filter"].(*model.DomainEventFilter), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.DomainEventsConnection(childComplexity, args["filter"].(*model.DomainEventFilter), args["sort"].(*model.DomainEventSortInput), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string), args["page"].(*model.PageInput)), true
 
 	case "Query.outboxMessages":
 		if e.ComplexityRoot.Query.OutboxMessages == nil {
@@ -1055,7 +1055,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Projects(childComplexity, args["filter"].(*model.ProjectFilter)), true
+		return e.ComplexityRoot.Query.Projects(childComplexity, args["filter"].(*model.ProjectFilter), args["sort"].(*model.ProjectSortInput)), true
 	case "Query.projectsConnection":
 		if e.ComplexityRoot.Query.ProjectsConnection == nil {
 			break
@@ -1066,7 +1066,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.ProjectsConnection(childComplexity, args["filter"].(*model.ProjectFilter), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.ProjectsConnection(childComplexity, args["filter"].(*model.ProjectFilter), args["sort"].(*model.ProjectSortInput), args["page"].(*model.PageInput)), true
 	case "Query.settings":
 		if e.ComplexityRoot.Query.Settings == nil {
 			break
@@ -1127,7 +1127,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.TaskList(childComplexity, args["filter"].(*model.TaskFilter), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.TaskList(childComplexity, args["filter"].(*model.TaskFilter), args["sort"].(*model.TaskSortInput), args["page"].(*model.PageInput)), true
 	case "Query.taskLogs":
 		if e.ComplexityRoot.Query.TaskLogs == nil {
 			break
@@ -1149,7 +1149,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Tasks(childComplexity, args["filter"].(*model.TaskFilter), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.Tasks(childComplexity, args["filter"].(*model.TaskFilter), args["sort"].(*model.TaskSortInput), args["page"].(*model.PageInput)), true
 	case "Query.worker":
 		if e.ComplexityRoot.Query.Worker == nil {
 			break
@@ -1171,7 +1171,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Workers(childComplexity, args["filter"].(*model.WorkerFilter)), true
+		return e.ComplexityRoot.Query.Workers(childComplexity, args["filter"].(*model.WorkerFilter), args["sort"].(*model.WorkerSortInput)), true
 	case "Query.workersConnection":
 		if e.ComplexityRoot.Query.WorkersConnection == nil {
 			break
@@ -1182,7 +1182,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.WorkersConnection(childComplexity, args["filter"].(*model.WorkerFilter), args["page"].(*model.PageInput)), true
+		return e.ComplexityRoot.Query.WorkersConnection(childComplexity, args["filter"].(*model.WorkerFilter), args["sort"].(*model.WorkerSortInput), args["page"].(*model.PageInput)), true
 
 	case "Settings.createdAt":
 		if e.ComplexityRoot.Settings.CreatedAt == nil {
@@ -1650,19 +1650,23 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateTaskInput,
 		ec.unmarshalInputCreateWorkerInput,
 		ec.unmarshalInputDomainEventFilter,
+		ec.unmarshalInputDomainEventSortInput,
 		ec.unmarshalInputKeyValueInput,
 		ec.unmarshalInputPageInput,
 		ec.unmarshalInputProjectFilter,
+		ec.unmarshalInputProjectSortInput,
 		ec.unmarshalInputRegisterWorkerInput,
 		ec.unmarshalInputRespondTaskInteractionInput,
 		ec.unmarshalInputStartTaskInput,
 		ec.unmarshalInputTaskFilter,
+		ec.unmarshalInputTaskSortInput,
 		ec.unmarshalInputUpdateProjectInput,
 		ec.unmarshalInputUpdateTaskInput,
 		ec.unmarshalInputUpdateWorkerInput,
 		ec.unmarshalInputUpdateWorkerProjectBindingsInput,
 		ec.unmarshalInputWorkerAgentRuntimeEnvInput,
 		ec.unmarshalInputWorkerFilter,
+		ec.unmarshalInputWorkerSortInput,
 	)
 	first := true
 
@@ -2048,11 +2052,21 @@ func (ec *executionContext) field_Query_board_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["id"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalOTaskFilter2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskFilter)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg1
+	args["filter"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOTaskSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortInput)
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg3
 	return args, nil
 }
 
@@ -2064,26 +2078,31 @@ func (ec *executionContext) field_Query_domainEventsConnection_args(ctx context.
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateId", ec.unmarshalOID2ᚖstring)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalODomainEventSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["aggregateId"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateType", ec.unmarshalOString2ᚖstring)
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateId", ec.unmarshalOID2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["aggregateType"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "eventType", ec.unmarshalOString2ᚖstring)
+	args["aggregateId"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateType", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["eventType"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	args["aggregateType"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "eventType", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg4
+	args["eventType"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg5
 	return args, nil
 }
 
@@ -2095,21 +2114,26 @@ func (ec *executionContext) field_Query_domainEvents_args(ctx context.Context, r
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateId", ec.unmarshalOID2ᚖstring)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalODomainEventSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["aggregateId"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateType", ec.unmarshalOString2ᚖstring)
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateId", ec.unmarshalOID2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["aggregateType"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "eventType", ec.unmarshalOString2ᚖstring)
+	args["aggregateId"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "aggregateType", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["eventType"] = arg3
+	args["aggregateType"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "eventType", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["eventType"] = arg4
 	return args, nil
 }
 
@@ -2143,11 +2167,16 @@ func (ec *executionContext) field_Query_projectsConnection_args(ctx context.Cont
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOProjectSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg1
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg2
 	return args, nil
 }
 
@@ -2159,6 +2188,11 @@ func (ec *executionContext) field_Query_projects_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOProjectSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortInput)
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
 	return args, nil
 }
 
@@ -2208,11 +2242,16 @@ func (ec *executionContext) field_Query_taskList_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOTaskSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg1
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg2
 	return args, nil
 }
 
@@ -2246,11 +2285,16 @@ func (ec *executionContext) field_Query_tasks_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOTaskSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg1
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg2
 	return args, nil
 }
 
@@ -2273,11 +2317,16 @@ func (ec *executionContext) field_Query_workersConnection_args(ctx context.Conte
 		return nil, err
 	}
 	args["filter"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOWorkerSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortInput)
 	if err != nil {
 		return nil, err
 	}
-	args["page"] = arg1
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "page", ec.unmarshalOPageInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐPageInput)
+	if err != nil {
+		return nil, err
+	}
+	args["page"] = arg2
 	return args, nil
 }
 
@@ -2289,6 +2338,11 @@ func (ec *executionContext) field_Query_workers_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort", ec.unmarshalOWorkerSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortInput)
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
 	return args, nil
 }
 
@@ -6093,7 +6147,7 @@ func (ec *executionContext) _Query_tasks(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_tasks,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Tasks(ctx, fc.Args["filter"].(*model.TaskFilter), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().Tasks(ctx, fc.Args["filter"].(*model.TaskFilter), fc.Args["sort"].(*model.TaskSortInput), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNTaskConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskConnection,
@@ -6140,7 +6194,7 @@ func (ec *executionContext) _Query_taskList(ctx context.Context, field graphql.C
 		ec.fieldContext_Query_taskList,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().TaskList(ctx, fc.Args["filter"].(*model.TaskFilter), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().TaskList(ctx, fc.Args["filter"].(*model.TaskFilter), fc.Args["sort"].(*model.TaskSortInput), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNTask2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskᚄ,
@@ -6294,7 +6348,7 @@ func (ec *executionContext) _Query_workers(ctx context.Context, field graphql.Co
 		ec.fieldContext_Query_workers,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Workers(ctx, fc.Args["filter"].(*model.WorkerFilter))
+			return ec.Resolvers.Query().Workers(ctx, fc.Args["filter"].(*model.WorkerFilter), fc.Args["sort"].(*model.WorkerSortInput))
 		},
 		nil,
 		ec.marshalNWorker2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerᚄ,
@@ -6367,7 +6421,7 @@ func (ec *executionContext) _Query_workersConnection(ctx context.Context, field 
 		ec.fieldContext_Query_workersConnection,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().WorkersConnection(ctx, fc.Args["filter"].(*model.WorkerFilter), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().WorkersConnection(ctx, fc.Args["filter"].(*model.WorkerFilter), fc.Args["sort"].(*model.WorkerSortInput), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNWorkerConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerConnection,
@@ -6475,7 +6529,7 @@ func (ec *executionContext) _Query_projects(ctx context.Context, field graphql.C
 		ec.fieldContext_Query_projects,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Projects(ctx, fc.Args["filter"].(*model.ProjectFilter))
+			return ec.Resolvers.Query().Projects(ctx, fc.Args["filter"].(*model.ProjectFilter), fc.Args["sort"].(*model.ProjectSortInput))
 		},
 		nil,
 		ec.marshalNProject2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectᚄ,
@@ -6536,7 +6590,7 @@ func (ec *executionContext) _Query_projectsConnection(ctx context.Context, field
 		ec.fieldContext_Query_projectsConnection,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().ProjectsConnection(ctx, fc.Args["filter"].(*model.ProjectFilter), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().ProjectsConnection(ctx, fc.Args["filter"].(*model.ProjectFilter), fc.Args["sort"].(*model.ProjectSortInput), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNProjectConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectConnection,
@@ -6583,7 +6637,7 @@ func (ec *executionContext) _Query_board(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_board,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Board(ctx, fc.Args["id"].(*string), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().Board(ctx, fc.Args["id"].(*string), fc.Args["filter"].(*model.TaskFilter), fc.Args["sort"].(*model.TaskSortInput), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNBoard2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐBoard,
@@ -6744,7 +6798,7 @@ func (ec *executionContext) _Query_domainEvents(ctx context.Context, field graph
 		ec.fieldContext_Query_domainEvents,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().DomainEvents(ctx, fc.Args["filter"].(*model.DomainEventFilter), fc.Args["aggregateId"].(*string), fc.Args["aggregateType"].(*string), fc.Args["eventType"].(*string))
+			return ec.Resolvers.Query().DomainEvents(ctx, fc.Args["filter"].(*model.DomainEventFilter), fc.Args["sort"].(*model.DomainEventSortInput), fc.Args["aggregateId"].(*string), fc.Args["aggregateType"].(*string), fc.Args["eventType"].(*string))
 		},
 		nil,
 		ec.marshalNDomainEvent2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventᚄ,
@@ -6805,7 +6859,7 @@ func (ec *executionContext) _Query_domainEventsConnection(ctx context.Context, f
 		ec.fieldContext_Query_domainEventsConnection,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().DomainEventsConnection(ctx, fc.Args["filter"].(*model.DomainEventFilter), fc.Args["aggregateId"].(*string), fc.Args["aggregateType"].(*string), fc.Args["eventType"].(*string), fc.Args["page"].(*model.PageInput))
+			return ec.Resolvers.Query().DomainEventsConnection(ctx, fc.Args["filter"].(*model.DomainEventFilter), fc.Args["sort"].(*model.DomainEventSortInput), fc.Args["aggregateId"].(*string), fc.Args["aggregateType"].(*string), fc.Args["eventType"].(*string), fc.Args["page"].(*model.PageInput))
 		},
 		nil,
 		ec.marshalNDomainEventConnection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventConnection,
@@ -11426,7 +11480,7 @@ func (ec *executionContext) unmarshalInputDomainEventFilter(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"aggregateId", "aggregateType", "eventType"}
+	fieldsInOrder := [...]string{"aggregateId", "aggregateType", "eventType", "search"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -11454,6 +11508,50 @@ func (ec *executionContext) unmarshalInputDomainEventFilter(ctx context.Context,
 				return it, err
 			}
 			it.EventType = data
+		case "search":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("search"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Search = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputDomainEventSortInput(ctx context.Context, obj any) (model.DomainEventSortInput, error) {
+	var it model.DomainEventSortInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalODomainEventSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
 		}
 	}
 	return it, nil
@@ -11544,7 +11642,7 @@ func (ec *executionContext) unmarshalInputProjectFilter(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"includeArchived"}
+	fieldsInOrder := [...]string{"includeArchived", "search"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -11558,6 +11656,50 @@ func (ec *executionContext) unmarshalInputProjectFilter(ctx context.Context, obj
 				return it, err
 			}
 			it.IncludeArchived = data
+		case "search":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("search"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Search = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputProjectSortInput(ctx context.Context, obj any) (model.ProjectSortInput, error) {
+	var it model.ProjectSortInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalOProjectSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
 		}
 	}
 	return it, nil
@@ -11741,7 +11883,7 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"status", "projectId", "workerId", "agentType", "includeArchived"}
+	fieldsInOrder := [...]string{"status", "projectId", "workerId", "agentType", "includeArchived", "search"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -11783,6 +11925,50 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 				return it, err
 			}
 			it.IncludeArchived = data
+		case "search":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("search"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Search = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputTaskSortInput(ctx context.Context, obj any) (model.TaskSortInput, error) {
+	var it model.TaskSortInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalOTaskSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
 		}
 	}
 	return it, nil
@@ -12117,7 +12303,7 @@ func (ec *executionContext) unmarshalInputWorkerFilter(ctx context.Context, obj 
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"status", "projectId", "agentType", "includeDisabled"}
+	fieldsInOrder := [...]string{"status", "projectId", "agentType", "includeDisabled", "search"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -12152,6 +12338,50 @@ func (ec *executionContext) unmarshalInputWorkerFilter(ctx context.Context, obj 
 				return it, err
 			}
 			it.IncludeDisabled = data
+		case "search":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("search"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Search = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWorkerSortInput(ctx context.Context, obj any) (model.WorkerSortInput, error) {
+	var it model.WorkerSortInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalOWorkerSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
 		}
 	}
 	return it, nil
@@ -15596,6 +15826,30 @@ func (ec *executionContext) unmarshalODomainEventFilter2ᚖgithubᚗcomᚋtangxu
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalODomainEventSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortField(ctx context.Context, v any) (*model.DomainEventSortField, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.DomainEventSortField)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalODomainEventSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortField(ctx context.Context, sel ast.SelectionSet, v *model.DomainEventSortField) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalODomainEventSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEventSortInput(ctx context.Context, v any) (*model.DomainEventSortInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputDomainEventSortInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalOID2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
 	if v == nil {
 		return nil, nil
@@ -15709,6 +15963,46 @@ func (ec *executionContext) unmarshalOProjectFilter2ᚖgithubᚗcomᚋtangxusc�
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalOProjectSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortField(ctx context.Context, v any) (*model.ProjectSortField, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.ProjectSortField)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOProjectSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortField(ctx context.Context, sel ast.SelectionSet, v *model.ProjectSortField) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOProjectSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐProjectSortInput(ctx context.Context, v any) (*model.ProjectSortInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputProjectSortInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx context.Context, v any) (*model.SortDirection, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.SortDirection)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOSortDirection2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐSortDirection(ctx context.Context, sel ast.SelectionSet, v *model.SortDirection) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
 func (ec *executionContext) unmarshalOStartTaskInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐStartTaskInput(ctx context.Context, v any) (*model.StartTaskInput, error) {
 	if v == nil {
 		return nil, nil
@@ -15818,6 +16112,30 @@ func (ec *executionContext) marshalOTaskInteractionStatus2ᚖgithubᚗcomᚋtang
 	return v
 }
 
+func (ec *executionContext) unmarshalOTaskSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortField(ctx context.Context, v any) (*model.TaskSortField, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.TaskSortField)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTaskSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortField(ctx context.Context, sel ast.SelectionSet, v *model.TaskSortField) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOTaskSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskSortInput(ctx context.Context, v any) (*model.TaskSortInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputTaskSortInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalOTaskStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskStatus(ctx context.Context, v any) (*model.TaskStatus, error) {
 	if v == nil {
 		return nil, nil
@@ -15899,6 +16217,30 @@ func (ec *executionContext) marshalOWorkerProjectBindingMode2ᚖgithubᚗcomᚋt
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) unmarshalOWorkerSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortField(ctx context.Context, v any) (*model.WorkerSortField, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.WorkerSortField)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOWorkerSortField2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortField(ctx context.Context, sel ast.SelectionSet, v *model.WorkerSortField) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOWorkerSortInput2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerSortInput(ctx context.Context, v any) (*model.WorkerSortInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputWorkerSortInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOWorkerStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐWorkerStatus(ctx context.Context, v any) (*model.WorkerStatus, error) {

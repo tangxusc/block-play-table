@@ -46,6 +46,8 @@ class ApiClient {
   Future<BoardData> fetchBoardData(
     String view, {
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async {
     final id = switch (view) {
       'CALENDAR' => 'calendar',
@@ -54,8 +56,8 @@ class ApiClient {
     };
     final boardFuture = graphQL(
       r'''
-        query Board($id: ID, $page: PageInput) {
-          board(id: $id, page: $page) {
+        query Board($id: ID, $filter: TaskFilter, $sort: TaskSortInput, $page: PageInput) {
+          board(id: $id, filter: $filter, sort: $sort, page: $page) {
             id
             name
             type
@@ -109,7 +111,12 @@ class ApiClient {
           }
         }
         ''',
-      variables: {'id': id, 'page': page.toGraphQLInput()},
+      variables: {
+        'id': id,
+        'filter': _filterInput({'includeArchived': true}, search),
+        'sort': sort.toGraphQLInput(),
+        'page': page.toGraphQLInput(),
+      },
     );
     final projectsFuture = fetchProjects();
     final workersFuture = fetchWorkers();
@@ -126,8 +133,8 @@ class ApiClient {
   Future<List<ProjectItem>> fetchProjects() async {
     final data = await graphQL(r'''
       query Projects {
-        projects(filter: { includeArchived: true }) {
-          id name gitUrl defaultBranch worktreeNamePrefix archived
+        projects(filter: { includeArchived: true }, sort: { field: CREATED_AT, direction: DESC }) {
+          id name gitUrl defaultBranch worktreeNamePrefix archived createdAt updatedAt
         }
       }
       ''');
@@ -138,19 +145,25 @@ class ApiClient {
 
   Future<PagedResult<ProjectItem>> fetchProjectsPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async {
     final data = await graphQL(
       r'''
-      query ProjectsPage($page: PageInput) {
-        projectsConnection(filter: { includeArchived: true }, page: $page) {
+      query ProjectsPage($filter: ProjectFilter, $sort: ProjectSortInput, $page: PageInput) {
+        projectsConnection(filter: $filter, sort: $sort, page: $page) {
           totalCount
           nodes {
-            id name gitUrl defaultBranch worktreeNamePrefix archived
+            id name gitUrl defaultBranch worktreeNamePrefix archived createdAt updatedAt
           }
         }
       }
       ''',
-      variables: {'page': page.toGraphQLInput()},
+      variables: {
+        'filter': _filterInput({'includeArchived': true}, search),
+        'sort': sort.toGraphQLInput(),
+        'page': page.toGraphQLInput(),
+      },
     );
     final connection =
         data['projectsConnection'] as Map<String, dynamic>? ?? const {};
@@ -165,9 +178,9 @@ class ApiClient {
   Future<List<WorkerItem>> fetchWorkers() async {
     final data = await graphQL(r'''
       query Workers {
-        workers(filter: { includeDisabled: true }) {
+        workers(filter: { includeDisabled: true }, sort: { field: CREATED_AT, direction: DESC }) {
           id name status supportedAgents workDir startupCommand projectBindingMode
-          boundProjectIds currentTaskIds lastHeartbeatAt
+          boundProjectIds currentTaskIds lastHeartbeatAt createdAt updatedAt
           agentRuntimeEnv {
             agentType
             vars { key valueMasked description enabled sensitive }
@@ -182,15 +195,17 @@ class ApiClient {
 
   Future<PagedResult<WorkerItem>> fetchWorkersPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'CREATED_AT'),
   }) async {
     final data = await graphQL(
       r'''
-      query WorkersPage($page: PageInput) {
-        workersConnection(filter: { includeDisabled: true }, page: $page) {
+      query WorkersPage($filter: WorkerFilter, $sort: WorkerSortInput, $page: PageInput) {
+        workersConnection(filter: $filter, sort: $sort, page: $page) {
           totalCount
           nodes {
             id name status supportedAgents workDir startupCommand projectBindingMode
-            boundProjectIds currentTaskIds lastHeartbeatAt
+            boundProjectIds currentTaskIds lastHeartbeatAt createdAt updatedAt
             agentRuntimeEnv {
               agentType
               vars { key valueMasked description enabled sensitive }
@@ -199,7 +214,11 @@ class ApiClient {
         }
       }
       ''',
-      variables: {'page': page.toGraphQLInput()},
+      variables: {
+        'filter': _filterInput({'includeDisabled': true}, search),
+        'sort': sort.toGraphQLInput(),
+        'page': page.toGraphQLInput(),
+      },
     );
     final connection =
         data['workersConnection'] as Map<String, dynamic>? ?? const {};
@@ -214,7 +233,7 @@ class ApiClient {
   Future<List<DomainEventItem>> fetchEvents() async {
     final data = await graphQL(r'''
       query Events {
-        domainEvents {
+        domainEvents(sort: { field: OCCURRED_AT, direction: DESC }) {
           eventId eventType aggregateType aggregateId aggregateVersion payload occurredAt
         }
       }
@@ -226,11 +245,13 @@ class ApiClient {
 
   Future<PagedResult<DomainEventItem>> fetchEventsPage({
     PageRequest page = const PageRequest(),
+    String search = '',
+    SortRequest sort = const SortRequest(field: 'OCCURRED_AT'),
   }) async {
     final data = await graphQL(
       r'''
-      query EventsPage($page: PageInput) {
-        domainEventsConnection(page: $page) {
+      query EventsPage($filter: DomainEventFilter, $sort: DomainEventSortInput, $page: PageInput) {
+        domainEventsConnection(filter: $filter, sort: $sort, page: $page) {
           totalCount
           nodes {
             eventId eventType aggregateType aggregateId aggregateVersion payload occurredAt
@@ -238,7 +259,11 @@ class ApiClient {
         }
       }
       ''',
-      variables: {'page': page.toGraphQLInput()},
+      variables: {
+        'filter': _filterInput(const {}, search),
+        'sort': sort.toGraphQLInput(),
+        'page': page.toGraphQLInput(),
+      },
     );
     final connection =
         data['domainEventsConnection'] as Map<String, dynamic>? ?? const {};
@@ -702,6 +727,18 @@ class ApiClient {
         ? uri.path.replaceFirst(RegExp(r'/graphql$'), '/subscriptions')
         : '/subscriptions';
     return uri.replace(scheme: scheme, path: path).toString();
+  }
+
+  static Map<String, dynamic> _filterInput(
+    Map<String, dynamic> base,
+    String search,
+  ) {
+    final input = Map<String, dynamic>.from(base);
+    final query = search.trim();
+    if (query.isNotEmpty) {
+      input['search'] = query;
+    }
+    return input;
   }
 
   static List<Map<String, dynamic>> _agentRuntimeEnvInput(

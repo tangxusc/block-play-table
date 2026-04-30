@@ -733,7 +733,7 @@ Calendar 展示规则：
 1. Calendar 页面使用任务已有的 `startDate` 和 `endDate` 字段作为全天日期范围，不引入小时级时间轴。
 2. 月视图按周一到周日排列，跨多日任务渲染为连续任务条，跨周时拆分为多段。
 3. 周视图展示一周内的任务范围，日视图展示当天覆盖到的任务列表，年视图展示每月任务数量和有任务日期标记。
-4. Calendar 搜索只影响当前日历视图，不改变 Kanban 或列表视图的数据过滤。
+4. Board 顶部搜索是服务端全局任务过滤条件，Kanban、List、Calendar 三种视图共享同一搜索结果；Calendar 在搜索结果变化后聚焦第一条匹配任务的开始日期。
 
 ## 6. 领域事件设计
 
@@ -1218,26 +1218,26 @@ input UpdateWorkerInput {
 ```graphql
 type Query {
   task(id: ID!): Task
-  tasks(filter: TaskFilter, page: PageInput): TaskConnection!
+  tasks(filter: TaskFilter, sort: TaskSortInput, page: PageInput): TaskConnection!
   taskInteractions(taskId: ID!, status: TaskInteractionStatus): [TaskInteraction!]!
 
   worker(id: ID!): Worker
-  workers(filter: WorkerFilter): [Worker!]!
-  workersConnection(filter: WorkerFilter, page: PageInput): WorkerConnection!
+  workers(filter: WorkerFilter, sort: WorkerSortInput): [Worker!]!
+  workersConnection(filter: WorkerFilter, sort: WorkerSortInput, page: PageInput): WorkerConnection!
 
   project(id: ID!): Project
-  projects(filter: ProjectFilter): [Project!]!
-  projectsConnection(filter: ProjectFilter, page: PageInput): ProjectConnection!
+  projects(filter: ProjectFilter, sort: ProjectSortInput): [Project!]!
+  projectsConnection(filter: ProjectFilter, sort: ProjectSortInput, page: PageInput): ProjectConnection!
 
-  board(id: ID, page: PageInput): Board!
+  board(id: ID, filter: TaskFilter, sort: TaskSortInput, page: PageInput): Board!
   settings: Settings!
   taskEvents(taskId: ID!): [DomainEvent!]!
-  domainEvents(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
-  domainEventsConnection(filter: DomainEventFilter, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
+  domainEvents(filter: DomainEventFilter, sort: DomainEventSortInput, aggregateId: ID, aggregateType: String, eventType: String): [DomainEvent!]!
+  domainEventsConnection(filter: DomainEventFilter, sort: DomainEventSortInput, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
 }
 ```
 
-分页 connection 类型统一返回 `nodes` 和 `totalCount`。`projectsConnection`、`workersConnection`、`domainEventsConnection` 默认最新记录优先；旧列表字段继续保留用于兼容和表单候选项加载。
+分页 connection 类型统一返回 `nodes` 和 `totalCount`。`TaskFilter`、`ProjectFilter`、`WorkerFilter`、`DomainEventFilter` 均支持大小写不敏感的全文 `search`。`tasks`/`board`、`projects`、`workers`、`domainEvents` 均支持显式 `sort`；默认排序为任务、项目、Worker 按 `createdAt DESC`，事件按 `occurredAt DESC`。旧列表字段继续保留用于兼容和表单候选项加载。
 
 ### 8.3 Mutation
 
