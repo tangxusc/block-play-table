@@ -493,10 +493,37 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       },
     },
   );
-  const projectId = createdProject.createProject.id;
+  let boardProjectId = createdProject.createProject.id;
+  let projectName = `Pagination Base Project ${suffix}`;
+
+  const otherProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }",
+    {
+      input: {
+        name: `Pagination Other Project ${suffix}`,
+        gitUrl: "pagination-other-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "pagination-other",
+      },
+    },
+  );
+  for (let index = 0; index < 3; index++) {
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+      {
+        input: {
+          title: `Project Filter Other Task ${suffix}-${index}`,
+          projectId: otherProject.createProject.id,
+          agentType: "codex",
+        },
+      },
+    );
+  }
 
   for (let index = 0; index < 21; index++) {
-    await graphQL(
+    const paginationProject = await graphQL(
       request,
       "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
       {
@@ -508,6 +535,10 @@ test("trusted Flutter web UI paginates board projects workers and events", async
         },
       },
     );
+    if (index === 20) {
+      boardProjectId = paginationProject.createProject.id;
+      projectName = `Pagination Project ${suffix}-${index}`;
+    }
     await graphQL(
       request,
       "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }",
@@ -521,13 +552,16 @@ test("trusted Flutter web UI paginates board projects workers and events", async
         },
       },
     );
+  }
+
+  for (let index = 0; index < 21; index++) {
     await graphQL(
       request,
       "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
       {
         input: {
           title: `Pagination Task ${suffix}-${index}`,
-          projectId,
+          projectId: boardProjectId,
           agentType: "codex",
         },
       },
@@ -591,6 +625,41 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   await expect(
     page.getByRole("group", {
       name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
+
+  await fillFlutterTextField(page, boardSearch, "");
+  await page.getByRole("button", { name: /Project All projects/ }).click();
+  await page.getByRole("menuitem", { name: projectName }).click();
+  await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-0`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Project Filter Other Task ${suffix}-0`),
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page.getByText(/Showing 21-21 of 21/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await fillFlutterTextField(page, boardSearch, `Pagination Task ${suffix}`);
+  await page.getByRole("button", { name: "Sort ascending" }).click();
+  await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Pagination Task ${suffix}-20`),
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: new RegExp(`Project Filter Other Task ${suffix}-0`),
     }),
   ).toHaveCount(0);
 

@@ -247,6 +247,22 @@ func TestServerPaginationConnections(t *testing.T) {
 		t.Fatalf("searched board = %#v", searchedBoard)
 	}
 
+	for _, title := range []string{"First Project Task 1", "First Project Task 2"} {
+		_ = postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
+			"input": map[string]any{"title": title, "projectId": firstProjectID, "agentType": "codex"},
+		})
+	}
+	projectBoard := postGraphQL(t, server.URL, `query Board($projectId: ID!) {
+		board(filter: { includeArchived: true, projectId: $projectId }, sort: { field: TITLE, direction: ASC }, page: { offset: 1, limit: 1 }) {
+			totalCount
+			tasks { title }
+		}
+	}`, map[string]any{"projectId": secondProjectID})["data"].(map[string]any)["board"].(map[string]any)
+	projectBoardTasks := projectBoard["tasks"].([]any)
+	if projectBoard["totalCount"] != float64(3) || len(projectBoardTasks) != 1 || projectBoardTasks[0].(map[string]any)["title"] != "Task 2" {
+		t.Fatalf("project-filtered board = %#v", projectBoard)
+	}
+
 	searchedProjects := postGraphQL(t, server.URL, `query {
 		projectsConnection(filter: { includeArchived: true, search: "First Project" }, sort: { field: NAME, direction: ASC }, page: { offset: 0, limit: 1 }) {
 			totalCount
