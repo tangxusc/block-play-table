@@ -1295,6 +1295,14 @@ Worker -> Manager
 3. 更容易穿透 NAT。
 4. Worker 可自行实现断线重连。
 
+Worker 同时会主动连接 Manager 的 FRP WebSocket：
+
+```text
+Worker -> Manager /worker/frp
+```
+
+该连接升级后不承载 JSON 消息，而是使用 yamux 多路复用字节流。Manager 收到 `/proxy/**` HTTP 请求后，根据 `worker: <Worker name>` 和 `worker_port: <port>` header 选择 Worker 隧道，打开一个 yamux stream，将请求转发到 Worker 本机 `http://127.0.0.1:<port>`。Manager 会移除 `/proxy` 前缀，并且不把 `worker`、`worker_port` 这两个路由 header 透传给 Worker 本地服务。
+
 ### 9.2 基础消息结构
 
 ```json
@@ -1383,6 +1391,10 @@ Manager 下发给 Worker 的实时交互消息：
 | `TASK_INTERACTION_RESPONSE` | 用户对同一 `interactionId` 的批准、拒绝、取消或文本回答 |
 
 实时交互不复用 `TASK_CONTINUE`。`continueTask` 只用于已完成任务基于 `agentSessionId` 继续会话；运行中的授权和提问走 `TaskInteraction` 持久化闭环。
+
+### 9.5 FRP 代理约束
+
+FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**` 按 name 精确匹配在线隧道。`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机监听的 HTTP 服务。
 `TASK_INTERACTION_RESOLVED` 会回带 `responded/decision/message/payload`，用于让 Manager 在恢复任务前幂等落库用户响应，避免 Agent 极快完成时终态清理把已响应交互误取消。
 
 ## 10. 数据架构
@@ -1803,6 +1815,7 @@ Worker 连接示例：
 
 ```text
 ws://manager:8080/worker/ws?worker_id=worker-001&token=xxx
+ws://manager:8080/worker/frp?worker_id=worker-001&worker_name=team-worker&token=xxx
 ```
 
 生产环境必须使用：

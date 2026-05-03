@@ -29,6 +29,9 @@ var WorkerCurrentTaskIDsSQL string
 //go:embed 009_task_interactions.sql
 var TaskInteractionsSQL string
 
+//go:embed 010_unique_worker_name.sql
+var UniqueWorkerNameSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -44,4 +47,5 @@ var All = []Migration{
 	{Version: "007_task_agent_config", SQL: TaskAgentConfigSQL},
 	{Version: "008_worker_current_task_ids", SQL: WorkerCurrentTaskIDsSQL},
 	{Version: "009_task_interactions", SQL: TaskInteractionsSQL},
+	{Version: "010_unique_worker_name", SQL: UniqueWorkerNameSQL},
 }

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/tangxusc/block-play-table/pkg/domain"
@@ -21,7 +22,7 @@ func main() {
 		agents = []domain.AgentType{domain.AgentCodex, domain.AgentClaude}
 	}
 	cfg := client.Config{
-		ManagerWSURL:    getenv("MANAGER_WS_URL", "ws://localhost:8080/worker/ws"),
+		ManagerWSURLs:   client.ParseManagerWSURLs(os.Getenv("MANAGER_WS_URLS"), getenv("MANAGER_WS_URL", "ws://localhost:8080/worker/ws")),
 		WorkerID:        getenv("WORKER_ID", "worker-local"),
 		WorkerToken:     os.Getenv("WORKER_TOKEN"),
 		Name:            getenv("WORKER_NAME", "local-worker"),
@@ -32,7 +33,7 @@ func main() {
 		BoundProjectIDs: client.ParseCSV(os.Getenv("WORKER_BOUND_PROJECT_IDS")),
 		Logger:          logger,
 	}
-	logger.Info("worker starting", "manager", cfg.ManagerWSURL, "workerId", cfg.WorkerID, "trustedMode", true)
+	logger.Info("worker starting", "managers", strings.Join(cfg.ManagerWSURLs, ","), "workerId", cfg.WorkerID, "trustedMode", true)
 	if err := client.New(cfg).Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("worker failed", "error", err)
 		os.Exit(1)

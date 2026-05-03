@@ -101,6 +101,7 @@ test("board kanban groups task statuses into three visual columns", async ({
   const suffix = Date.now();
   const projectName = `Board Groups Project ${suffix}`;
   const workerId = `worker-board-groups-${suffix}`;
+  const workerName = `Board Groups Worker ${suffix}`;
 
   const createdProject = await graphQL(
     request,
@@ -123,7 +124,7 @@ test("board kanban groups task statuses into three visual columns", async ({
     {
       input: {
         id: workerId,
-        name: "Board Groups Worker",
+        name: workerName,
         supportedAgents: ["codex"],
         workDir: "/tmp/e2e-board-groups-worker",
         projectBindingMode: "SPECIFIC_PROJECTS",

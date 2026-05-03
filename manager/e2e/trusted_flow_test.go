@@ -3,16 +3,21 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/httpapi"
 	"github.com/tangxusc/block-play-table/pkg/domain"
+	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -85,6 +90,95 @@ func TestTrustedManagerWorkerFlow(t *testing.T) {
 	if got := len(logs["data"].(map[string]any)["taskLogs"].([]any)); got != 1 {
 		t.Fatalf("logs count = %d, want 1", got)
 	}
+}
+
+func TestTrustedManagerWorkerFRPProxyFlow(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore())
+	server := httptest.NewServer(httpapi.NewServer(service).Handler())
+	defer server.Close()
+
+	targetRequests := make(chan *http.Request, 1)
+	targetBodies := make(chan string, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read target body: %v", err)
+		}
+		targetBodies <- string(body)
+		targetRequests <- r
+		w.Header().Set("X-E2E-Target", "ok")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("frp ok"))
+	}))
+	defer target.Close()
+	port := mustTargetPort(t, target.URL)
+
+	frpURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/frp?worker_id=worker-frp-e2e&worker_name=FRP%20E2E%20Worker"
+	conn, _, err := websocket.DefaultDialer.Dial(frpURL, nil)
+	if err != nil {
+		t.Fatalf("dial frp ws: %v", err)
+	}
+	defer conn.Close()
+	session, err := yamux.Client(frp.NewWebSocketConn(conn), nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	defer session.Close()
+	go func() {
+		if err := frp.ServeWorkerProxy(nil, session); err != nil && err != yamux.ErrSessionShutdown {
+			t.Errorf("serve worker proxy: %v", err)
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/proxy/target/path?from=e2e", strings.NewReader("hello frp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("worker", "FRP E2E Worker")
+	req.Header.Set("worker_port", strconv.Itoa(port))
+	req.Header.Set("X-E2E", "yes")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated || res.Header.Get("X-E2E-Target") != "ok" || string(body) != "frp ok" {
+		t.Fatalf("frp response = status %d header %q body %q", res.StatusCode, res.Header.Get("X-E2E-Target"), body)
+	}
+	select {
+	case proxied := <-targetRequests:
+		if proxied.URL.Path != "/target/path" || proxied.URL.RawQuery != "from=e2e" {
+			t.Fatalf("proxied URL = %s?%s", proxied.URL.Path, proxied.URL.RawQuery)
+		}
+		if proxied.Header.Get("X-E2E") != "yes" {
+			t.Fatalf("proxied X-E2E = %q", proxied.Header.Get("X-E2E"))
+		}
+		if proxied.Header.Get("worker") != "" || proxied.Header.Get("worker_port") != "" {
+			t.Fatalf("routing headers leaked to target: %+v", proxied.Header)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for proxied request")
+	}
+	if got := <-targetBodies; got != "hello frp" {
+		t.Fatalf("target body = %q, want hello frp", got)
+	}
+}
+
+func mustTargetPort(t *testing.T, rawURL string) int {
+	t.Helper()
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(rawURL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
 }
 
 type rawEnvelope struct {

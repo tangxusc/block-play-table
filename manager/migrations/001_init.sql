@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS workers (
   updated_at TIMESTAMP NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_name_unique ON workers(name);
+
 CREATE TABLE IF NOT EXISTS worker_project_bindings (
   worker_id TEXT NOT NULL REFERENCES workers(id),
   project_id TEXT NOT NULL REFERENCES projects(id),
