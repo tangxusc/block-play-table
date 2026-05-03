@@ -12,13 +12,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/pkg/domain"
+	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/worker/internal/executor"
 )
 
 type Config struct {
 	ManagerWSURL    string
+	ManagerWSURLs   []string
 	WorkerID        string
 	WorkerToken     string
 	Name            string
@@ -67,9 +70,18 @@ func New(config Config) *Client {
 }
 
 func (c *Client) Run(ctx context.Context) error {
-	if c.config.ManagerWSURL == "" {
+	managerURLs := c.managerWSURLs()
+	if len(managerURLs) == 0 {
 		return errors.New("manager websocket url is required")
 	}
+	if len(managerURLs) > 1 {
+		return c.runMultipleManagers(ctx, managerURLs)
+	}
+	c.config.ManagerWSURL = managerURLs[0]
+	return c.runSingleManager(ctx)
+}
+
+func (c *Client) runSingleManager(ctx context.Context) error {
 	for {
 		if err := c.connectAndServe(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -83,6 +95,32 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (c *Client) runMultipleManagers(ctx context.Context, managerURLs []string) error {
+	errCh := make(chan error, len(managerURLs))
+	for _, managerURL := range managerURLs {
+		childConfig := c.config
+		childConfig.ManagerWSURL = managerURL
+		childConfig.ManagerWSURLs = nil
+		if c.logger != nil {
+			childConfig.Logger = c.logger.With("manager", managerURL)
+		}
+		go func() {
+			errCh <- New(childConfig).Run(ctx)
+		}()
+	}
+	for i := 0; i < len(managerURLs); i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errCh:
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Client) connectAndServe(ctx context.Context) error {
@@ -129,15 +167,73 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		return err
 	}
 
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go c.frpLoop(connCtx, c.config.ManagerWSURL)
+
 	errCh := make(chan error, 2)
-	go func() { errCh <- c.heartbeatLoop(ctx) }()
-	go func() { errCh <- c.readLoop(ctx) }()
+	go func() { errCh <- c.heartbeatLoop(connCtx) }()
+	go func() { errCh <- c.readLoop(connCtx) }()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-errCh:
 		return err
 	}
+}
+
+func (c *Client) frpLoop(ctx context.Context, managerWSURL string) {
+	for {
+		if err := c.connectFRP(ctx, managerWSURL); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			c.logger.Warn("worker frp connection lost; retrying", "manager", managerWSURL, "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func (c *Client) connectFRP(ctx context.Context, managerWSURL string) error {
+	frpURL, err := c.frpURL(managerWSURL)
+	if err != nil {
+		return err
+	}
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, frpURL, nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	session, err := yamux.Client(frp.NewWebSocketConn(conn), nil)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	return frp.ServeWorkerProxy(ctx, session)
+}
+
+func (c *Client) frpURL(managerWSURL string) (string, error) {
+	wsURL, err := url.Parse(managerWSURL)
+	if err != nil {
+		return "", err
+	}
+	if wsURL.Path == "" || wsURL.Path == "/" {
+		wsURL.Path = "/worker/frp"
+	} else {
+		wsURL.Path = strings.TrimSuffix(wsURL.Path, "/worker/ws") + "/worker/frp"
+	}
+	q := wsURL.Query()
+	q.Set("worker_id", c.config.WorkerID)
+	q.Set("worker_name", c.config.Name)
+	if c.config.WorkerToken != "" {
+		q.Set("token", c.config.WorkerToken)
+	}
+	wsURL.RawQuery = q.Encode()
+	return wsURL.String(), nil
 }
 
 func (c *Client) heartbeatLoop(ctx context.Context) error {
@@ -232,6 +328,20 @@ func (c *Client) SendWorkerEvent(ctx context.Context, event protocol.WorkerEvent
 	})
 }
 
+func (c *Client) managerWSURLs() []string {
+	if len(c.config.ManagerWSURLs) > 0 {
+		out := make([]string, 0, len(c.config.ManagerWSURLs))
+		for _, item := range c.config.ManagerWSURLs {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+	return ParseManagerWSURLs("", c.config.ManagerWSURL)
+}
+
 func (c *Client) send(ctx context.Context, envelope protocol.Envelope) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -302,4 +412,11 @@ func ParseCSV(value string) []string {
 		}
 	}
 	return items
+}
+
+func ParseManagerWSURLs(primary, legacy string) []string {
+	if strings.TrimSpace(primary) != "" {
+		return ParseCSV(primary)
+	}
+	return ParseCSV(legacy)
 }

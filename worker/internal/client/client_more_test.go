@@ -48,6 +48,58 @@ func TestParseWorkerConfigHelpersAndRunCancellation(t *testing.T) {
 	}
 }
 
+func TestParseManagerWSURLsPrefersListAndKeepsLegacyCSV(t *testing.T) {
+	urls := ParseManagerWSURLs(" ws://manager-1/worker/ws,ws://manager-2/worker/ws ", "ws://legacy/worker/ws")
+	if len(urls) != 2 || urls[0] != "ws://manager-1/worker/ws" || urls[1] != "ws://manager-2/worker/ws" {
+		t.Fatalf("ParseManagerWSURLs primary = %#v", urls)
+	}
+	urls = ParseManagerWSURLs("", " ws://legacy-1/worker/ws, ws://legacy-2/worker/ws ")
+	if len(urls) != 2 || urls[0] != "ws://legacy-1/worker/ws" || urls[1] != "ws://legacy-2/worker/ws" {
+		t.Fatalf("ParseManagerWSURLs legacy = %#v", urls)
+	}
+}
+
+func TestRunConnectsToAllConfiguredManagers(t *testing.T) {
+	firstURL, firstRegistered, closeFirst := registrationServer(t)
+	defer closeFirst()
+	secondURL, secondRegistered, closeSecond := registrationServer(t)
+	defer closeSecond()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- New(Config{
+			ManagerWSURLs:   []string{firstURL, secondURL},
+			WorkerID:        "worker-multi",
+			Name:            "Multi Worker",
+			WorkDir:         t.TempDir(),
+			SupportedAgents: []domain.AgentType{domain.AgentCodex},
+			HeartbeatEvery:  time.Hour,
+		}).Run(ctx)
+	}()
+
+	for label, registered := range map[string]<-chan protocol.Envelope{"first": firstRegistered, "second": secondRegistered} {
+		select {
+		case envelope := <-registered:
+			if envelope.Type != protocol.MessageWorkerRegister || envelope.WorkerID != "worker-multi" {
+				t.Fatalf("%s registration envelope = %+v", label, envelope)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for %s manager registration", label)
+		}
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop after context cancellation")
+	}
+}
+
 func TestHeartbeatLoopSendsHeartbeat(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	received := make(chan protocol.Envelope, 1)
@@ -256,6 +308,32 @@ func writeRawEnvelope(t *testing.T, conn *websocket.Conn, envelope rawEnvelope) 
 	if err := conn.WriteJSON(envelope); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func registrationServer(t *testing.T) (string, <-chan protocol.Envelope, func()) {
+	t.Helper()
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	registered := make(chan protocol.Envelope, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		var envelope protocol.Envelope
+		if err := conn.ReadJSON(&envelope); err != nil {
+			t.Errorf("read register: %v", err)
+			return
+		}
+		registered <- envelope
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				return
+			}
+		}
+	}))
+	return "ws" + strings.TrimPrefix(server.URL, "http"), registered, server.Close
 }
 
 func readEnvelope(t *testing.T, conn *websocket.Conn) protocol.Envelope {

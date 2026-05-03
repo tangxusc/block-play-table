@@ -83,6 +83,7 @@ make clean-local
 | `BPT_MANAGER_WS_URL` | 由 GraphQL URL 推导为 `/worker/ws` | Playwright 模拟 Worker 连接的 WebSocket 地址 |
 | `BPT_MANAGER_WS_TOKEN` | 空 | Playwright 模拟 Worker 连接时追加到 `token` 查询参数 |
 | `WORKER_TOKEN` | 本地 Makefile 默认 `dev-worker-token` | Manager 启用 Worker WebSocket token 校验，真实 Worker 使用同值连接 |
+| `MANAGER_WS_URLS` | 空 | 真实 Worker 可用逗号分隔 URL 同时连接多个 Manager，优先级高于 `MANAGER_WS_URL` |
 | `DB_DRIVER` | Manager 默认 `sqlite` | Manager 存储驱动，可选 `sqlite`、`postgres`、`memory` |
 | `DB_DSN` | SQLite 默认 `./data/manager.db` | Manager 数据源地址；PostgreSQL 模式必须显式提供 |
 | `GO_BIN` | `go` | `scripts/real_agent_e2e.sh` 用于启动 Manager/Worker 的 Go 命令 |
@@ -90,7 +91,7 @@ make clean-local
 | `REAL_AGENT_CODEX_MODEL` | 空 | 真实 Agent E2E 可选 Codex `agentConfig.codex.model`；为空时不传模型名，避免依赖特定模型可用性 |
 | `REAL_AGENT_CLAUDE_MODEL` | 空 | 真实 Agent E2E 可选 Claude `agentConfig.claude.model`；为空时不传模型名，避免依赖特定模型可用性 |
 
-与 Worker 本体相关的常用变量还包括 `MANAGER_WS_URL`、`WORKER_ID`、`WORKER_NAME`、`WORKER_WORK_DIR`、`WORKER_SUPPORTED_AGENTS`、`WORKER_PROJECT_BINDING_MODE`、`WORKER_BOUND_PROJECT_IDS`。
+与 Worker 本体相关的常用变量还包括 `MANAGER_WS_URL`、`MANAGER_WS_URLS`、`WORKER_ID`、`WORKER_NAME`、`WORKER_WORK_DIR`、`WORKER_SUPPORTED_AGENTS`、`WORKER_PROJECT_BINDING_MODE`、`WORKER_BOUND_PROJECT_IDS`。
 
 ## 运行方式
 
@@ -227,6 +228,8 @@ npm run e2e:real-agents
 | Worker | Worker 上报心跳并更新 `lastHeartbeatAt` | L1 | [待补齐] |
 | Worker | Worker 断线后被标记为 `OFFLINE` | L1/L2 | [待补齐] |
 | Worker | Worker 重连后恢复 `ONLINE` 并可继续接收任务 | L1/L2 | [待补齐] |
+| Worker | `MANAGER_WS_URLS` 配置多个 Manager 后 Worker 同时注册到所有 Manager | L1 | [已实现] |
+| Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
 | Worker | 禁用 Worker 后不参与自动分配，启用后恢复可用 | L1/L2 | [待补齐] |
 | Worker | 删除空闲 Worker 后列表移除并产生领域事件 | L1/L2 | [待补齐] |
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |

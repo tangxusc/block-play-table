@@ -6,6 +6,7 @@ require (
 	github.com/99designs/gqlgen v0.17.89
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/vektah/gqlparser/v2 v2.5.32
 	modernc.org/sqlite v1.49.1

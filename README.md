@@ -9,7 +9,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 ## Trusted Mode
 
-GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local `127.0.0.1:<worker_port>`, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -44,6 +44,16 @@ WORKER_WORK_DIR=./worker-data \
 go run ./worker/cmd/worker
 ```
 
+Workers can connect to multiple Managers at the same time by using comma-separated URLs:
+
+```bash
+MANAGER_WS_URLS=ws://manager-a:8080/worker/ws,ws://manager-b:8080/worker/ws \
+WORKER_ID=worker-local \
+WORKER_NAME=local-worker \
+WORKER_WORK_DIR=./worker-data \
+go run ./worker/cmd/worker
+```
+
 To require Worker authentication, set the same token for Manager and Worker:
 
 ```bash
@@ -57,7 +67,11 @@ Manager endpoints:
 - `GET /readyz`
 - `POST /graphql`
 - `GET /worker/ws`
+- `GET /worker/frp`
+- `/proxy/**`
 - `GET /subscriptions`
+
+`/proxy/**` routes through the Worker FRP tunnel. Requests must include `worker: <worker name>` and `worker_port: <worker port>` headers. Manager strips the `/proxy` prefix and forwards the remaining path to `http://127.0.0.1:<worker_port>` on that Worker; `worker` and `worker_port` are routing headers and are not forwarded to the target service. Worker names are unique.
 
 ## Agent CLI Run Configuration
 

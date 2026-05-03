@@ -781,6 +781,9 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 	}
 	if existing, err := s.store.Worker(ctx, id); err == nil {
 		if input.Name != "" && input.WorkDir != "" && len(input.SupportedAgents) > 0 {
+			if err := s.ensureWorkerNameUnique(ctx, input.Name, existing.ID); err != nil {
+				return nil, err
+			}
 			if err := existing.Update(domain.NewWorkerInput{
 				ID:                     existing.ID,
 				Name:                   input.Name,
@@ -805,6 +808,9 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 			}
 		}
 		return existing, nil
+	}
+	if err := s.ensureWorkerNameUnique(ctx, input.Name, id); err != nil {
+		return nil, err
 	}
 	worker, err := domain.NewWorker(domain.NewWorkerInput{
 		ID:                 id,
@@ -916,6 +922,9 @@ func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureWorkerNameUnique(ctx, input.Name, worker.ID); err != nil {
+		return nil, err
+	}
 	if err := worker.Update(domain.NewWorkerInput{
 		ID:                     worker.ID,
 		Name:                   input.Name,
@@ -936,6 +945,22 @@ func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (
 		return nil, err
 	}
 	return worker, s.appendEvents(ctx, events)
+}
+
+func (s *Service) ensureWorkerNameUnique(ctx context.Context, name, exceptWorkerID string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	workers, err := s.store.Workers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, worker := range workers {
+		if worker.ID != exceptWorkerID && worker.Name == name {
+			return fmt.Errorf("%w: worker name %q already exists", domain.ErrConflict, name)
+		}
+	}
+	return nil
 }
 
 func (s *Service) UpdateWorkerProjectBindings(ctx context.Context, workerID string, mode domain.WorkerProjectBindingMode, projectIDs []string) (*domain.Worker, error) {

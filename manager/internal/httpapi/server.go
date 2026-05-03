@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,9 +19,11 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/graph"
 	"github.com/tangxusc/block-play-table/pkg/domain"
+	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -71,6 +76,9 @@ func (s *Server) Handler() http.Handler {
 		gqlHandler.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/worker/ws", s.gateway.Handle)
+	mux.HandleFunc("/worker/frp", s.gateway.HandleFRP)
+	mux.HandleFunc("/proxy", s.gateway.HandleProxy)
+	mux.HandleFunc("/proxy/", s.gateway.HandleProxy)
 	mux.Handle("/subscriptions", gqlHandler)
 	return withCORS(mux)
 }
@@ -118,8 +126,8 @@ func errorResponse(message string) map[string]any {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-User-Role")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-User-Role, worker, worker_port")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -139,6 +147,7 @@ type WorkerGateway struct {
 
 	mu                 sync.RWMutex
 	connections        map[string]*workerConnection
+	proxyByName        map[string]*workerProxyTunnel
 	interactionMu      sync.Mutex
 	interactionWaiters map[string]chan error
 }
@@ -154,12 +163,33 @@ func (c *workerConnection) writeJSON(value any) error {
 	return c.conn.WriteJSON(value)
 }
 
+type workerProxyTunnel struct {
+	workerID    string
+	workerName  string
+	conn        *websocket.Conn
+	session     *yamux.Session
+	connectedAt time.Time
+}
+
+func (t *workerProxyTunnel) close() {
+	if t == nil {
+		return
+	}
+	if t.session != nil {
+		_ = t.session.Close()
+	}
+	if t.conn != nil {
+		_ = t.conn.Close()
+	}
+}
+
 func NewWorkerGateway(service *app.Service, logger *slog.Logger, workerToken string) *WorkerGateway {
 	return &WorkerGateway{
 		service:            service,
 		logger:             logger,
 		workerToken:        workerToken,
 		connections:        map[string]*workerConnection{},
+		proxyByName:        map[string]*workerProxyTunnel{},
 		interactionWaiters: map[string]chan error{},
 	}
 }
@@ -207,6 +237,90 @@ func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (g *WorkerGateway) HandleFRP(w http.ResponseWriter, r *http.Request) {
+	if g.workerToken != "" && r.URL.Query().Get("token") != g.workerToken {
+		http.Error(w, "invalid worker token", http.StatusUnauthorized)
+		return
+	}
+	workerID := strings.TrimSpace(r.URL.Query().Get("worker_id"))
+	workerName := strings.TrimSpace(r.URL.Query().Get("worker_name"))
+	if workerID == "" || workerName == "" {
+		http.Error(w, "worker_id and worker_name are required", http.StatusBadRequest)
+		return
+	}
+	if err := g.ensureProxyTunnelNameAvailable(workerName, workerID); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	conn, err := defaultUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	session, err := yamux.Server(frp.NewWebSocketConn(conn), nil)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	tunnel := &workerProxyTunnel{
+		workerID:    workerID,
+		workerName:  workerName,
+		conn:        conn,
+		session:     session,
+		connectedAt: time.Now().UTC(),
+	}
+	if err := g.trackProxyTunnel(tunnel); err != nil {
+		tunnel.close()
+		return
+	}
+	defer func() {
+		g.untrackProxyTunnel(workerName, tunnel)
+		tunnel.close()
+	}()
+	for {
+		stream, err := session.AcceptStream()
+		if err != nil {
+			return
+		}
+		_ = stream.Close()
+	}
+}
+
+func (g *WorkerGateway) HandleProxy(w http.ResponseWriter, r *http.Request) {
+	workerName := strings.TrimSpace(r.Header.Get("worker"))
+	portText := strings.TrimSpace(r.Header.Get("worker_port"))
+	if workerName == "" || portText == "" {
+		http.Error(w, "worker and worker_port headers are required", http.StatusBadRequest)
+		return
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		http.Error(w, "worker_port must be a TCP port between 1 and 65535", http.StatusBadRequest)
+		return
+	}
+	tunnel := g.proxyTunnel(workerName)
+	if tunnel == nil || tunnel.session == nil || tunnel.session.IsClosed() {
+		http.Error(w, "worker proxy tunnel is not connected", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := frp.ProxyHTTP(r.Context(), tunnel.session, r, frp.ProxyTarget{
+		Port: port,
+		Path: stripProxyPath(r.URL.Path),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	frp.RemoveHopByHopHeaders(resp.Header)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (g *WorkerGateway) trackConnection(workerID string, conn *workerConnection) {
 	if workerID == "" {
 		return
@@ -231,6 +345,62 @@ func (g *WorkerGateway) untrackConnection(workerID string, conn *workerConnectio
 	}
 	delete(g.connections, workerID)
 	return true
+}
+
+func (g *WorkerGateway) ensureProxyTunnelNameAvailable(workerName, workerID string) error {
+	g.mu.RLock()
+	existing := g.proxyByName[workerName]
+	g.mu.RUnlock()
+	if existing != nil && existing.workerID != workerID {
+		return fmt.Errorf("worker proxy name %q is already connected by worker %s", workerName, existing.workerID)
+	}
+	return nil
+}
+
+func (g *WorkerGateway) trackProxyTunnel(tunnel *workerProxyTunnel) error {
+	if tunnel == nil || tunnel.workerName == "" {
+		return fmt.Errorf("worker proxy tunnel is required")
+	}
+	g.mu.Lock()
+	previous := g.proxyByName[tunnel.workerName]
+	if previous != nil && previous.workerID != tunnel.workerID {
+		g.mu.Unlock()
+		return fmt.Errorf("worker proxy name %q is already connected by worker %s", tunnel.workerName, previous.workerID)
+	}
+	g.proxyByName[tunnel.workerName] = tunnel
+	g.mu.Unlock()
+	if previous != nil && previous != tunnel {
+		previous.close()
+	}
+	return nil
+}
+
+func (g *WorkerGateway) untrackProxyTunnel(workerName string, tunnel *workerProxyTunnel) {
+	if workerName == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.proxyByName[workerName] == tunnel {
+		delete(g.proxyByName, workerName)
+	}
+}
+
+func (g *WorkerGateway) proxyTunnel(workerName string) *workerProxyTunnel {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.proxyByName[workerName]
+}
+
+func stripProxyPath(path string) string {
+	switch {
+	case path == "" || path == "/proxy" || path == "/proxy/":
+		return "/"
+	case strings.HasPrefix(path, "/proxy/"):
+		return strings.TrimPrefix(path, "/proxy")
+	default:
+		return path
+	}
 }
 
 type rawEnvelope struct {

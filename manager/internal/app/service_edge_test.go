@@ -230,6 +230,26 @@ func TestRegisterWorkerPreservesRuntimeEnvWhenPayloadOmitsEnv(t *testing.T) {
 	}
 }
 
+func TestRegisterAndUpdateWorkerRejectDuplicateNames(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	if _, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-a", Name: "Shared Name", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/a"}); err != nil {
+		t.Fatalf("register first worker: %v", err)
+	}
+	if _, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-b", Name: "Shared Name", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/b"}); err == nil {
+		t.Fatal("registering a second worker with the same name should fail")
+	}
+	if _, err := service.RegisterWorker(ctx, RegisterWorkerInput{ID: "worker-b", Name: "Other Name", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/b"}); err != nil {
+		t.Fatalf("register second worker: %v", err)
+	}
+	if _, err := service.UpdateWorker(ctx, RegisterWorkerInput{ID: "worker-b", Name: "Shared Name", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/b"}); err == nil {
+		t.Fatal("updating a worker to an existing name should fail")
+	}
+	if _, err := service.UpdateWorker(ctx, RegisterWorkerInput{ID: "worker-a", Name: "Shared Name", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp/a"}); err != nil {
+		t.Fatalf("updating a worker without changing its name should succeed: %v", err)
+	}
+}
+
 func TestServiceValidationNotFoundAndExistingWorkerBranches(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())

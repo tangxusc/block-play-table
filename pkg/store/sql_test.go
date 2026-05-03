@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "007_task_agent_config", SQL: migrations.TaskAgentConfigSQL},
 		{Version: "008_worker_current_task_ids", SQL: migrations.WorkerCurrentTaskIDsSQL},
 		{Version: "009_task_interactions", SQL: migrations.TaskInteractionsSQL},
+		{Version: "010_unique_worker_name", SQL: migrations.UniqueWorkerNameSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -130,6 +132,13 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 	if !hasTaskInteractionStatus {
 		t.Fatal("task_interactions.status should exist after versioned migrations")
+	}
+	hasWorkerNameUniqueIndex, err := sqliteIndexExists(ctx, sqlStore, "idx_workers_name_unique")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWorkerNameUniqueIndex {
+		t.Fatal("workers.name unique index should exist after versioned migrations")
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -326,6 +335,63 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 }
 
+func TestUniqueWorkerNameMigrationRenamesExistingDuplicates(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "manager.db")
+	sqlStore, err := OpenSQLStore(ctx, SQLDriverSQLite, dsn)
+	if err != nil {
+		t.Fatalf("OpenSQLStore returned error: %v", err)
+	}
+	defer sqlStore.Close()
+	schemaBeforeUniqueName := strings.Replace(migrations.SchemaSQL, "CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_name_unique ON workers(name);", "", 1)
+	if err := sqlStore.MigrateVersioned(ctx, []Migration{{Version: "001_init", SQL: schemaBeforeUniqueName}}); err != nil {
+		t.Fatalf("initial migration returned error: %v", err)
+	}
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	for _, workerID := range []string{"worker-a", "worker-b"} {
+		worker, err := domain.NewWorker(domain.NewWorkerInput{
+			ID:              workerID,
+			Name:            "Duplicate Worker",
+			SupportedAgents: []domain.AgentType{domain.AgentCodex},
+			WorkDir:         "/tmp/" + workerID,
+			Now:             now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlStore.SaveWorker(ctx, worker); err != nil {
+			t.Fatalf("SaveWorker %s returned error: %v", workerID, err)
+		}
+	}
+	if err := sqlStore.MigrateVersioned(ctx, []Migration{{Version: "010_unique_worker_name", SQL: migrations.UniqueWorkerNameSQL}}); err != nil {
+		t.Fatalf("unique name migration returned error: %v", err)
+	}
+	first, err := sqlStore.Worker(ctx, "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := sqlStore.Worker(ctx, "worker-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Name == second.Name {
+		t.Fatalf("duplicate worker names were not made unique: %q", first.Name)
+	}
+	duplicate, err := domain.NewWorker(domain.NewWorkerInput{
+		ID:              "worker-c",
+		Name:            first.Name,
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/worker-c",
+		Now:             now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.SaveWorker(ctx, duplicate); err == nil {
+		t.Fatal("unique worker name index should reject a new duplicate name")
+	}
+}
+
 func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, dsn string) {
 	t.Helper()
 	sqlStore, err := OpenSQLStore(ctx, driver, dsn)
@@ -360,7 +426,7 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	worker, err := domain.NewWorker(domain.NewWorkerInput{
 		ID:                 workerID,
-		Name:               "SQL Worker",
+		Name:               "SQL Worker " + suffix,
 		SupportedAgents:    []domain.AgentType{domain.AgentCodex},
 		WorkDir:            "/tmp/worker",
 		ProjectBindingMode: domain.WorkerSpecificProjects,
@@ -493,6 +559,28 @@ func sqliteTableHasColumn(ctx context.Context, sqlStore *SQLStore, table, column
 			return false, err
 		}
 		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func sqliteIndexExists(ctx context.Context, sqlStore *SQLStore, indexName string) (bool, error) {
+	rows, err := sqlStore.db.QueryContext(ctx, `PRAGMA index_list(workers)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seq int
+		var name string
+		var unique int
+		var origin string
+		var partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return false, err
+		}
+		if name == indexName && unique == 1 {
 			return true, nil
 		}
 	}
