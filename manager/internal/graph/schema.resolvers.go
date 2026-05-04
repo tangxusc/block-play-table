@@ -7,6 +7,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -197,6 +198,18 @@ func (r *mutationResolver) ArchiveTask(ctx context.Context, taskID *string, id *
 	return toModelTask(task), err
 }
 
+// DeleteTask is the resolver for the deleteTask field.
+func (r *mutationResolver) DeleteTask(ctx context.Context, taskID *string, id *string) (bool, error) {
+	resolvedTaskID := firstID(taskID, id)
+	if resolvedTaskID == "" {
+		return false, fmt.Errorf("taskId is required")
+	}
+	if err := r.Service.DeleteTask(ctx, resolvedTaskID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // RetryTask is the resolver for the retryTask field.
 func (r *mutationResolver) RetryTask(ctx context.Context, taskID *string, id *string) (*model.Task, error) {
 	resolvedTaskID := firstID(taskID, id)
@@ -299,6 +312,9 @@ func (r *mutationResolver) UpdateWorkerHeartbeatTimeout(ctx context.Context, tim
 func (r *queryResolver) Task(ctx context.Context, id string) (*model.Task, error) {
 	task, err := r.Service.Task(ctx, id)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return toModelTask(task), nil
@@ -370,7 +386,6 @@ func (r *queryResolver) ProjectsConnection(ctx context.Context, filter *model.Pr
 // Board is the resolver for the board field.
 func (r *queryResolver) Board(ctx context.Context, id *string, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) (*model.Board, error) {
 	boardFilter := taskFilter(filter)
-	boardFilter.IncludeArchived = true
 	tasks, total, err := r.Service.TasksFilteredSorted(ctx, boardFilter, taskSort(sort), pageInput(page))
 	if err != nil {
 		return nil, err

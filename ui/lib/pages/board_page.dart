@@ -176,6 +176,11 @@ class _BoardPageState extends State<BoardPage> {
               icon: Icon(Icons.calendar_month),
               label: Text('Calendar'),
             ),
+            ButtonSegment(
+              value: 'ARCHIVED',
+              icon: Icon(Icons.archive_outlined),
+              label: Text('Archived'),
+            ),
           ],
           selected: {_view},
           onSelectionChanged: (values) {
@@ -247,6 +252,7 @@ class _BoardPageState extends State<BoardPage> {
                             data: board,
                             onTaskSelected: _openTaskDetail,
                             onTaskEdit: _openTaskDialog,
+                            onTaskDelete: _deleteTask,
                           ),
                           if (snapshot.connectionState != ConnectionState.done)
                             const Positioned(
@@ -303,6 +309,24 @@ class _BoardPageState extends State<BoardPage> {
       _reload();
     }
   }
+
+  Future<void> _deleteTask(TaskItem task) async {
+    final taskId = task.id;
+    if (taskId == null || taskId.isEmpty) {
+      return;
+    }
+    final confirmed = await confirmAction(
+      context,
+      title: 'Delete task',
+      message: 'Delete "${task.title}"?',
+      confirmLabel: 'Delete',
+    );
+    if (!confirmed) {
+      return;
+    }
+    await widget.apiClient.deleteTask(taskId);
+    _reload();
+  }
 }
 
 class _ProjectFilterDropdown extends StatelessWidget {
@@ -353,12 +377,14 @@ class _BoardContent extends StatelessWidget {
     required this.data,
     required this.onTaskSelected,
     required this.onTaskEdit,
+    required this.onTaskDelete,
   });
 
   final String view;
   final BoardData data;
   final ValueChanged<TaskItem> onTaskSelected;
   final ValueChanged<TaskItem> onTaskEdit;
+  final ValueChanged<TaskItem> onTaskDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -376,6 +402,16 @@ class _BoardContent extends StatelessWidget {
         workers: data.workers,
         onTaskSelected: onTaskSelected,
         onTaskEdit: onTaskEdit,
+      ),
+      'ARCHIVED' => _TaskListView(
+        tasks: data.tasks,
+        projects: data.projects,
+        workers: data.workers,
+        onTaskSelected: onTaskSelected,
+        onTaskEdit: onTaskEdit,
+        onTaskDelete: onTaskDelete,
+        showEdit: false,
+        showDelete: true,
       ),
       'CALENDAR' => _CalendarView(
         tasks: data.tasks,
@@ -669,6 +705,9 @@ class _TaskListView extends StatelessWidget {
     required this.workers,
     required this.onTaskSelected,
     required this.onTaskEdit,
+    this.onTaskDelete,
+    this.showEdit = true,
+    this.showDelete = false,
   });
 
   final List<TaskItem> tasks;
@@ -676,6 +715,9 @@ class _TaskListView extends StatelessWidget {
   final List<WorkerItem> workers;
   final ValueChanged<TaskItem> onTaskSelected;
   final ValueChanged<TaskItem> onTaskEdit;
+  final ValueChanged<TaskItem>? onTaskDelete;
+  final bool showEdit;
+  final bool showDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -696,11 +738,20 @@ class _TaskListView extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 StatusPill(value: task.status),
-                IconButton(
-                  tooltip: 'Edit task',
-                  onPressed: () => onTaskEdit(task),
-                  icon: const Icon(Icons.edit_outlined),
-                ),
+                if (showEdit)
+                  IconButton(
+                    tooltip: 'Edit task',
+                    onPressed: () => onTaskEdit(task),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                if (showDelete)
+                  IconButton(
+                    tooltip: 'Delete task',
+                    onPressed: onTaskDelete == null
+                        ? null
+                        : () => onTaskDelete!(task),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
               ],
             ),
             onTap: () => onTaskSelected(task),
@@ -2520,62 +2571,90 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   Widget build(BuildContext context) {
     final currentTask = _lastDetail?.task ?? widget.task;
     final waitingForInput = currentTask.status == 'WAITING_INPUT';
+    final archived = currentTask.status == 'ARCHIVED';
     final taskId = currentTask.id;
-    final actions = [
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-close'),
-        label: 'Close',
-        icon: Icons.close,
-        onPressed: () => Navigator.of(context).pop(false),
-      ),
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-assign'),
-        label: 'Assign',
-        icon: Icons.person_add_alt_1,
-        onPressed: _assign,
-      ),
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-start'),
-        label: 'Start',
-        icon: Icons.play_arrow,
-        onPressed: waitingForInput
-            ? null
-            : () => _run(() => widget.apiClient.startTask(currentTask.id!)),
-      ),
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-interrupt'),
-        label: 'Interrupt',
-        icon: Icons.stop,
-        onPressed: () =>
-            _run(() => widget.apiClient.interruptTask(currentTask.id!)),
-      ),
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-retry'),
-        label: 'Retry',
-        icon: Icons.replay,
-        onPressed: waitingForInput
-            ? null
-            : () => _run(() => widget.apiClient.retryTask(currentTask.id!)),
-      ),
-      _TaskDetailAction(
-        key: const ValueKey('task-detail-action-archive'),
-        label: 'Archive',
-        icon: Icons.archive_outlined,
-        emphasis: _TaskDetailActionEmphasis.filled,
-        onPressed: () async {
-          final confirmed = await confirmAction(
-            context,
-            title: 'Archive task',
-            message: 'Archive "${currentTask.title}"?',
-            confirmLabel: 'Archive',
-          );
-          if (!confirmed) {
-            return;
-          }
-          await _run(() => widget.apiClient.archiveTask(currentTask.id!));
-        },
-      ),
-    ];
+    final closeAction = _TaskDetailAction(
+      key: const ValueKey('task-detail-action-close'),
+      label: 'Close',
+      icon: Icons.close,
+      onPressed: () => Navigator.of(context).pop(false),
+    );
+    final actions = archived
+        ? [
+            closeAction,
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-delete'),
+              label: 'Delete',
+              icon: Icons.delete_outline,
+              emphasis: _TaskDetailActionEmphasis.filled,
+              onPressed: () async {
+                final confirmed = await confirmAction(
+                  context,
+                  title: 'Delete task',
+                  message: 'Delete "${currentTask.title}"?',
+                  confirmLabel: 'Delete',
+                );
+                if (!confirmed) {
+                  return;
+                }
+                await _run(() => widget.apiClient.deleteTask(currentTask.id!));
+              },
+            ),
+          ]
+        : [
+            closeAction,
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-assign'),
+              label: 'Assign',
+              icon: Icons.person_add_alt_1,
+              onPressed: _assign,
+            ),
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-start'),
+              label: 'Start',
+              icon: Icons.play_arrow,
+              onPressed: waitingForInput
+                  ? null
+                  : () => _run(
+                      () => widget.apiClient.startTask(currentTask.id!),
+                    ),
+            ),
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-interrupt'),
+              label: 'Interrupt',
+              icon: Icons.stop,
+              onPressed: () =>
+                  _run(() => widget.apiClient.interruptTask(currentTask.id!)),
+            ),
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-retry'),
+              label: 'Retry',
+              icon: Icons.replay,
+              onPressed: waitingForInput
+                  ? null
+                  : () => _run(
+                      () => widget.apiClient.retryTask(currentTask.id!),
+                    ),
+            ),
+            _TaskDetailAction(
+              key: const ValueKey('task-detail-action-archive'),
+              label: 'Archive',
+              icon: Icons.archive_outlined,
+              emphasis: _TaskDetailActionEmphasis.filled,
+              onPressed: () async {
+                final confirmed = await confirmAction(
+                  context,
+                  title: 'Archive task',
+                  message: 'Archive "${currentTask.title}"?',
+                  confirmLabel: 'Archive',
+                );
+                if (!confirmed) {
+                  return;
+                }
+                await _run(() => widget.apiClient.archiveTask(currentTask.id!));
+              },
+            ),
+          ];
     return AlertDialog(
       title: Row(
         children: [

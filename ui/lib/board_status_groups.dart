@@ -33,6 +33,9 @@ List<BoardColumnData> buildBoardStatusColumns(List<TaskItem> tasks) {
   };
 
   for (final task in tasks) {
+    if (task.status.trim().toUpperCase() == 'ARCHIVED') {
+      continue;
+    }
     groupedTasks[_groupIdForTaskStatus(task.status)]!.add(task);
   }
 

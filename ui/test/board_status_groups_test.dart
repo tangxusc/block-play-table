@@ -51,7 +51,6 @@ void main() {
       'failed',
       'completed',
       'interrupted',
-      'archived',
       'unknown',
     ]);
   });

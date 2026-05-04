@@ -739,6 +739,24 @@ func (s *Service) ArchiveTask(ctx context.Context, taskID string) (*domain.Task,
 	return task, s.appendEvents(ctx, events)
 }
 
+func (s *Service) DeleteTask(ctx context.Context, taskID string) error {
+	task, err := s.store.Task(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.Status != domain.TaskArchived {
+		return fmt.Errorf("%w: task %s is not archived", domain.ErrConflict, taskID)
+	}
+	if err := task.Delete(s.clock()); err != nil {
+		return err
+	}
+	events := task.PullEvents()
+	if err := s.store.DeleteTask(ctx, taskID); err != nil {
+		return err
+	}
+	return s.appendEvents(ctx, events)
+}
+
 func (s *Service) RetryTask(ctx context.Context, taskID string) (*domain.Task, error) {
 	now := s.clock()
 	task, err := s.store.Task(ctx, taskID)

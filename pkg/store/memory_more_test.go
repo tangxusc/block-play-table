@@ -156,6 +156,58 @@ func TestMemoryStoreTaskInteractionCRUD(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDeleteTaskRemovesTaskAndDetailRows(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-delete", Title: "Delete Me", ProjectID: "project-1", AgentType: domain.AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendTaskLog(ctx, domain.TaskLog{ID: "log-delete", TaskID: task.ID, Stream: "stdout", Content: "hello", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendConversation(ctx, domain.ConversationMessage{ID: "msg-delete", TaskID: task.ID, Role: "assistant", Content: "done", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveTaskInteraction(ctx, domain.TaskInteraction{
+		ID:        "interaction-delete",
+		TaskID:    task.ID,
+		Kind:      domain.TaskInteractionCommandApproval,
+		Status:    domain.TaskInteractionPending,
+		Title:     "Approve",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTask returned error: %v", err)
+	}
+	if _, err := s.Task(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted Task err = %v, want not found", err)
+	}
+	if logs, err := s.TaskLogs(ctx, task.ID); err != nil || len(logs) != 0 {
+		t.Fatalf("TaskLogs after delete = %+v, %v", logs, err)
+	}
+	if messages, err := s.TaskConversations(ctx, task.ID); err != nil || len(messages) != 0 {
+		t.Fatalf("TaskConversations after delete = %+v, %v", messages, err)
+	}
+	if interactions, err := s.TaskInteractions(ctx, task.ID, ""); err != nil || len(interactions) != 0 {
+		t.Fatalf("TaskInteractions after delete = %+v, %v", interactions, err)
+	}
+	if _, err := s.TaskInteraction(ctx, "interaction-delete"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted TaskInteraction err = %v, want not found", err)
+	}
+	if err := s.DeleteTask(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("DeleteTask missing err = %v, want not found", err)
+	}
+}
+
 func TestMemoryStoreNotFoundErrors(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore()

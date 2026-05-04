@@ -565,6 +565,7 @@ type Mutation {
   respondTaskInteraction(input: RespondTaskInteractionInput!): TaskInteraction!
   interruptTask(taskId: ID, id: ID): Task!
   archiveTask(taskId: ID, id: ID): Task!
+  deleteTask(taskId: ID, id: ID): Boolean!
   retryTask(taskId: ID, id: ID): Task!
 
   createWorker(input: CreateWorkerInput!): Worker!

@@ -4,7 +4,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 - Go Manager service with gqlgen GraphQL API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
 - Go Worker service that registers with Manager, sends heartbeat messages, creates task worktrees, runs task pre/post commands, and adapts Codex/Claude non-interactive CLIs.
-- Flutter Web UI for tasks, Kanban/list/calendar board views, projects, workers, and settings.
+- Flutter Web UI for tasks, Kanban/list/calendar/archived board views, projects, workers, and settings.
 - Dockerfiles, Docker Compose, SQL schema, Go e2e tests, and coverage gates.
 
 ## Trusted Mode
@@ -82,6 +82,8 @@ Task detail also provides a Worker terminal panel. The UI first calls `GET /term
 ## Agent CLI Run Configuration
 
 Tasks can be created without Agent CLI parameters. Parameters are written only when assigning a Worker, including the create-task path that selects a Worker immediately. Assigned-but-not-started tasks can be assigned again to update the same task-level `agentConfig`.
+
+Archived tasks are isolated from the active Kanban, List, and Calendar board views. The Board `Archived` view lists only archived tasks and is the only UI surface that exposes permanent task deletion.
 
 Supported fields are typed by Agent instead of free-form JSON:
 

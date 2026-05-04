@@ -580,6 +580,15 @@ func (t *Task) Archive(now time.Time) error {
 	}
 }
 
+func (t *Task) Delete(now time.Time) error {
+	if t.Status != TaskArchived {
+		return fmt.Errorf("%w: delete from %s", ErrInvalidTransition, t.Status)
+	}
+	t.touch(now)
+	t.addEvent("TaskDeleted", map[string]any{"title": t.Title}, now)
+	return nil
+}
+
 func (t *Task) PullEvents() []DomainEvent {
 	events := append([]DomainEvent(nil), t.pendingEvents...)
 	t.pendingEvents = nil

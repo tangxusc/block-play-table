@@ -304,6 +304,90 @@ func TestServerPaginationConnections(t *testing.T) {
 	}
 }
 
+func TestServerBoardArchivedFilterAndDeleteTaskMutation(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
+		"input": map[string]any{"name": "Archived Board", "gitUrl": "git://archived-board"},
+	})["data"].(map[string]any)["createProject"].(map[string]any)
+	projectID := project["id"].(string)
+	activeTask := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }`, map[string]any{
+		"input": map[string]any{"title": "Visible active", "projectId": projectID, "agentType": "codex"},
+	})["data"].(map[string]any)["createTask"].(map[string]any)
+	archivedTask := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }`, map[string]any{
+		"input": map[string]any{"title": "Hidden archived", "projectId": projectID, "agentType": "codex"},
+	})["data"].(map[string]any)["createTask"].(map[string]any)
+	archivedID := archivedTask["id"].(string)
+	_ = postGraphQL(t, server.URL, `mutation ArchiveTask($taskId: ID!) { archiveTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": archivedID})
+
+	defaultBoard := postGraphQL(t, server.URL, `query {
+		board {
+			totalCount
+			tasks { id title status }
+			columns { tasks { id status } }
+			calendarItems { task { id status } }
+		}
+	}`, nil)["data"].(map[string]any)["board"].(map[string]any)
+	if defaultBoard["totalCount"] != float64(1) {
+		t.Fatalf("default board totalCount = %v, want 1", defaultBoard["totalCount"])
+	}
+	defaultTasks := defaultBoard["tasks"].([]any)
+	if len(defaultTasks) != 1 || defaultTasks[0].(map[string]any)["id"] != activeTask["id"] {
+		t.Fatalf("default board tasks = %#v", defaultTasks)
+	}
+	for _, column := range defaultBoard["columns"].([]any) {
+		for _, task := range column.(map[string]any)["tasks"].([]any) {
+			if task.(map[string]any)["status"] == string(domain.TaskArchived) {
+				t.Fatalf("default board column included archived task: %#v", defaultBoard["columns"])
+			}
+		}
+	}
+	for _, item := range defaultBoard["calendarItems"].([]any) {
+		task := item.(map[string]any)["task"].(map[string]any)
+		if task["status"] == string(domain.TaskArchived) {
+			t.Fatalf("default board calendar included archived task: %#v", defaultBoard["calendarItems"])
+		}
+	}
+
+	archivedBoard := postGraphQL(t, server.URL, `query {
+		board(filter: { status: ARCHIVED, includeArchived: true }) {
+			totalCount
+			tasks { id title status }
+		}
+	}`, nil)["data"].(map[string]any)["board"].(map[string]any)
+	archivedTasks := archivedBoard["tasks"].([]any)
+	if archivedBoard["totalCount"] != float64(1) || len(archivedTasks) != 1 || archivedTasks[0].(map[string]any)["id"] != archivedID {
+		t.Fatalf("archived board = %#v", archivedBoard)
+	}
+
+	rawDeleteActive := postRawGraphQL(t, server.URL, `mutation DeleteTask($taskId: ID!) { deleteTask(taskId: $taskId) }`, map[string]any{"taskId": activeTask["id"]})
+	if rawDeleteActive["errors"] == nil {
+		t.Fatalf("delete active task should fail: %#v", rawDeleteActive)
+	}
+	deleted := postGraphQL(t, server.URL, `mutation DeleteTask($taskId: ID!) { deleteTask(taskId: $taskId) }`, map[string]any{"taskId": archivedID})["data"].(map[string]any)["deleteTask"].(bool)
+	if !deleted {
+		t.Fatal("deleteTask should return true")
+	}
+	deletedQuery := postGraphQL(t, server.URL, `query Task($id: ID!) { task(id: $id) { id } }`, map[string]any{"id": archivedID})["data"].(map[string]any)["task"]
+	if deletedQuery != nil {
+		t.Fatalf("deleted task query = %#v, want nil", deletedQuery)
+	}
+	events := postGraphQL(t, server.URL, `query TaskEvents($taskId: ID!) { taskEvents(taskId: $taskId) { eventType } }`, map[string]any{"taskId": archivedID})["data"].(map[string]any)["taskEvents"].([]any)
+	foundDeleteEvent := false
+	for _, event := range events {
+		if event.(map[string]any)["eventType"] == "TaskDeleted" {
+			foundDeleteEvent = true
+		}
+	}
+	if !foundDeleteEvent {
+		t.Fatalf("TaskDeleted event missing from taskEvents: %#v", events)
+	}
+}
+
 func TestServerValidationCORSAndSubscriptions(t *testing.T) {
 	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore())).Handler())
 	defer server.Close()

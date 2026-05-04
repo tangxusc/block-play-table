@@ -130,6 +130,7 @@ type ComplexityRoot struct {
 		CreateProject                func(childComplexity int, input model.CreateProjectInput) int
 		CreateTask                   func(childComplexity int, input model.CreateTaskInput) int
 		CreateWorker                 func(childComplexity int, input model.CreateWorkerInput) int
+		DeleteTask                   func(childComplexity int, taskID *string, id *string) int
 		DeleteWorker                 func(childComplexity int, id string) int
 		DisableWorker                func(childComplexity int, id string) int
 		EnableWorker                 func(childComplexity int, id string) int
@@ -297,6 +298,7 @@ type MutationResolver interface {
 	RespondTaskInteraction(ctx context.Context, input model.RespondTaskInteractionInput) (*model.TaskInteraction, error)
 	InterruptTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	ArchiveTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
+	DeleteTask(ctx context.Context, taskID *string, id *string) (bool, error)
 	RetryTask(ctx context.Context, taskID *string, id *string) (*model.Task, error)
 	CreateWorker(ctx context.Context, input model.CreateWorkerInput) (*model.Worker, error)
 	RegisterWorker(ctx context.Context, input model.RegisterWorkerInput) (*model.Worker, error)
@@ -746,6 +748,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateWorker(childComplexity, args["input"].(model.CreateWorkerInput)), true
+	case "Mutation.deleteTask":
+		if e.ComplexityRoot.Mutation.DeleteTask == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteTask_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteTask(childComplexity, args["taskId"].(*string), args["id"].(*string)), true
 	case "Mutation.deleteWorker":
 		if e.ComplexityRoot.Mutation.DeleteWorker == nil {
 			break
@@ -1867,6 +1880,22 @@ func (ec *executionContext) field_Mutation_createWorker_args(ctx context.Context
 		return nil, err
 	}
 	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteTask_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "taskId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["taskId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "id", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg1
 	return args, nil
 }
 
@@ -4750,6 +4779,47 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_archiveTask_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteTask(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_deleteTask,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteTask(ctx, fc.Args["taskId"].(*string), fc.Args["id"].(*string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_deleteTask(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteTask_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -13056,6 +13126,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "archiveTask":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_archiveTask(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteTask":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteTask(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++

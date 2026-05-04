@@ -119,6 +119,38 @@ func TestWorkerDeleteProducesDomainEvent(t *testing.T) {
 	}
 }
 
+func TestTaskDeleteRequiresArchivedAndProducesDomainEvent(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task, err := NewTask(NewTaskInput{ID: "task-delete", Title: "Delete Me", ProjectID: "project-1", AgentType: AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = task.PullEvents()
+
+	if err := task.Delete(now.Add(time.Minute)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("delete active task err = %v, want invalid transition", err)
+	}
+	if err := task.Archive(now.Add(2 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_ = task.PullEvents()
+
+	if err := task.Delete(now.Add(3 * time.Minute)); err != nil {
+		t.Fatalf("Delete archived task returned error: %v", err)
+	}
+	events := task.PullEvents()
+	if len(events) != 1 {
+		t.Fatalf("delete events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.EventType != "TaskDeleted" || event.AggregateType != "Task" || event.AggregateID != task.ID {
+		t.Fatalf("delete event = %+v", event)
+	}
+	if event.AggregateVersion != task.Version {
+		t.Fatalf("event version = %d, want task version %d", event.AggregateVersion, task.Version)
+	}
+}
+
 func TestProjectUpdateArchiveAndValidation(t *testing.T) {
 	now := time.Now().UTC()
 	project, err := NewProject(NewProjectInput{ID: "project-1", Name: "P", GitURL: "git://repo", Now: now})

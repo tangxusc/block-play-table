@@ -16,6 +16,7 @@ type Store interface {
 	SaveTask(context.Context, *domain.Task) error
 	Task(context.Context, string) (*domain.Task, error)
 	Tasks(context.Context) ([]*domain.Task, error)
+	DeleteTask(context.Context, string) error
 	SaveWorker(context.Context, *domain.Worker) error
 	Worker(context.Context, string) (*domain.Worker, error)
 	Workers(context.Context) ([]*domain.Worker, error)
@@ -95,6 +96,27 @@ func (s *MemoryStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
 	}
 	slices.SortFunc(out, func(a, b *domain.Task) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil
+}
+
+func (s *MemoryStore) DeleteTask(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tasks[id]; !ok {
+		return fmt.Errorf("%w: task %s", domain.ErrNotFound, id)
+	}
+	delete(s.tasks, id)
+	s.logs = slices.DeleteFunc(s.logs, func(log domain.TaskLog) bool {
+		return log.TaskID == id
+	})
+	s.conversations = slices.DeleteFunc(s.conversations, func(message domain.ConversationMessage) bool {
+		return message.TaskID == id
+	})
+	for interactionID, interaction := range s.interactions {
+		if interaction.TaskID == id {
+			delete(s.interactions, interactionID)
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) SaveWorker(ctx context.Context, worker *domain.Worker) error {

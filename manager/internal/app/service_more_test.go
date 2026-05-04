@@ -319,6 +319,74 @@ func TestServiceDeleteWorkerPublishesDomainEventAndMarksOutbox(t *testing.T) {
 	}
 }
 
+func TestServiceDeleteTaskRequiresArchivedAndPublishesDomainEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time { return now }))
+	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "Delete Me", ProjectID: project.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.DeleteTask(ctx, task.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("DeleteTask active err = %v, want conflict", err)
+	}
+	if _, err := service.ArchiveTask(ctx, task.ID); err != nil {
+		t.Fatalf("ArchiveTask returned error: %v", err)
+	}
+	if err := service.Store().AppendTaskLog(ctx, domain.TaskLog{ID: "log-delete", TaskID: task.ID, Stream: "stdout", Content: "hello", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().AppendConversation(ctx, domain.ConversationMessage{ID: "msg-delete", TaskID: task.ID, Role: "assistant", Content: "done", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{AggregateType: "Task", EventType: "TaskDeleted"})
+	defer unsubscribe()
+
+	if err := service.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTask archived returned error: %v", err)
+	}
+	select {
+	case event := <-events:
+		if event.EventType != "TaskDeleted" || event.AggregateID != task.ID {
+			t.Fatalf("published delete event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task delete event")
+	}
+	if _, err := service.Task(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted Task err = %v, want not found", err)
+	}
+	if logs, err := service.Store().TaskLogs(ctx, task.ID); err != nil || len(logs) != 0 {
+		t.Fatalf("TaskLogs after delete = %+v, %v", logs, err)
+	}
+	stored, err := service.DomainEvents(ctx, domain.EventFilter{AggregateID: task.ID, EventType: "TaskDeleted"})
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("DomainEvents = %d, %v", len(stored), err)
+	}
+	outbox, err := service.OutboxMessages(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range outbox {
+		if message.Event.EventType == "TaskDeleted" && message.Event.AggregateID == task.ID {
+			found = message.Status == domain.OutboxPublished && message.PublishedAt != nil
+		}
+	}
+	if !found {
+		t.Fatalf("task delete outbox was not published: %+v", outbox)
+	}
+	if err := service.DeleteTask(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("DeleteTask missing err = %v, want not found", err)
+	}
+}
+
 func TestServiceDeleteOccupiedWorkerDoesNotPublishDeleteEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -98,9 +98,31 @@ void main() {
       expect(variables['page'], {'offset': 20, 'limit': 20});
       expect(variables['sort'], {'field': 'TITLE', 'direction': 'ASC'});
       expect(variables['filter'], {
-        'includeArchived': true,
+        'includeArchived': false,
         'projectId': 'project-2',
         'search': 'Needle',
+      });
+    },
+  );
+
+  test(
+    'fetchBoardData sends archived status filter for archived view',
+    () async {
+      final apiClient = BoardRecordingApiClient();
+
+      await apiClient.fetchBoardData(
+        'ARCHIVED',
+        search: 'Old',
+        projectId: 'project-2',
+      );
+
+      final variables = apiClient.boardVariables!;
+      expect(variables['id'], 'list');
+      expect(variables['filter'], {
+        'includeArchived': true,
+        'status': 'ARCHIVED',
+        'projectId': 'project-2',
+        'search': 'Old',
       });
     },
   );
@@ -472,6 +494,78 @@ void main() {
       expect(find.text('Project filtered task 0'), findsOneWidget);
     },
   );
+
+  testWidgets('archived board lists archived tasks and deletes them', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final archivedTask = _taskWith(
+      id: 'task-archived',
+      title: 'Archived cleanup',
+      status: 'ARCHIVED',
+      updatedAt: '2026-04-26T00:00:00Z',
+    );
+    final apiClient = FakeApiClient(tasks: [_task, archivedTask]);
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Archived cleanup'), findsNothing);
+    expect(find.text(_task.title), findsOneWidget);
+
+    await tester.tap(find.text('Archived'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Archived cleanup'), findsOneWidget);
+    expect(find.text(_task.title), findsNothing);
+    expect(find.byTooltip('Delete task'), findsOneWidget);
+    expect(find.byTooltip('Edit task'), findsNothing);
+
+    await tester.tap(find.byTooltip('Delete task'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete task'), findsOneWidget);
+    expect(find.text('Delete "Archived cleanup"?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete').last);
+    await tester.pumpAndSettle();
+
+    expect(apiClient.deletedTaskId, archivedTask.id);
+    expect(find.text('Archived cleanup'), findsNothing);
+  });
+
+  testWidgets('archived task detail uses delete action instead of archive', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final archivedTask = _taskWith(
+      id: 'task-archived-detail',
+      title: 'Archived detail',
+      status: 'ARCHIVED',
+    );
+    final apiClient = FakeApiClient(
+      tasks: [archivedTask],
+      detailTask: archivedTask,
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Archived'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Archived detail'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('task-detail-action-delete')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('task-detail-action-archive')),
+      findsNothing,
+    );
+  });
 
   testWidgets('projects workers and events paginate with shared controls', (
     tester,
@@ -1175,6 +1269,8 @@ void main() {
     await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Archived'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Archived terminal').first);
     await tester.pumpAndSettle();
 
@@ -1305,7 +1401,7 @@ class FakeApiClient extends ApiClient {
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
   SettingsData _settings;
-  final List<TaskItem> _tasks;
+  List<TaskItem> _tasks;
   final List<ProjectItem> _projects;
   List<WorkerItem> _workers;
   final List<DomainEventItem> _domainEvents;
@@ -1325,6 +1421,7 @@ class FakeApiClient extends ApiClient {
   String? continuedMessage;
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
+  String? deletedTaskId;
   String? lastBoardProjectId;
   SortRequest? lastBoardSort;
 
@@ -1347,9 +1444,12 @@ class FakeApiClient extends ApiClient {
     boardFetches++;
     lastBoardProjectId = projectId;
     lastBoardSort = sort;
+    final visibleByArchive = view == 'ARCHIVED'
+        ? _tasks.where((task) => task.status == 'ARCHIVED').toList()
+        : _tasks.where((task) => task.status != 'ARCHIVED').toList();
     final filteredByProject = projectId.isEmpty
-        ? List<TaskItem>.from(_tasks)
-        : _tasks.where((task) => task.projectId == projectId).toList();
+        ? visibleByArchive
+        : visibleByArchive.where((task) => task.projectId == projectId).toList();
     final tasks = _sortTasks(_filterTasks(filteredByProject, search), sort);
     final pageTasks = page.slice(tasks);
     return BoardData(
@@ -1467,6 +1567,12 @@ class FakeApiClient extends ApiClient {
   Future<void> continueTask(String taskId, String message) async {
     continuedTaskId = taskId;
     continuedMessage = message;
+  }
+
+  @override
+  Future<void> deleteTask(String taskId) async {
+    deletedTaskId = taskId;
+    _tasks = _tasks.where((task) => task.id != taskId).toList();
   }
 
   @override

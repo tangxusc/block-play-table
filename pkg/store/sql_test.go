@@ -392,6 +392,74 @@ func TestUniqueWorkerNameMigrationRenamesExistingDuplicates(t *testing.T) {
 	}
 }
 
+func TestSQLStoreDeleteTaskRemovesTaskAndDetailRows(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "manager.db")
+	sqlStore, err := OpenSQLStore(ctx, SQLDriverSQLite, dsn)
+	if err != nil {
+		t.Fatalf("OpenSQLStore returned error: %v", err)
+	}
+	defer sqlStore.Close()
+	if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+		t.Fatalf("Migrate returned error: %v", err)
+	}
+
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject(domain.NewProjectInput{ID: "project-delete-task", Name: "P", GitURL: "git://repo", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := domain.NewTask(domain.NewTaskInput{ID: "task-delete", Title: "Delete Me", ProjectID: project.ID, AgentType: domain.AgentCodex, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.SaveProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.AppendTaskLog(ctx, domain.TaskLog{ID: "log-delete", TaskID: task.ID, Stream: "stdout", Content: "hello", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.AppendConversation(ctx, domain.ConversationMessage{ID: "conv-delete", TaskID: task.ID, Role: "assistant", Content: "done", Metadata: map[string]string{"tool": "codex"}, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlStore.SaveTaskInteraction(ctx, domain.TaskInteraction{
+		ID:        "interaction-delete",
+		TaskID:    task.ID,
+		Kind:      domain.TaskInteractionCommandApproval,
+		Status:    domain.TaskInteractionPending,
+		Title:     "Approve",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqlStore.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTask returned error: %v", err)
+	}
+	if _, err := sqlStore.Task(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted Task err = %v, want not found", err)
+	}
+	if logs, err := sqlStore.TaskLogs(ctx, task.ID); err != nil || len(logs) != 0 {
+		t.Fatalf("TaskLogs after delete = %+v, %v", logs, err)
+	}
+	if messages, err := sqlStore.TaskConversations(ctx, task.ID); err != nil || len(messages) != 0 {
+		t.Fatalf("TaskConversations after delete = %+v, %v", messages, err)
+	}
+	if interactions, err := sqlStore.TaskInteractions(ctx, task.ID, ""); err != nil || len(interactions) != 0 {
+		t.Fatalf("TaskInteractions after delete = %+v, %v", interactions, err)
+	}
+	if _, err := sqlStore.TaskInteraction(ctx, "interaction-delete"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted TaskInteraction err = %v, want not found", err)
+	}
+	if err := sqlStore.DeleteTask(ctx, task.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("DeleteTask missing err = %v, want not found", err)
+	}
+}
+
 func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, dsn string) {
 	t.Helper()
 	sqlStore, err := OpenSQLStore(ctx, driver, dsn)

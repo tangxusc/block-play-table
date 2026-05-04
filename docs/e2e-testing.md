@@ -33,8 +33,8 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Board/Projects/Workers/Events 分页和 Calendar 日/周/月/年视图。
-- `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
+- `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/archived 任务，验证活跃 Board 视图排除归档任务、Archived 视图展示并删除归档任务，并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
 ## 本地环境准备
@@ -256,10 +256,12 @@ npm run e2e:real-agents
 | Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
 | Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [部分实现：Worker 同 task 分支 worktree 清理由单元测试覆盖，浏览器主流程待补齐] |
 | Task | 重试后清空旧 Worker 绑定和 `agentConfig`，自动分配使用空配置 | L1 | [已实现] |
-| Task | Created/Completed/Failed/Interrupted 任务可归档并进入完成列 | L2 | [已实现] |
+| Task | Created/Completed/Failed/Interrupted 任务可归档并从活跃 Board 视图移入 Archived 视图 | L2 | [已实现] |
+| Task | 仅 Archived 任务可永久删除，删除后保留 `TaskDeleted` 审计事件 | L1/L2 | [已实现] |
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
 | UI | Flutter Web 首屏可加载并显示 `flutter-view` | L2 | [已实现] |
-| UI | 看板将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED/ARCHIVED 分组成三列 | L2 | [已实现] |
+| UI | Kanban 将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED 分成三列，ARCHIVED 不进入活跃列 | L2 | [已实现] |
+| UI | Archived Board 视图按 List 模式展示归档任务并支持删除 | L2 | [已实现] |
 | UI | Board/Projects/Workers/Events 顶部搜索和排序在服务端过滤排序后分页，默认创建时间倒序 | L2 | [已实现] |
 | UI | Board Project 过滤与搜索、排序、分页组合时只展示目标 Project 的任务 | L2 | [已实现] |
 | UI | Calendar 按任务开始/结束日期在日、周、月、年视图展示任务范围，并跟随 Board 全局搜索结果聚焦匹配任务 | L2 | [已实现] |

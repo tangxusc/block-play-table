@@ -24,6 +24,43 @@ async function graphQL(
   return body.data;
 }
 
+async function enableFlutterAccessibility(page) {
+  const button = page.getByRole("button", { name: "Enable accessibility" });
+  if (await button.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await button.evaluate((element: HTMLElement) => element.click());
+    await page.waitForTimeout(500);
+  }
+}
+
+async function fillFlutterTextField(page, input, value: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.click();
+    await page.waitForTimeout(100);
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+A" : "Control+A",
+    );
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(100);
+    if (value.length > 0) {
+      await input.fill(value).catch(async () => {
+        await page.keyboard.type(value);
+      });
+    }
+    await page.waitForTimeout(300);
+    const current = await input.inputValue().catch(() => value);
+    if (current === value) {
+      return;
+    }
+  }
+}
+
+function taskLocator(page, title: string) {
+  const name = new RegExp(title);
+  return page
+    .getByRole("button", { name })
+    .or(page.getByRole("group", { name }));
+}
+
 function connectWorkerUntilStarted(workerId: string, taskId: string) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
@@ -221,6 +258,67 @@ test("board kanban groups task statuses into three visual columns", async ({
   await page.goto("/");
   await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
   await page.waitForTimeout(2000);
+  await enableFlutterAccessibility(page);
+
+  const boardSearch = page.getByRole("textbox", { name: /Search/ });
+  await expect(boardSearch).toBeVisible();
+  await fillFlutterTextField(page, boardSearch, pendingTask.createTask.title);
+  await expect(taskLocator(page, pendingTask.createTask.title)).toBeVisible();
+
+  await fillFlutterTextField(page, boardSearch, runningTask.createTask.title);
+  await expect(taskLocator(page, runningTask.createTask.title)).toBeVisible();
+
+  await fillFlutterTextField(
+    page,
+    boardSearch,
+    completedBucketTask.createTask.title,
+  );
+  await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeHidden();
+
+  await page.getByRole("button", { name: "List" }).click();
+  const listSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(page, listSearch, pendingTask.createTask.title);
+  await expect(taskLocator(page, pendingTask.createTask.title)).toBeVisible();
+  await fillFlutterTextField(
+    page,
+    listSearch,
+    completedBucketTask.createTask.title,
+  );
+  await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeHidden();
+
+  await page.getByRole("button", { name: "Calendar" }).click();
+  const calendarSearch = page.getByRole("textbox", { name: /Search/ });
+  await fillFlutterTextField(
+    page,
+    calendarSearch,
+    completedBucketTask.createTask.title,
+  );
+  await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeHidden();
+
+  await page.getByRole("button", { name: "Archived" }).click();
+  const archivedSearch = page.getByRole("textbox", { name: /Search/ });
+  await expect(archivedSearch).toBeVisible();
+  await fillFlutterTextField(
+    page,
+    archivedSearch,
+    completedBucketTask.createTask.title,
+  );
+  await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeVisible();
+  await expect(taskLocator(page, pendingTask.createTask.title)).toBeHidden();
+
+  await page.getByRole("button", { name: "Delete task" }).click();
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeHidden();
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query DeletedTask($id: ID!) { task(id: $id) { id } }",
+        { id: completedBucketTask.createTask.id },
+      );
+      return data.task;
+    })
+    .toBeNull();
 
   await page.screenshot({
     path: testInfo.outputPath("board-status-groups.png"),

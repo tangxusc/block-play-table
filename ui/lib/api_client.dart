@@ -138,8 +138,10 @@ class ApiClient {
     final id = switch (view) {
       'CALENDAR' => 'calendar',
       'LIST' => 'list',
+      'ARCHIVED' => 'list',
       _ => null,
     };
+    final archivedView = view == 'ARCHIVED';
     final boardFuture = graphQL(
       r'''
         query Board($id: ID, $filter: TaskFilter, $sort: TaskSortInput, $page: PageInput) {
@@ -200,7 +202,8 @@ class ApiClient {
       variables: {
         'id': id,
         'filter': _filterInput({
-          'includeArchived': true,
+          'includeArchived': archivedView,
+          if (archivedView) 'status': 'ARCHIVED',
           if (projectId.trim().isNotEmpty) 'projectId': projectId.trim(),
         }, search),
         'sort': sort.toGraphQLInput(),
@@ -656,6 +659,15 @@ class ApiClient {
     r'''
         mutation ArchiveTask($taskId: ID!) {
           archiveTask(taskId: $taskId) { id }
+        }
+        ''',
+    variables: {'taskId': taskId},
+  ).then((_) {});
+
+  Future<void> deleteTask(String taskId) => graphQL(
+    r'''
+        mutation DeleteTask($taskId: ID!) {
+          deleteTask(taskId: $taskId)
         }
         ''',
     variables: {'taskId': taskId},

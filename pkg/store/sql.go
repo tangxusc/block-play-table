@@ -319,6 +319,35 @@ func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
 	return out, rows.Err()
 }
 
+func (s *SQLStore) DeleteTask(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_interactions WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_conversations WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_logs WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = `+s.bind(1), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: task %s", domain.ErrNotFound, id)
+	}
+	return tx.Commit()
+}
+
 func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error {
 	capabilities, err := encodeJSON(worker.Capabilities)
 	if err != nil {
@@ -610,7 +639,14 @@ func (s *SQLStore) SaveTaskInteraction(ctx context.Context, interaction domain.T
 
 func (s *SQLStore) TaskInteraction(ctx context.Context, id string) (*domain.TaskInteraction, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, kind, status, title, body, raw_payload, agent_session_id, response_decision, response_message, response_payload, created_at, updated_at FROM task_interactions WHERE id = `+s.bind(1), id)
-	return scanTaskInteraction(row)
+	interaction, err := scanTaskInteraction(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: task interaction %s", domain.ErrNotFound, id)
+		}
+		return nil, err
+	}
+	return interaction, nil
 }
 
 func (s *SQLStore) TaskInteractions(ctx context.Context, taskID string, status domain.TaskInteractionStatus) ([]domain.TaskInteraction, error) {
