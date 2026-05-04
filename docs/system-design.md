@@ -1301,7 +1301,9 @@ Worker 同时会主动连接 Manager 的 FRP WebSocket：
 Worker -> Manager /worker/frp
 ```
 
-该连接升级后不承载 JSON 消息，而是使用 yamux 多路复用字节流。Manager 收到 `/proxy/**` HTTP 请求后，根据 `worker: <Worker name>` 和 `worker_port: <port>` header 选择 Worker 隧道，打开一个 yamux stream，将请求转发到 Worker 本机 `http://127.0.0.1:<port>`。Manager 会移除 `/proxy` 前缀，并且不把 `worker`、`worker_port` 这两个路由 header 透传给 Worker 本地服务。
+该连接升级后不承载 JSON 消息，而是使用 yamux 多路复用字节流。Manager 收到 `/proxy/**` HTTP 请求后，根据 `worker: <Worker name>`、可选 `worker_host: <host>` 和 `worker_port: <port>` header 选择 Worker 隧道，打开一个 yamux stream，将请求转发到 Worker 可见网络中的 `http://<host>:<port>`。未提供 `worker_host` 时默认使用 Worker 本机 `127.0.0.1`。Manager 会移除 `/proxy` 前缀，并且不把 `worker`、`worker_host`、`worker_port` 这些路由 header 透传给 Worker 本地服务。
+
+浏览器 iframe 不能携带自定义 header，因此 Manager 还提供 `/proxy/web/<worker name>/<host>/<port>/**` 形式的路径路由。Task 详情的 Web preview 使用该路由把用户输入的 `host:port/path` 映射为 Manager 同源 URL，再由 FRP 隧道转发到 Worker 网络。
 
 ### 9.2 基础消息结构
 
@@ -1394,7 +1396,7 @@ Manager 下发给 Worker 的实时交互消息：
 
 ### 9.5 FRP 代理约束
 
-FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**` 按 name 精确匹配在线隧道。`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机监听的 HTTP 服务。
+FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**` 按 name 精确匹配在线隧道。`worker_host` 允许 Worker 可解析的主机名或 IP，`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机或 Worker 网络中监听的 HTTP 服务。
 `TASK_INTERACTION_RESOLVED` 会回带 `responded/decision/message/payload`，用于让 Manager 在恢复任务前幂等落库用户响应，避免 Agent 极快完成时终态清理把已响应交互误取消。
 
 ## 10. 数据架构

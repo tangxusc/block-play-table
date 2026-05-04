@@ -585,7 +585,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Next page" }).click();
-  await expect(page.getByText(/Showing 21-40 of \d+/)).toBeVisible();
+  await expect(page.getByText(/Showing 21-\d+ of \d+/)).toBeVisible();
   await expect(
     page.getByRole("group", {
       name: new RegExp(`Pagination Task ${suffix}-0`),

@@ -94,6 +94,63 @@ func TestProxyRoutesByWorkerNameThroughFRPTunnel(t *testing.T) {
 	}
 }
 
+func TestProxyWebRouteTargetsWorkerNetworkHostThroughFRPTunnel(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore())
+	manager := httptest.NewServer(NewServer(service).Handler())
+	defer manager.Close()
+
+	received := make(chan *http.Request, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>worker web</html>"))
+	}))
+	defer target.Close()
+	port := mustPort(t, target.URL)
+
+	wsURL := "ws" + strings.TrimPrefix(manager.URL, "http") + "/worker/frp?worker_id=worker-1&worker_name=Proxy%20Worker"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial frp: %v", err)
+	}
+	defer ws.Close()
+	session, err := yamux.Client(frp.NewWebSocketConn(ws), nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	defer session.Close()
+	go func() {
+		if err := frp.ServeWorkerProxy(nil, session); err != nil && err != yamux.ErrSessionShutdown {
+			t.Errorf("worker proxy: %v", err)
+		}
+	}()
+
+	res, err := http.Get(manager.URL + "/proxy/web/Proxy%20Worker/localhost/" + strconv.Itoa(port) + "/dashboard?tab=preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK || string(body) != "<html>worker web</html>" {
+		t.Fatalf("proxy response = status %d body %q", res.StatusCode, body)
+	}
+
+	select {
+	case proxied := <-received:
+		if proxied.URL.Path != "/dashboard" || proxied.URL.RawQuery != "tab=preview" {
+			t.Fatalf("proxied URL = %s?%s", proxied.URL.Path, proxied.URL.RawQuery)
+		}
+		if proxied.Host != "localhost:"+strconv.Itoa(port) {
+			t.Fatalf("proxied host = %q, want localhost:%d", proxied.Host, port)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for proxied request")
+	}
+}
+
 func TestProxyRejectsMissingHeadersInvalidPortAndMissingTunnel(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore())
 	manager := httptest.NewServer(NewServer(service).Handler())

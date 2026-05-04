@@ -1055,6 +1055,39 @@ void main() {
     expect(apiClient.continuedMessage, 'follow up');
   });
 
+  testWidgets('task detail opens worker web preview from address input', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('task-detail-section-web')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Worker web address'),
+      'localhost:5173/dashboard?tab=preview',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('Open worker web preview'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('task-detail-worker-web-preview')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        '/proxy/web/Local%20worker/localhost/5173/dashboard?tab=preview',
+      ),
+      findsWidgets,
+    );
+  });
+
   testWidgets('settings no longer exposes agent runtime env controls', (
     tester,
   ) async {
@@ -1157,12 +1190,12 @@ class FakeApiClient extends ApiClient {
     List<ProjectItem>? projects,
     List<WorkerItem>? workers,
     List<DomainEventItem>? events,
-  }) : _settings = settings ?? const SettingsData(),
-       _tasks = tasks ?? [_task],
-       _projects = projects ?? [_project],
-       _workers = workers ?? [worker ?? _defaultWorker],
-       _domainEvents = events ?? const [],
-       super('http://manager/graphql');
+  })  : _settings = settings ?? const SettingsData(),
+        _tasks = tasks ?? [_task],
+        _projects = projects ?? [_project],
+        _workers = workers ?? [worker ?? _defaultWorker],
+        _domainEvents = events ?? const [],
+        super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
@@ -1248,10 +1281,12 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async => PagedResult(
-    items: page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
-    totalCount: _filterProjects(_projects, search).length,
-  );
+  }) async =>
+      PagedResult(
+        items:
+            page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
+        totalCount: _filterProjects(_projects, search).length,
+      );
 
   @override
   Future<List<WorkerItem>> fetchWorkers() async => _workers;
@@ -1261,10 +1296,11 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async => PagedResult(
-    items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
-    totalCount: _filterWorkers(_workers, search).length,
-  );
+  }) async =>
+      PagedResult(
+        items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
+        totalCount: _filterWorkers(_workers, search).length,
+      );
 
   @override
   Future<List<DomainEventItem>> fetchEvents() async => _domainEvents;
@@ -1274,10 +1310,12 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'OCCURRED_AT'),
-  }) async => PagedResult(
-    items: page.slice(_sortEvents(_filterEvents(_domainEvents, search), sort)),
-    totalCount: _filterEvents(_domainEvents, search).length,
-  );
+  }) async =>
+      PagedResult(
+        items:
+            page.slice(_sortEvents(_filterEvents(_domainEvents, search), sort)),
+        totalCount: _filterEvents(_domainEvents, search).length,
+      );
 
   @override
   Future<SettingsData> fetchSettings() async => _settings;
@@ -1333,7 +1371,8 @@ class FakeApiClient extends ApiClient {
     String? aggregateId,
     String? aggregateType,
     String? eventType,
-  }) => _events.stream;
+  }) =>
+      _events.stream;
 
   @override
   Future<TaskDetailData> fetchTaskDetail(String taskId) async {
@@ -1494,8 +1533,8 @@ List<ProjectItem> _sortProjects(List<ProjectItem> projects, SortRequest sort) {
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'GIT_URL' => a.gitUrl.toLowerCase().compareTo(b.gitUrl.toLowerCase()),
       'DEFAULT_BRANCH' => a.defaultBranch.toLowerCase().compareTo(
-        b.defaultBranch.toLowerCase(),
-      ),
+            b.defaultBranch.toLowerCase(),
+          ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1514,8 +1553,8 @@ List<WorkerItem> _sortWorkers(List<WorkerItem> workers, SortRequest sort) {
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'STATUS' => a.status.compareTo(b.status),
       'LAST_HEARTBEAT_AT' => (a.lastHeartbeatAt ?? '').compareTo(
-        b.lastHeartbeatAt ?? '',
-      ),
+          b.lastHeartbeatAt ?? '',
+        ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1534,14 +1573,14 @@ List<DomainEventItem> _sortEvents(
   out.sort((a, b) {
     final cmp = switch (sort.field) {
       'EVENT_TYPE' => a.eventType.toLowerCase().compareTo(
-        b.eventType.toLowerCase(),
-      ),
+            b.eventType.toLowerCase(),
+          ),
       'AGGREGATE_TYPE' => a.aggregateType.toLowerCase().compareTo(
-        b.aggregateType.toLowerCase(),
-      ),
+            b.aggregateType.toLowerCase(),
+          ),
       'AGGREGATE_ID' => a.aggregateId.toLowerCase().compareTo(
-        b.aggregateId.toLowerCase(),
-      ),
+            b.aggregateId.toLowerCase(),
+          ),
       _ => a.occurredAt.compareTo(b.occurredAt),
     };
     if (cmp != 0) {
@@ -1660,26 +1699,27 @@ TaskItem _taskWith({
   String? createdAt,
   String? updatedAt,
   String? projectId,
-}) => TaskItem(
-  id: id,
-  title: title,
-  description: description ?? _task.description,
-  status: status ?? _task.status,
-  projectId: projectId ?? _task.projectId,
-  agentType: _task.agentType,
-  agentConfig: _task.agentConfig,
-  baseBranch: _task.baseBranch,
-  preCommands: _task.preCommands,
-  postCommands: _task.postCommands,
-  startDate: startDate ?? _task.startDate,
-  endDate: endDate ?? _task.endDate,
-  createdAt: createdAt ?? _task.createdAt,
-  updatedAt: updatedAt ?? _task.updatedAt,
-  workerId: _task.workerId,
-  worktreePath: _task.worktreePath,
-  agentSessionId: _task.agentSessionId,
-  result: _task.result,
-);
+}) =>
+    TaskItem(
+      id: id,
+      title: title,
+      description: description ?? _task.description,
+      status: status ?? _task.status,
+      projectId: projectId ?? _task.projectId,
+      agentType: _task.agentType,
+      agentConfig: _task.agentConfig,
+      baseBranch: _task.baseBranch,
+      preCommands: _task.preCommands,
+      postCommands: _task.postCommands,
+      startDate: startDate ?? _task.startDate,
+      endDate: endDate ?? _task.endDate,
+      createdAt: createdAt ?? _task.createdAt,
+      updatedAt: updatedAt ?? _task.updatedAt,
+      workerId: _task.workerId,
+      worktreePath: _task.worktreePath,
+      agentSessionId: _task.agentSessionId,
+      result: _task.result,
+    );
 
 final _completedTask = TaskItem(
   id: 'task-1',

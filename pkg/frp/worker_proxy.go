@@ -46,12 +46,19 @@ func serveWorkerProxyStream(ctx context.Context, stream *yamux.Stream, transport
 		writeStreamError(stream, http.StatusBadRequest, fmt.Errorf("invalid worker proxy port %q", portText))
 		return
 	}
+	host, err := NormalizeProxyHost(req.Header.Get(ProxyHostHeader))
+	if err != nil {
+		writeStreamError(stream, http.StatusBadRequest, err)
+		return
+	}
 	req.RequestURI = ""
 	req.URL.Scheme = "http"
-	req.URL.Host = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	req.URL.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	req.Host = req.URL.Host
 	req.Header.Del(ProxyPortHeader)
+	req.Header.Del(ProxyHostHeader)
 	req.Header.Del("worker")
+	req.Header.Del("worker_host")
 	req.Header.Del("worker_port")
 	RemoveHopByHopHeaders(req.Header)
 	resp, err := transport.RoundTrip(req.WithContext(ctx))

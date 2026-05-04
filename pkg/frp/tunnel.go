@@ -8,13 +8,16 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/yamux"
 )
 
 const ProxyPortHeader = "X-Block-Play-Proxy-Port"
+const ProxyHostHeader = "X-Block-Play-Proxy-Host"
 
 type ProxyTarget struct {
+	Host string
 	Port int
 	Path string
 }
@@ -28,6 +31,10 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	}
 	if target.Port < 1 || target.Port > 65535 {
 		return nil, fmt.Errorf("worker port %d is invalid", target.Port)
+	}
+	targetHost, err := NormalizeProxyHost(target.Host)
+	if err != nil {
+		return nil, err
 	}
 	if target.Path == "" {
 		target.Path = "/"
@@ -49,10 +56,12 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	out.URL.RawPath = ""
 	out.URL.Scheme = ""
 	out.URL.Host = ""
-	out.Host = net.JoinHostPort("127.0.0.1", strconv.Itoa(target.Port))
+	out.Host = net.JoinHostPort(targetHost, strconv.Itoa(target.Port))
 	out.Header.Del("worker")
+	out.Header.Del("worker_host")
 	out.Header.Del("worker_port")
 	out.Header.Set(ProxyPortHeader, strconv.Itoa(target.Port))
+	out.Header.Set(ProxyHostHeader, targetHost)
 	RemoveHopByHopHeaders(out.Header)
 	if err := out.Write(stream); err != nil {
 		return nil, err
@@ -64,6 +73,28 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	resp.Body = &streamReadCloser{ReadCloser: resp.Body, closer: stream}
 	closeOnError = false
 	return resp, nil
+}
+
+func NormalizeProxyHost(host string) (string, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "127.0.0.1", nil
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	}
+	if strings.ContainsAny(host, "/\\") {
+		return "", fmt.Errorf("worker proxy host %q is invalid", host)
+	}
+	for _, r := range host {
+		if r <= 31 || r == 127 || r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			return "", fmt.Errorf("worker proxy host %q is invalid", host)
+		}
+	}
+	if strings.Contains(host, ":") && net.ParseIP(host) == nil {
+		return "", fmt.Errorf("worker proxy host %q is invalid", host)
+	}
+	return host, nil
 }
 
 func RemoveHopByHopHeaders(header http.Header) {

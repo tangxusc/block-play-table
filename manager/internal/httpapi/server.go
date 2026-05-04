@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,7 +127,7 @@ func errorResponse(message string) map[string]any {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-User-Role, worker, worker_port")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-User-Role, worker, worker_host, worker_port")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -286,25 +287,20 @@ func (g *WorkerGateway) HandleFRP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *WorkerGateway) HandleProxy(w http.ResponseWriter, r *http.Request) {
-	workerName := strings.TrimSpace(r.Header.Get("worker"))
-	portText := strings.TrimSpace(r.Header.Get("worker_port"))
-	if workerName == "" || portText == "" {
-		http.Error(w, "worker and worker_port headers are required", http.StatusBadRequest)
+	target, err := proxyTargetFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		http.Error(w, "worker_port must be a TCP port between 1 and 65535", http.StatusBadRequest)
-		return
-	}
-	tunnel := g.proxyTunnel(workerName)
+	tunnel := g.proxyTunnel(target.workerName)
 	if tunnel == nil || tunnel.session == nil || tunnel.session.IsClosed() {
 		http.Error(w, "worker proxy tunnel is not connected", http.StatusServiceUnavailable)
 		return
 	}
 	resp, err := frp.ProxyHTTP(r.Context(), tunnel.session, r, frp.ProxyTarget{
-		Port: port,
-		Path: stripProxyPath(r.URL.Path),
+		Host: target.host,
+		Port: target.port,
+		Path: target.path,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -319,6 +315,82 @@ func (g *WorkerGateway) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+type proxyRequestTarget struct {
+	workerName string
+	host       string
+	port       int
+	path       string
+}
+
+func proxyTargetFromRequest(r *http.Request) (proxyRequestTarget, error) {
+	if target, ok, err := proxyWebTargetFromPath(r.URL.Path); ok || err != nil {
+		return target, err
+	}
+	workerName := strings.TrimSpace(r.Header.Get("worker"))
+	host := strings.TrimSpace(r.Header.Get("worker_host"))
+	portText := strings.TrimSpace(r.Header.Get("worker_port"))
+	if workerName == "" || portText == "" {
+		return proxyRequestTarget{}, fmt.Errorf("worker and worker_port headers are required")
+	}
+	port, err := proxyPort(portText)
+	if err != nil {
+		return proxyRequestTarget{}, err
+	}
+	if _, err := frp.NormalizeProxyHost(host); err != nil {
+		return proxyRequestTarget{}, err
+	}
+	return proxyRequestTarget{
+		workerName: workerName,
+		host:       host,
+		port:       port,
+		path:       stripProxyPath(r.URL.Path),
+	}, nil
+}
+
+func proxyWebTargetFromPath(path string) (proxyRequestTarget, bool, error) {
+	if !strings.HasPrefix(path, "/proxy/web/") {
+		return proxyRequestTarget{}, false, nil
+	}
+	rest := strings.TrimPrefix(path, "/proxy/web/")
+	parts := strings.SplitN(rest, "/", 4)
+	if len(parts) < 3 {
+		return proxyRequestTarget{}, true, fmt.Errorf("proxy web route must include worker, host, and port")
+	}
+	workerName, err := url.PathUnescape(parts[0])
+	if err != nil || strings.TrimSpace(workerName) == "" {
+		return proxyRequestTarget{}, true, fmt.Errorf("proxy web worker is invalid")
+	}
+	host, err := url.PathUnescape(parts[1])
+	if err != nil {
+		return proxyRequestTarget{}, true, fmt.Errorf("proxy web host is invalid")
+	}
+	if _, err := frp.NormalizeProxyHost(host); err != nil {
+		return proxyRequestTarget{}, true, err
+	}
+	port, err := proxyPort(parts[2])
+	if err != nil {
+		return proxyRequestTarget{}, true, err
+	}
+	targetPath := "/"
+	if len(parts) == 4 && parts[3] != "" {
+		targetPath = "/" + parts[3]
+	}
+	return proxyRequestTarget{
+		workerName: strings.TrimSpace(workerName),
+		host:       strings.TrimSpace(host),
+		port:       port,
+		path:       targetPath,
+	}, true, nil
+}
+
+func proxyPort(portText string) (int, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(portText))
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("worker_port must be a TCP port between 1 and 65535")
+	}
+	return port, nil
 }
 
 func (g *WorkerGateway) trackConnection(workerID string, conn *workerConnection) {

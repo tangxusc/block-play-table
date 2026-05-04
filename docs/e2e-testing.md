@@ -229,7 +229,8 @@ npm run e2e:real-agents
 | Worker | Worker 断线后被标记为 `OFFLINE` | L1/L2 | [待补齐] |
 | Worker | Worker 重连后恢复 `ONLINE` 并可继续接收任务 | L1/L2 | [待补齐] |
 | Worker | `MANAGER_WS_URLS` 配置多个 Manager 后 Worker 同时注册到所有 Manager | L1 | [已实现] |
-| Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
+| Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name、host 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
+| UI | Task 详情输入 Worker 网络地址并通过 Manager 同源代理显示网页预览 | L2 | [已实现] |
 | Worker | 禁用 Worker 后不参与自动分配，启用后恢复可用 | L1/L2 | [待补齐] |
 | Worker | 删除空闲 Worker 后列表移除并产生领域事件 | L1/L2 | [待补齐] |
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |

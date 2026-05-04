@@ -9,7 +9,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 ## Trusted Mode
 
-GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local `127.0.0.1:<worker_port>`, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -71,7 +71,9 @@ Manager endpoints:
 - `/proxy/**`
 - `GET /subscriptions`
 
-`/proxy/**` routes through the Worker FRP tunnel. Requests must include `worker: <worker name>` and `worker_port: <worker port>` headers. Manager strips the `/proxy` prefix and forwards the remaining path to `http://127.0.0.1:<worker_port>` on that Worker; `worker` and `worker_port` are routing headers and are not forwarded to the target service. Worker names are unique.
+`/proxy/**` routes through the Worker FRP tunnel. Header-based requests must include `worker: <worker name>` and `worker_port: <worker port>` headers, and can optionally include `worker_host: <host>` to reach a host visible from the Worker network. If `worker_host` is omitted, Manager targets `127.0.0.1`. Manager strips the `/proxy` prefix and forwards the remaining path to `http://<worker_host>:<worker_port>` through that Worker; `worker`, `worker_host`, and `worker_port` are routing headers and are not forwarded to the target service. Worker names are unique.
+
+Browser clients that cannot set custom headers can use `/proxy/web/<worker name>/<host>/<port>/**`. The task detail UI uses that route for its Web preview panel.
 
 ## Agent CLI Run Configuration
 
