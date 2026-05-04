@@ -1,14 +1,17 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:xterm/xterm.dart';
 
 import '../api_client.dart';
 import '../board_status_groups.dart';
 import '../models.dart';
 import '../realtime_refresh.dart';
 import '../widgets.dart';
+import '../worker_terminal_socket.dart';
 import '../worker_web_preview.dart';
 
 class BoardPage extends StatefulWidget {
@@ -368,21 +371,21 @@ class _BoardContent extends StatelessWidget {
     }
     return switch (view) {
       'LIST' => _TaskListView(
-          tasks: data.tasks,
-          projects: data.projects,
-          workers: data.workers,
-          onTaskSelected: onTaskSelected,
-          onTaskEdit: onTaskEdit,
-        ),
+        tasks: data.tasks,
+        projects: data.projects,
+        workers: data.workers,
+        onTaskSelected: onTaskSelected,
+        onTaskEdit: onTaskEdit,
+      ),
       'CALENDAR' => _CalendarView(
-          tasks: data.tasks,
-          onTaskSelected: onTaskSelected,
-        ),
+        tasks: data.tasks,
+        onTaskSelected: onTaskSelected,
+      ),
       _ => _KanbanView(
-          columns: buildBoardStatusColumns(data.tasks),
-          onTaskSelected: onTaskSelected,
-          onTaskEdit: onTaskEdit,
-        ),
+        columns: buildBoardStatusColumns(data.tasks),
+        onTaskSelected: onTaskSelected,
+        onTaskEdit: onTaskEdit,
+      ),
     };
   }
 }
@@ -421,10 +424,12 @@ class _KanbanViewState extends State<_KanbanView> {
       builder: (context, constraints) {
         final columnCount = widget.columns.length;
         final totalGap = columnGap * (columnCount - 1);
-        final viewportWidth =
-            constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
-        final viewportHeight =
-            constraints.maxHeight.isFinite ? constraints.maxHeight : 0.0;
+        final viewportWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        final viewportHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 0.0;
         final availableRowWidth = viewportWidth - (pagePadding * 2);
         final availableRowHeight = viewportHeight - (pagePadding * 2);
         final expandedColumnWidth =
@@ -448,9 +453,11 @@ class _KanbanViewState extends State<_KanbanView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var index = 0;
-                      index < widget.columns.length;
-                      index++) ...[
+                  for (
+                    var index = 0;
+                    index < widget.columns.length;
+                    index++
+                  ) ...[
                     SizedBox(
                       key: ValueKey(
                         'kanban-column-${widget.columns[index].id}',
@@ -832,10 +839,10 @@ bool _workerAvailableForProject(WorkerItem worker, String? projectId) {
 }
 
 String _agentLabel(String agent) => switch (agent) {
-      'codex' => 'Codex',
-      'claude' => 'Claude',
-      _ => agent,
-    };
+  'codex' => 'Codex',
+  'claude' => 'Claude',
+  _ => agent,
+};
 
 String _enumLabel(String value) {
   if (value.isEmpty) {
@@ -854,23 +861,23 @@ String _enumLabel(String value) {
 
 class _AgentConfigDraft {
   _AgentConfigDraft({required AgentExecutionConfigItem config})
-      : workMode = config.workMode,
-        codexModel = TextEditingController(text: config.codex.model),
-        codexReasoningEffort = config.codex.reasoningEffort,
-        codexSandboxMode = config.codex.sandboxMode,
-        codexApprovalPolicy = config.codex.approvalPolicy,
-        codexFullAuto = config.codex.fullAuto,
-        codexBypassApprovalsAndSandbox = config.codex.bypassApprovalsAndSandbox,
-        claudeModel = TextEditingController(text: config.claude.model),
-        claudeEffort = config.claude.effort,
-        claudePermissionMode = config.claude.permissionMode;
+    : workMode = config.workMode,
+      codexModel = TextEditingController(text: config.codex.model),
+      codexReasoningEffort = config.codex.reasoningEffort,
+      codexSandboxMode = config.codex.sandboxMode,
+      codexApprovalPolicy = config.codex.approvalPolicy,
+      codexFullAuto = config.codex.fullAuto,
+      codexBypassApprovalsAndSandbox = config.codex.bypassApprovalsAndSandbox,
+      claudeModel = TextEditingController(text: config.claude.model),
+      claudeEffort = config.claude.effort,
+      claudePermissionMode = config.claude.permissionMode;
 
   factory _AgentConfigDraft.empty() =>
       _AgentConfigDraft(config: const AgentExecutionConfigItem());
 
   factory _AgentConfigDraft.fromTask(TaskItem? task) => _AgentConfigDraft(
-        config: task?.agentConfig ?? const AgentExecutionConfigItem(),
-      );
+    config: task?.agentConfig ?? const AgentExecutionConfigItem(),
+  );
 
   String workMode;
   final TextEditingController codexModel;
@@ -1252,29 +1259,29 @@ class _CalendarViewState extends State<_CalendarView> {
                 )
               : switch (_mode) {
                   _CalendarMode.day => _CalendarDayList(
-                      date: _focusedDate,
-                      ranges: ranges,
-                      onTaskSelected: widget.onTaskSelected,
-                    ),
+                    date: _focusedDate,
+                    ranges: ranges,
+                    onTaskSelected: widget.onTaskSelected,
+                  ),
                   _CalendarMode.week => _CalendarWeekGrid(
-                      weekStart: _startOfWeek(_focusedDate),
-                      ranges: ranges,
-                      onTaskSelected: widget.onTaskSelected,
-                    ),
+                    weekStart: _startOfWeek(_focusedDate),
+                    ranges: ranges,
+                    onTaskSelected: widget.onTaskSelected,
+                  ),
                   _CalendarMode.month => _CalendarMonthGrid(
-                      month: _focusedDate,
-                      ranges: ranges,
-                      onTaskSelected: widget.onTaskSelected,
-                    ),
+                    month: _focusedDate,
+                    ranges: ranges,
+                    onTaskSelected: widget.onTaskSelected,
+                  ),
                   _CalendarMode.year => _CalendarYearGrid(
-                      year: _focusedDate.year,
-                      ranges: ranges,
-                      onTaskSelected: widget.onTaskSelected,
-                      onMonthSelected: (month) => setState(() {
-                        _mode = _CalendarMode.month;
-                        _focusedDate = month;
-                      }),
-                    ),
+                    year: _focusedDate.year,
+                    ranges: ranges,
+                    onTaskSelected: widget.onTaskSelected,
+                    onMonthSelected: (month) => setState(() {
+                      _mode = _CalendarMode.month;
+                      _focusedDate = month;
+                    }),
+                  ),
                 },
         ),
       ],
@@ -1290,14 +1297,14 @@ class _CalendarViewState extends State<_CalendarView> {
       _focusedDate = switch (_mode) {
         _CalendarMode.day => _dateOnly(_focusedDate.add(Duration(days: delta))),
         _CalendarMode.week => _dateOnly(
-            _focusedDate.add(Duration(days: delta * 7)),
-          ),
+          _focusedDate.add(Duration(days: delta * 7)),
+        ),
         _CalendarMode.month => _addMonths(_focusedDate, delta),
         _CalendarMode.year => DateTime(
-            _focusedDate.year + delta,
-            _focusedDate.month,
-            _focusedDate.day,
-          ),
+          _focusedDate.year + delta,
+          _focusedDate.month,
+          _focusedDate.day,
+        ),
       };
     });
   }
@@ -1425,9 +1432,11 @@ class _CalendarMonthGrid extends StatelessWidget {
     final gridStart = _startOfWeek(firstDay);
     final gridEnd = _startOfWeek(lastDay).add(const Duration(days: 6));
     final weekStarts = <DateTime>[];
-    for (var date = gridStart;
-        !date.isAfter(gridEnd);
-        date = date.add(const Duration(days: 7))) {
+    for (
+      var date = gridStart;
+      !date.isAfter(gridEnd);
+      date = date.add(const Duration(days: 7))
+    ) {
       weekStarts.add(date);
     }
 
@@ -1511,8 +1520,8 @@ class _CalendarWeekdayHeader extends StatelessWidget {
                 child: Text(
                   label,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ),
@@ -1540,15 +1549,18 @@ class _CalendarWeekRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final weekEnd = weekStart.add(const Duration(days: 6));
-    final weekRanges =
-        ranges.where((range) => range.overlaps(weekStart, weekEnd)).toList();
+    final weekRanges = ranges
+        .where((range) => range.overlaps(weekStart, weekEnd))
+        .toList();
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width =
-            constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
-        final height =
-            constraints.maxHeight.isFinite ? constraints.maxHeight : 150.0;
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        final height = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 150.0;
         final cellWidth = width / 7;
         final availableSlots = math.max(1, ((height - 38) / 22).floor());
         final visibleRanges = weekRanges.take(availableSlots).toList();
@@ -1571,7 +1583,8 @@ class _CalendarWeekRow extends StatelessWidget {
                     Expanded(
                       child: _CalendarDateCell(
                         date: weekStart.add(Duration(days: index)),
-                        inPrimaryMonth: primaryMonth == 0 ||
+                        inPrimaryMonth:
+                            primaryMonth == 0 ||
                             weekStart.add(Duration(days: index)).month ==
                                 primaryMonth,
                         showFullDate: showFullDate,
@@ -1593,8 +1606,8 @@ class _CalendarWeekRow extends StatelessWidget {
                   child: Text(
                     '+$overflowCount more',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
             ],
@@ -1610,8 +1623,9 @@ class _CalendarWeekRow extends StatelessWidget {
     required int index,
     required double cellWidth,
   }) {
-    final segmentStart =
-        range.start.isBefore(weekStart) ? weekStart : range.start;
+    final segmentStart = range.start.isBefore(weekStart)
+        ? weekStart
+        : range.start;
     final weekEnd = weekStart.add(const Duration(days: 6));
     final segmentEnd = range.end.isAfter(weekEnd) ? weekEnd : range.end;
     final dayOffset = segmentStart.difference(weekStart).inDays;
@@ -1673,9 +1687,9 @@ class _CalendarDateCell extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: isToday ? scheme.onError : labelColor,
-                  fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
-                ),
+              color: isToday ? scheme.onError : labelColor,
+              fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+            ),
           ),
         ),
       ),
@@ -1717,9 +1731,9 @@ class _CalendarTaskBar extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                  ),
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -1790,10 +1804,10 @@ class _CalendarYearGrid extends StatelessWidget {
         final columns = width >= 1120
             ? 4
             : width >= 820
-                ? 3
-                : width >= 560
-                    ? 2
-                    : 1;
+            ? 3
+            : width >= 560
+            ? 2
+            : 1;
         return GridView.builder(
           padding: const EdgeInsets.all(16),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1835,15 +1849,18 @@ class _YearMonthCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final monthStart = DateTime(month.year, month.month);
     final monthEnd = DateTime(month.year, month.month + 1, 0);
-    final monthRanges =
-        ranges.where((range) => range.overlaps(monthStart, monthEnd)).toList();
+    final monthRanges = ranges
+        .where((range) => range.overlaps(monthStart, monthEnd))
+        .toList();
     final busyDays = <int>{};
     for (final range in monthRanges) {
       final start = range.start.isBefore(monthStart) ? monthStart : range.start;
       final end = range.end.isAfter(monthEnd) ? monthEnd : range.end;
-      for (var date = start;
-          !date.isAfter(end);
-          date = date.add(const Duration(days: 1))) {
+      for (
+        var date = start;
+        !date.isAfter(end);
+        date = date.add(const Duration(days: 1))
+      ) {
         busyDays.add(date.day);
       }
     }
@@ -1909,24 +1926,22 @@ class _YearMonthCard extends StatelessWidget {
                         color: busy
                             ? color.withOpacity(0.14)
                             : today
-                                ? Theme.of(
-                                    context,
-                                  ).colorScheme.error.withOpacity(0.12)
-                                : null,
+                            ? Theme.of(
+                                context,
+                              ).colorScheme.error.withOpacity(0.12)
+                            : null,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         inMonth ? date.day.toString() : '',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: busy
-                                  ? color
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                              fontWeight: busy || today
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
+                          color: busy
+                              ? color
+                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontWeight: busy || today
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                        ),
                       ),
                     );
                   },
@@ -1965,8 +1980,8 @@ class _MiniWeekdayHeader extends StatelessWidget {
               child: Text(
                 label,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
@@ -2046,34 +2061,34 @@ String _shortDateLabel(DateTime date) =>
     '${_shortMonthName(date.month)} ${date.day}';
 
 String _monthName(int month) => const [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ][month - 1];
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+][month - 1];
 
 String _shortMonthName(int month) => const [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ][month - 1];
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+][month - 1];
 
 Color _calendarStatusColor(BuildContext context, String status) {
   final scheme = Theme.of(context).colorScheme;
@@ -2085,8 +2100,7 @@ Color _calendarStatusColor(BuildContext context, String status) {
     'ARCHIVED' ||
     'DISABLED' ||
     'OFFLINE' ||
-    'INTERRUPTED' =>
-      scheme.onSurfaceVariant,
+    'INTERRUPTED' => scheme.onSurfaceVariant,
     _ => scheme.primary,
   };
 }
@@ -2114,11 +2128,13 @@ Future<bool?> showTaskFormDialog(
   if (endDate.isBefore(startDate)) {
     endDate = startDate;
   }
-  String? projectId = task?.projectId ??
+  String? projectId =
+      task?.projectId ??
       (data.projects.isNotEmpty ? data.projects.first.id : null);
   String selectedWorkerId = task?.workerId ?? '';
-  String? selectedAgent =
-      (task?.agentType ?? '').isEmpty ? null : task!.agentType;
+  String? selectedAgent = (task?.agentType ?? '').isEmpty
+      ? null
+      : task!.agentType;
   final configDraft = _AgentConfigDraft.fromTask(task);
 
   List<WorkerItem> availableWorkers() => data.workers
@@ -2160,7 +2176,8 @@ Future<bool?> showTaskFormDialog(
             : _workerById(workers, selectedWorkerId);
         final supportedAgents =
             selectedWorker?.supportedAgents ?? const <String>[];
-        final canSave = title.text.trim().isNotEmpty &&
+        final canSave =
+            title.text.trim().isNotEmpty &&
             projectId != null &&
             !endDate.isBefore(startDate) &&
             (selectedWorkerId.isEmpty || selectedAgent != null);
@@ -2436,12 +2453,13 @@ Future<bool?> showTaskDetailDialog(
   );
 }
 
-typedef _TaskInteractionResponder = Future<void> Function(
-  TaskInteractionItem interaction, {
-  String? decision,
-  String? message,
-  String? payload,
-});
+typedef _TaskInteractionResponder =
+    Future<void> Function(
+      TaskInteractionItem interaction, {
+      String? decision,
+      String? message,
+      String? payload,
+    });
 
 class _TaskDetailDialog extends StatefulWidget {
   const _TaskDetailDialog({
@@ -2659,9 +2677,11 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     final task = _lastDetail?.task ?? widget.task;
     final currentWorkerId = task.workerId ?? '';
     final candidates = widget.boardData.workers.where((worker) {
-      final supports = task.agentType.isEmpty ||
+      final supports =
+          task.agentType.isEmpty ||
           worker.supportedAgents.contains(task.agentType);
-      final projectMatches = worker.projectBindingMode == 'ALL_PROJECTS' ||
+      final projectMatches =
+          worker.projectBindingMode == 'ALL_PROJECTS' ||
           worker.boundProjectIds.contains(task.projectId);
       return worker.status == 'ONLINE' &&
           supports &&
@@ -2671,7 +2691,8 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
     if (candidates.isEmpty) {
       return;
     }
-    String selected = currentWorkerId.isNotEmpty &&
+    String selected =
+        currentWorkerId.isNotEmpty &&
             candidates.any((worker) => worker.id == currentWorkerId)
         ? currentWorkerId
         : candidates.first.id;
@@ -2708,13 +2729,14 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                           .toList(),
                       onChanged: (value) => setState(() {
                         selected = value ?? selected;
-                        final worker = _workerById(candidates, selected) ??
+                        final worker =
+                            _workerById(candidates, selected) ??
                             candidates.first;
                         final agentOptions = task.agentType.isEmpty
                             ? worker.supportedAgents
                             : worker.supportedAgents
-                                .where((agent) => agent == task.agentType)
-                                .toList();
+                                  .where((agent) => agent == task.agentType)
+                                  .toList();
                         selectedAgent = agentOptions.isEmpty
                             ? task.agentType
                             : agentOptions.first;
@@ -2726,8 +2748,8 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                         final agentOptions = task.agentType.isEmpty
                             ? worker.supportedAgents
                             : worker.supportedAgents
-                                .where((agent) => agent == task.agentType)
-                                .toList();
+                                  .where((agent) => agent == task.agentType)
+                                  .toList();
                         final visibleAgents = agentOptions.isEmpty
                             ? <String>[selectedAgent]
                             : agentOptions;
@@ -2748,7 +2770,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                           selected: {selectedAgent},
                           onSelectionChanged: task.agentType.isEmpty
                               ? (values) =>
-                                  setState(() => selectedAgent = values.first)
+                                    setState(() => selectedAgent = values.first)
                               : null,
                         );
                       },
@@ -2797,33 +2819,36 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   }
 }
 
-enum _TaskDetailSection { conversation, web, logs, events }
+enum _TaskDetailSection { conversation, web, terminal, logs, events }
 
 IconData _taskDetailSectionIcon(_TaskDetailSection section) =>
     switch (section) {
       _TaskDetailSection.conversation => Icons.chat_bubble_outline,
       _TaskDetailSection.web => Icons.web_asset,
+      _TaskDetailSection.terminal => Icons.terminal,
       _TaskDetailSection.logs => Icons.article_outlined,
       _TaskDetailSection.events => Icons.event_note_outlined,
     };
 
 String _taskDetailSectionLabel(_TaskDetailSection section) => switch (section) {
-      _TaskDetailSection.conversation => 'Conversation',
-      _TaskDetailSection.web => 'Web preview',
-      _TaskDetailSection.logs => 'Logs',
-      _TaskDetailSection.events => 'Domain events',
-    };
+  _TaskDetailSection.conversation => 'Conversation',
+  _TaskDetailSection.web => 'Web preview',
+  _TaskDetailSection.terminal => 'Terminal',
+  _TaskDetailSection.logs => 'Logs',
+  _TaskDetailSection.events => 'Domain events',
+};
 
 Key _taskDetailSectionKey(_TaskDetailSection section) => switch (section) {
-      _TaskDetailSection.conversation => const ValueKey(
-          'task-detail-section-conversation',
-        ),
-      _TaskDetailSection.web => const ValueKey('task-detail-section-web'),
-      _TaskDetailSection.logs => const ValueKey('task-detail-section-logs'),
-      _TaskDetailSection.events => const ValueKey(
-          'task-detail-section-domain-events',
-        ),
-    };
+  _TaskDetailSection.conversation => const ValueKey(
+    'task-detail-section-conversation',
+  ),
+  _TaskDetailSection.web => const ValueKey('task-detail-section-web'),
+  _TaskDetailSection.terminal => const ValueKey('task-detail-section-terminal'),
+  _TaskDetailSection.logs => const ValueKey('task-detail-section-logs'),
+  _TaskDetailSection.events => const ValueKey(
+    'task-detail-section-domain-events',
+  ),
+};
 
 enum _TaskDetailActionEmphasis { normal, filled }
 
@@ -2928,32 +2953,36 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
   }
 
   Widget _selectedPanel(TaskItem task) => switch (_selectedSection) {
-        _TaskDetailSection.conversation => _ConversationTab(
-            conversations: widget.detail.conversations,
-            interactions: widget.detail.interactions,
-            onRespondInteraction: widget.onRespondInteraction,
-            footer: _ContinuationComposer(
-                task: task, onContinue: widget.onContinue),
-          ),
-        _TaskDetailSection.web => _WorkerWebTab(
-            apiClient: widget.apiClient,
-            task: task,
-            workers: widget.workers,
-          ),
-        _TaskDetailSection.logs => _RuntimeTab(
-            children: widget.detail.logs
-                .map((item) => '[${item.stream}] ${item.content}')
-                .toList(),
-          ),
-        _TaskDetailSection.events => _RuntimeTab(
-            children: widget.detail.events
-                .map(
-                  (item) =>
-                      '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
-                )
-                .toList(),
-          ),
-      };
+    _TaskDetailSection.conversation => _ConversationTab(
+      conversations: widget.detail.conversations,
+      interactions: widget.detail.interactions,
+      onRespondInteraction: widget.onRespondInteraction,
+      footer: _ContinuationComposer(task: task, onContinue: widget.onContinue),
+    ),
+    _TaskDetailSection.web => _WorkerWebTab(
+      apiClient: widget.apiClient,
+      task: task,
+      workers: widget.workers,
+    ),
+    _TaskDetailSection.terminal => _WorkerTerminalTab(
+      apiClient: widget.apiClient,
+      task: task,
+      worker: _workerById(widget.workers, task.workerId ?? ''),
+    ),
+    _TaskDetailSection.logs => _RuntimeTab(
+      children: widget.detail.logs
+          .map((item) => '[${item.stream}] ${item.content}')
+          .toList(),
+    ),
+    _TaskDetailSection.events => _RuntimeTab(
+      children: widget.detail.events
+          .map(
+            (item) =>
+                '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
+          )
+          .toList(),
+    ),
+  };
 }
 
 class _FloatingCommandRail extends StatelessWidget {
@@ -3278,25 +3307,25 @@ class _WorkerWebTabState extends State<_WorkerWebTab> {
                     .map(
                       (worker) => DropdownMenuItem(
                         value: worker.id,
-                        child:
-                            Text(worker.name, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          worker.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     )
                     .toList(),
                 selectedItemBuilder: (context) => widget.workers
                     .map(
-                      (worker) => Text(
-                        worker.name,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      (worker) =>
+                          Text(worker.name, overflow: TextOverflow.ellipsis),
                     )
                     .toList(),
                 onChanged: hasWorkers
                     ? (value) => setState(() {
-                          _selectedWorkerId = value ?? _selectedWorkerId;
-                          _previewUrl = '';
-                          _error = '';
-                        })
+                        _selectedWorkerId = value ?? _selectedWorkerId;
+                        _previewUrl = '';
+                        _error = '';
+                      })
                     : null,
               );
               final addressField = TextField(
@@ -3368,6 +3397,278 @@ class _WorkerWebTabState extends State<_WorkerWebTab> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _WorkerTerminalTab extends StatefulWidget {
+  const _WorkerTerminalTab({
+    required this.apiClient,
+    required this.task,
+    required this.worker,
+  });
+
+  final ApiClient apiClient;
+  final TaskItem task;
+  final WorkerItem? worker;
+
+  @override
+  State<_WorkerTerminalTab> createState() => _WorkerTerminalTabState();
+}
+
+class _WorkerTerminalTabState extends State<_WorkerTerminalTab> {
+  late final Terminal _terminal = Terminal(
+    maxLines: 2000,
+    onOutput: _sendInput,
+    onResize: (width, height, pixelWidth, pixelHeight) {
+      _socket?.sendResize(height, width);
+    },
+  );
+  WorkerTerminalSocket? _socket;
+  StreamSubscription<WorkerTerminalEvent>? _subscription;
+  String _status = 'Disconnected';
+  String _error = '';
+  bool _connecting = false;
+
+  @override
+  void didUpdateWidget(covariant _WorkerTerminalTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.task.id != widget.task.id ||
+        oldWidget.task.worktreePath != widget.task.worktreePath ||
+        oldWidget.worker?.id != widget.worker?.id) {
+      _disconnect();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disconnect(notify: false);
+    super.dispose();
+  }
+
+  String get _terminalUrl {
+    final taskID = widget.task.id ?? '';
+    if (taskID.isEmpty) {
+      return '';
+    }
+    return widget.apiClient.workerTerminalWebSocketUrl(taskID);
+  }
+
+  String _unavailableReason() {
+    final task = widget.task;
+    final worker = widget.worker;
+    if (worker == null) {
+      return 'Task worker is not available';
+    }
+    if (worker.status != 'ONLINE') {
+      return 'Worker is not online';
+    }
+    if ((task.worktreePath ?? '').trim().isEmpty) {
+      return 'Task worktree is not ready';
+    }
+    if (task.status == 'ARCHIVED') {
+      return 'Task is archived';
+    }
+    if (worker.capabilities['terminal_enabled'] != 'true') {
+      return 'Worker terminal is disabled';
+    }
+    return '';
+  }
+
+  Future<void> _connect() async {
+    final reason = _unavailableReason();
+    if (reason.isNotEmpty || _socket != null || _connecting) {
+      return;
+    }
+    final url = _terminalUrl;
+    setState(() {
+      _connecting = true;
+      _status = 'Checking';
+      _error = '';
+    });
+    try {
+      await widget.apiClient.checkWorkerTerminal(widget.task.id ?? '');
+      if (!mounted) {
+        return;
+      }
+      _terminal.write('\r\nConnecting worker terminal...\r\n');
+      final socket = connectWorkerTerminal(url);
+      _socket = socket;
+      _subscription = socket.events.listen(_handleEvent);
+      setState(() {
+        _connecting = false;
+        _status = 'Connected';
+        _error = '';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final message = _terminalErrorMessage(error);
+      _terminal.write('\r\n[terminal error] $message\r\n');
+      setState(() {
+        _connecting = false;
+        _status = 'Disconnected';
+        _error = message;
+      });
+    }
+  }
+
+  void _disconnect({bool notify = true}) {
+    _subscription?.cancel();
+    _subscription = null;
+    _socket?.close();
+    _socket = null;
+    _connecting = false;
+    if (mounted && notify) {
+      setState(() {
+        _status = 'Disconnected';
+      });
+    } else {
+      _status = 'Disconnected';
+    }
+  }
+
+  void _sendInput(String data) {
+    _socket?.sendInput(data);
+  }
+
+  void _handleEvent(WorkerTerminalEvent event) {
+    if (!mounted) {
+      return;
+    }
+    switch (event.type) {
+      case 'output':
+        _terminal.write(event.data);
+        break;
+      case 'exit':
+        _terminal.write('\r\n[terminal exited]\r\n');
+        _subscription?.cancel();
+        _subscription = null;
+        _socket = null;
+        setState(() {
+          _connecting = false;
+          _status = 'Disconnected';
+        });
+        break;
+      case 'error':
+        _terminal.write('\r\n[terminal error] ${event.data}\r\n');
+        setState(() {
+          _connecting = false;
+          _error = event.data;
+          _status = 'Disconnected';
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = _unavailableReason();
+    final url = _terminalUrl;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              StatusPill(value: _status),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SelectableText(
+                  url,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (reason.isEmpty)
+                IconButton.filled(
+                  tooltip: _connecting
+                      ? 'Connecting worker terminal'
+                      : _socket == null
+                      ? 'Connect worker terminal'
+                      : 'Disconnect worker terminal',
+                  onPressed: _connecting
+                      ? null
+                      : (_socket == null ? _connect : _disconnect),
+                  icon: Icon(_socket == null ? Icons.power : Icons.power_off),
+                ),
+            ],
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _TerminalUnavailable(reason: reason),
+          ] else ...[
+            if (_error.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Expanded(
+              child: DecoratedBox(
+                key: const ValueKey('task-detail-worker-terminal'),
+                decoration: BoxDecoration(
+                  color: const Color(0xff111318),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                ),
+                child: TerminalView(
+                  _terminal,
+                  autofocus: true,
+                  padding: const EdgeInsets.all(10),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _terminalErrorMessage(Object error) {
+  final text = error.toString();
+  return text
+      .replaceFirst(RegExp(r'^Bad state:\s*'), '')
+      .replaceFirst(RegExp(r'^Exception:\s*'), '')
+      .trim();
+}
+
+class _TerminalUnavailable extends StatelessWidget {
+  const _TerminalUnavailable({required this.reason});
+
+  final String reason;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Terminal unavailable',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(reason),
+          ],
+        ),
       ),
     );
   }
@@ -3603,8 +3904,8 @@ class _UserInputInteractionFormState extends State<_UserInputInteractionForm> {
                     onSelected: _sending
                         ? null
                         : (selected) => setState(
-                              () => _selected = selected ? option.label : '',
-                            ),
+                            () => _selected = selected ? option.label : '',
+                          ),
                   ),
                 )
                 .toList(),
@@ -3719,19 +4020,19 @@ List<_InteractionDetail> _interactionDetails(
 }
 
 IconData _interactionIcon(String kind) => switch (kind) {
-      'COMMAND_APPROVAL' => Icons.terminal,
-      'FILE_APPROVAL' => Icons.edit_document,
-      'PERMISSION_APPROVAL' => Icons.admin_panel_settings_outlined,
-      _ => Icons.question_answer_outlined,
-    };
+  'COMMAND_APPROVAL' => Icons.terminal,
+  'FILE_APPROVAL' => Icons.edit_document,
+  'PERMISSION_APPROVAL' => Icons.admin_panel_settings_outlined,
+  _ => Icons.question_answer_outlined,
+};
 
 String _interactionKindLabel(String kind) => switch (kind) {
-      'COMMAND_APPROVAL' => 'Command approval',
-      'FILE_APPROVAL' => 'File approval',
-      'PERMISSION_APPROVAL' => 'Permission approval',
-      'USER_INPUT' => 'User input',
-      _ => kind,
-    };
+  'COMMAND_APPROVAL' => 'Command approval',
+  'FILE_APPROVAL' => 'File approval',
+  'PERMISSION_APPROVAL' => 'Permission approval',
+  'USER_INPUT' => 'User input',
+  _ => kind,
+};
 
 Map<String, dynamic> _firstInteractionQuestion(
   TaskInteractionItem interaction,
@@ -3878,12 +4179,13 @@ class _ConversationFormat {
 }
 
 _ConversationFormat _conversationFormat(ConversationItem item) {
-  final value = (item.metadata['format'] ??
-          item.metadata['contentType'] ??
-          item.metadata['mimeType'] ??
-          item.metadata['type'] ??
-          '')
-      .toLowerCase();
+  final value =
+      (item.metadata['format'] ??
+              item.metadata['contentType'] ??
+              item.metadata['mimeType'] ??
+              item.metadata['type'] ??
+              '')
+          .toLowerCase();
   if (value.contains('json') || _looksLikeJson(item.content)) {
     return _ConversationFormat(label: 'JSON', build: _buildJsonContent);
   }

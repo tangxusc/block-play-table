@@ -114,6 +114,104 @@ async function addWorkerEnvVar(page, key: string, value: string) {
   await expect(page.getByText("Create env var")).toBeHidden();
 }
 
+function keyValuesToRecord(items: Array<{ key: string; value: string }> = []) {
+  return Object.fromEntries(items.map((item) => [item.key, item.value]));
+}
+
+async function waitForTerminalWorker(request) {
+  let selected: {
+    id: string;
+    name: string;
+    status: string;
+    supportedAgents: string[];
+    capabilities: Array<{ key: string; value: string }>;
+  } | null = null;
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Workers {
+          workers {
+            id name status supportedAgents capabilities { key value }
+          }
+        }`,
+      );
+      selected =
+        data.workers.find(
+          (worker: {
+            id: string;
+            name: string;
+            status: string;
+            supportedAgents: string[];
+            capabilities: Array<{ key: string; value: string }>;
+          }) => {
+            const capabilities = keyValuesToRecord(worker.capabilities);
+            return (
+              worker.status === "ONLINE" &&
+              worker.supportedAgents.includes("codex") &&
+              capabilities.terminal_enabled === "true" &&
+              Number(capabilities.terminal_port) > 0
+            );
+          },
+        ) || null;
+      return Boolean(selected);
+    })
+    .toBeTruthy();
+  return selected!;
+}
+
+async function runTerminalCommand(taskId: string, marker: string) {
+  const terminalURL = managerGraphQL
+    .replace(/^http/, "ws")
+    .replace(/\/graphql$/, `/terminal/tasks/${taskId}/ws`);
+  const ws = new WebSocket(terminalURL);
+  let output = "";
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error(`timed out waiting for terminal output: ${output}`));
+    }, 15000);
+    ws.addEventListener(
+      "open",
+      () => {
+        ws.send(
+          JSON.stringify({
+            type: "input",
+            data: `pwd\necho ${marker}\nexit\n`,
+          }),
+        );
+      },
+      { once: true },
+    );
+    ws.addEventListener("message", (message) => {
+      const event = JSON.parse(String(message.data));
+      if (event.type === "output") {
+        output += event.data;
+      }
+      if (event.type === "error") {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(`terminal error: ${event.data}`));
+      }
+      if (event.type === "exit") {
+        clearTimeout(timeout);
+        ws.close();
+        resolve();
+      }
+    });
+    ws.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timeout);
+        reject(new Error("terminal websocket failed"));
+      },
+      { once: true },
+    );
+  });
+  expect(output).toContain(marker);
+  return output;
+}
+
 function connectWorkerEvents(
   workerId: string,
   taskId: string,
@@ -1022,6 +1120,90 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("flutter-view")).toBeVisible();
+});
+
+test("task detail terminal runs commands in task worktree", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+
+  const suffix = Date.now();
+  const marker = `BPT_TERMINAL_E2E_${suffix}`;
+  const worker = await waitForTerminalWorker(request);
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `Terminal Project ${suffix}`,
+          gitUrl: "terminal-e2e-fixture",
+          defaultBranch: "main",
+          worktreeNamePrefix: `terminal-e2e-${suffix}`,
+        },
+      },
+    )
+  ).createProject;
+  const task = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title } }",
+      {
+        input: {
+          title: `Terminal Task ${suffix}`,
+          projectId: project.id,
+          workerId: worker.id,
+          agentType: "codex",
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId: task.id },
+  );
+  let worktreePath = "";
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query Task($id: ID!) { task(id: $id) { worktreePath } }",
+        { id: task.id },
+      );
+      worktreePath = data.task.worktreePath || "";
+      return worktreePath !== "";
+    })
+    .toBeTruthy();
+
+  const output = await runTerminalCommand(task.id, marker);
+  expect(output).toContain(worktreePath);
+
+  await page.reload();
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+  const terminalSocketURLs: string[] = [];
+  page.on("websocket", (socket) => {
+    terminalSocketURLs.push(socket.url());
+  });
+  await openTaskFromList(page, task.title);
+  await page.getByRole("button", { name: "Terminal" }).click();
+  await expect(page.getByText("Terminal unavailable")).toHaveCount(0);
+  await page.getByRole("button", { name: "Connect worker terminal" }).click();
+  await expect(page.getByText("Connected")).toBeVisible();
+  await expect
+    .poll(() =>
+      terminalSocketURLs.some((url) =>
+        url.includes(`/terminal/tasks/${task.id}/ws`),
+      ),
+    )
+    .toBeTruthy();
 });
 
 test("task detail approves a live agent interaction and refreshes results", async ({

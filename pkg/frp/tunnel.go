@@ -29,15 +29,9 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	if session == nil || session.IsClosed() {
 		return nil, fmt.Errorf("worker proxy tunnel is not connected")
 	}
-	if target.Port < 1 || target.Port > 65535 {
-		return nil, fmt.Errorf("worker port %d is invalid", target.Port)
-	}
-	targetHost, err := NormalizeProxyHost(target.Host)
+	out, err := proxyRequest(ctx, req, target, true)
 	if err != nil {
 		return nil, err
-	}
-	if target.Path == "" {
-		target.Path = "/"
 	}
 	stream, err := session.OpenStream()
 	if err != nil {
@@ -50,19 +44,6 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 		}
 	}()
 
-	out := req.Clone(ctx)
-	out.RequestURI = ""
-	out.URL.Path = target.Path
-	out.URL.RawPath = ""
-	out.URL.Scheme = ""
-	out.URL.Host = ""
-	out.Host = net.JoinHostPort(targetHost, strconv.Itoa(target.Port))
-	out.Header.Del("worker")
-	out.Header.Del("worker_host")
-	out.Header.Del("worker_port")
-	out.Header.Set(ProxyPortHeader, strconv.Itoa(target.Port))
-	out.Header.Set(ProxyHostHeader, targetHost)
-	RemoveHopByHopHeaders(out.Header)
 	if err := out.Write(stream); err != nil {
 		return nil, err
 	}
@@ -73,6 +54,108 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	resp.Body = &streamReadCloser{ReadCloser: resp.Body, closer: stream}
 	closeOnError = false
 	return resp, nil
+}
+
+func ProxyUpgrade(ctx context.Context, session *yamux.Session, req *http.Request, target ProxyTarget, client net.Conn, clientReader *bufio.Reader) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session == nil || session.IsClosed() {
+		return fmt.Errorf("worker proxy tunnel is not connected")
+	}
+	if client == nil {
+		return fmt.Errorf("client connection is required")
+	}
+	if clientReader == nil {
+		clientReader = bufio.NewReader(client)
+	}
+	out, err := proxyRequest(ctx, req, target, false)
+	if err != nil {
+		return err
+	}
+	stream, err := session.OpenStream()
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	if err := out.Write(stream); err != nil {
+		return err
+	}
+	workerReader := bufio.NewReader(stream)
+	resp, err := http.ReadResponse(workerReader, out)
+	if err != nil {
+		return err
+	}
+	if err := resp.Write(client); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		_ = resp.Body.Close()
+		return fmt.Errorf("worker websocket upgrade failed with status %d", resp.StatusCode)
+	}
+
+	errCh := make(chan error, 2)
+	go copyRaw(errCh, stream, clientReader)
+	go copyRaw(errCh, client, workerReader)
+	err = <-errCh
+	_ = stream.Close()
+	_ = client.Close()
+	if proxyPipeClosed(err) {
+		return nil
+	}
+	return err
+}
+
+func proxyRequest(ctx context.Context, req *http.Request, target ProxyTarget, removeHopByHop bool) (*http.Request, error) {
+	if target.Port < 1 || target.Port > 65535 {
+		return nil, fmt.Errorf("worker port %d is invalid", target.Port)
+	}
+	targetHost, err := NormalizeProxyHost(target.Host)
+	if err != nil {
+		return nil, err
+	}
+	if target.Path == "" {
+		target.Path = "/"
+	}
+	targetPath := target.Path
+	targetQuery := ""
+	if path, query, ok := strings.Cut(target.Path, "?"); ok {
+		targetPath = path
+		targetQuery = query
+	}
+	out := req.Clone(ctx)
+	out.RequestURI = ""
+	out.URL.Path = targetPath
+	if targetQuery != "" {
+		out.URL.RawQuery = targetQuery
+	}
+	out.URL.RawPath = ""
+	out.URL.Scheme = ""
+	out.URL.Host = ""
+	out.Host = net.JoinHostPort(targetHost, strconv.Itoa(target.Port))
+	out.Header.Del("worker")
+	out.Header.Del("worker_host")
+	out.Header.Del("worker_port")
+	out.Header.Set(ProxyPortHeader, strconv.Itoa(target.Port))
+	out.Header.Set(ProxyHostHeader, targetHost)
+	if removeHopByHop {
+		RemoveHopByHopHeaders(out.Header)
+	}
+	return out, nil
+}
+
+func copyRaw(errCh chan<- error, dst io.Writer, src io.Reader) {
+	_, err := io.Copy(dst, src)
+	errCh <- err
+}
+
+func proxyPipeClosed(err error) bool {
+	if err == nil {
+		return true
+	}
+	text := err.Error()
+	return strings.Contains(text, "closed") || strings.Contains(text, "broken pipe") || strings.Contains(text, "reset by peer")
 }
 
 func NormalizeProxyHost(host string) (string, error) {

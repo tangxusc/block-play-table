@@ -33,7 +33,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Board/Projects/Workers/Events 分页和 Calendar 日/周/月/年视图。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Board/Projects/Workers/Events 分页和 Calendar 日/周/月/年视图。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/complete 三类任务，打开看板并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -231,6 +231,7 @@ npm run e2e:real-agents
 | Worker | `MANAGER_WS_URLS` 配置多个 Manager 后 Worker 同时注册到所有 Manager | L1 | [已实现] |
 | Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name、host 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
 | UI | Task 详情输入 Worker 网络地址并通过 Manager 同源代理显示网页预览 | L2 | [已实现] |
+| UI | Task 详情 Terminal 面板先通过 `/terminal/tasks/{taskID}` 预检 worktree，再连接 `/terminal/tasks/{taskID}/ws` 并在默认 worktree 执行 `pwd` 与命令输出 | L1/L2 | [已实现] |
 | Worker | 禁用 Worker 后不参与自动分配，启用后恢复可用 | L1/L2 | [待补齐] |
 | Worker | 删除空闲 Worker 后列表移除并产生领域事件 | L1/L2 | [待补齐] |
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |

@@ -569,6 +569,7 @@ class WorkerItem {
     required this.projectBindingMode,
     required this.boundProjectIds,
     required this.currentTaskIds,
+    this.capabilities = const {},
     this.agentRuntimeEnv = const [],
     this.lastHeartbeatAt,
     this.createdAt = '',
@@ -586,6 +587,7 @@ class WorkerItem {
             json['projectBindingMode'] as String? ?? 'ALL_PROJECTS',
         boundProjectIds: stringList(json['boundProjectIds']),
         currentTaskIds: stringList(json['currentTaskIds']),
+        capabilities: _keyValuesToMap(json['capabilities'] as List<dynamic>? ?? []),
         agentRuntimeEnv: (json['agentRuntimeEnv'] as List<dynamic>? ?? [])
             .map(
               (item) => WorkerAgentRuntimeEnvItem.fromJson(
@@ -606,6 +608,7 @@ class WorkerItem {
   final String projectBindingMode;
   final List<String> boundProjectIds;
   final List<String> currentTaskIds;
+  final Map<String, String> capabilities;
   final List<WorkerAgentRuntimeEnvItem> agentRuntimeEnv;
   final String? lastHeartbeatAt;
   final String createdAt;
@@ -621,6 +624,7 @@ class WorkerItem {
     String? projectBindingMode,
     List<String>? boundProjectIds,
     List<String>? currentTaskIds,
+    Map<String, String>? capabilities,
     List<WorkerAgentRuntimeEnvItem>? agentRuntimeEnv,
     String? lastHeartbeatAt,
     String? createdAt,
@@ -636,6 +640,7 @@ class WorkerItem {
         projectBindingMode: projectBindingMode ?? this.projectBindingMode,
         boundProjectIds: boundProjectIds ?? this.boundProjectIds,
         currentTaskIds: currentTaskIds ?? this.currentTaskIds,
+        capabilities: capabilities ?? this.capabilities,
         agentRuntimeEnv: agentRuntimeEnv ?? this.agentRuntimeEnv,
         lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
         createdAt: createdAt ?? this.createdAt,

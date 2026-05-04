@@ -10,6 +10,7 @@ import (
 
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/worker/internal/client"
+	"github.com/tangxusc/block-play-table/worker/internal/terminal"
 )
 
 func main() {
@@ -33,7 +34,19 @@ func main() {
 		BoundProjectIDs: client.ParseCSV(os.Getenv("WORKER_BOUND_PROJECT_IDS")),
 		Logger:          logger,
 	}
-	logger.Info("worker starting", "managers", strings.Join(cfg.ManagerWSURLs, ","), "workerId", cfg.WorkerID, "trustedMode", true)
+	terminalServer := terminal.NewServer(terminal.Config{
+		Enabled: parseBoolEnv("WORKER_TERMINAL_ENABLED", true),
+		Host:    getenv("WORKER_TERMINAL_HOST", "127.0.0.1"),
+		WorkDir: cfg.WorkDir,
+		Shell:   os.Getenv("WORKER_TERMINAL_SHELL"),
+		Logger:  logger,
+	})
+	if err := terminalServer.Start(ctx); err != nil {
+		logger.Error("worker terminal failed", "error", err)
+		os.Exit(1)
+	}
+	cfg.Capabilities = terminalServer.Capabilities()
+	logger.Info("worker starting", "managers", strings.Join(cfg.ManagerWSURLs, ","), "workerId", cfg.WorkerID, "trustedMode", true, "terminal", cfg.Capabilities["terminal_enabled"])
 	if err := client.New(cfg).Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("worker failed", "error", err)
 		os.Exit(1)
@@ -46,4 +59,12 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+	return value != "0" && value != "false" && value != "no" && value != "off"
 }

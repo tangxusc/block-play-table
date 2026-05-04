@@ -34,7 +34,8 @@ func ServeWorkerProxy(ctx context.Context, session *yamux.Session) error {
 
 func serveWorkerProxyStream(ctx context.Context, stream *yamux.Stream, transport http.RoundTripper) {
 	defer stream.Close()
-	req, err := http.ReadRequest(bufio.NewReader(stream))
+	streamReader := bufio.NewReader(stream)
+	req, err := http.ReadRequest(streamReader)
 	if err != nil {
 		writeStreamError(stream, http.StatusBadRequest, err)
 		return
@@ -60,6 +61,10 @@ func serveWorkerProxyStream(ctx context.Context, stream *yamux.Stream, transport
 	req.Header.Del("worker")
 	req.Header.Del("worker_host")
 	req.Header.Del("worker_port")
+	if isUpgradeRequest(req) {
+		serveWorkerProxyUpgrade(ctx, stream, streamReader, req)
+		return
+	}
 	RemoveHopByHopHeaders(req.Header)
 	resp, err := transport.RoundTrip(req.WithContext(ctx))
 	if err != nil {
@@ -71,6 +76,51 @@ func serveWorkerProxyStream(ctx context.Context, stream *yamux.Stream, transport
 	if err := resp.Write(stream); err != nil {
 		return
 	}
+}
+
+func serveWorkerProxyUpgrade(ctx context.Context, stream *yamux.Stream, streamReader *bufio.Reader, req *http.Request) {
+	target, err := (&net.Dialer{}).DialContext(ctx, "tcp", req.URL.Host)
+	if err != nil {
+		writeStreamError(stream, http.StatusBadGateway, err)
+		return
+	}
+	defer target.Close()
+	if err := req.Write(target); err != nil {
+		writeStreamError(stream, http.StatusBadGateway, err)
+		return
+	}
+	targetReader := bufio.NewReader(target)
+	resp, err := http.ReadResponse(targetReader, req)
+	if err != nil {
+		writeStreamError(stream, http.StatusBadGateway, err)
+		return
+	}
+	if err := resp.Write(stream); err != nil {
+		return
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		_ = resp.Body.Close()
+		return
+	}
+	errCh := make(chan error, 2)
+	go copyRaw(errCh, target, streamReader)
+	go copyRaw(errCh, stream, targetReader)
+	<-errCh
+	_ = target.Close()
+	_ = stream.Close()
+}
+
+func isUpgradeRequest(req *http.Request) bool {
+	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket") && headerHasToken(req.Header.Get("Connection"), "upgrade")
+}
+
+func headerHasToken(value, token string) bool {
+	for _, item := range stringsSplitComma(value) {
+		if strings.EqualFold(item, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeStreamError(w io.Writer, status int, err error) {

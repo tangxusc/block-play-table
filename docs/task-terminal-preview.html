@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Task Terminal Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #f7f8fb;
+        color: #1d2433;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+      .dialog {
+        width: min(1180px, calc(100vw - 40px));
+        height: min(760px, calc(100vh - 40px));
+        background: #ffffff;
+        border: 1px solid #d9dee8;
+        border-radius: 8px;
+        box-shadow: 0 18px 60px rgb(27 39 64 / 18%);
+        padding: 22px;
+        box-sizing: border-box;
+        display: grid;
+        grid-template-columns: 1fr 168px;
+        gap: 16px;
+      }
+      .meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+      }
+      .pill {
+        border: 1px solid #ccd4e2;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 13px;
+        background: #f9fafc;
+      }
+      .toolbar {
+        border: 1px solid #d9dee8;
+        border-radius: 8px;
+        padding: 8px;
+        align-self: start;
+        display: grid;
+        gap: 8px;
+      }
+      .tool {
+        border: 1px solid #d5dbe6;
+        border-radius: 6px;
+        padding: 9px 10px;
+        font-size: 14px;
+        background: #ffffff;
+      }
+      .tool.active {
+        border-color: #2563eb;
+        background: #eaf1ff;
+        color: #1748b5;
+        font-weight: 700;
+      }
+      .terminal-head {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .url {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        color: #526070;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .connect {
+        border: 0;
+        border-radius: 999px;
+        background: #2563eb;
+        color: white;
+        width: 38px;
+        height: 38px;
+        font-size: 18px;
+      }
+      .terminal {
+        height: 560px;
+        border-radius: 6px;
+        border: 1px solid #222936;
+        background: #111318;
+        color: #d9f99d;
+        padding: 14px;
+        box-sizing: border-box;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 14px;
+        line-height: 1.55;
+        overflow: hidden;
+      }
+      .prompt {
+        color: #93c5fd;
+      }
+      @media (max-width: 760px) {
+        .dialog {
+          grid-template-columns: 1fr 56px;
+          padding: 14px;
+        }
+        .tool {
+          font-size: 0;
+          text-align: center;
+        }
+        .tool::first-letter {
+          font-size: 18px;
+        }
+        .terminal-head {
+          grid-template-columns: 1fr auto;
+        }
+        .terminal-head .pill {
+          grid-column: 1 / -1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="dialog" aria-label="Task detail terminal preview">
+      <section>
+        <div class="meta">
+          <span class="pill">RUNNING</span>
+          <span class="pill">codex</span>
+          <span class="pill">Platform</span>
+          <span class="pill">worker-local</span>
+        </div>
+        <div class="terminal-head">
+          <span class="pill">Connected</span>
+          <span class="url">ws://localhost:8080/terminal/tasks/task-1/ws</span>
+          <button class="connect" aria-label="Disconnect worker terminal">
+            &#9211;
+          </button>
+        </div>
+        <pre class="terminal"><span class="prompt">$</span> pwd
+/worker-data/platform-task-1
+<span class="prompt">$</span> echo BPT_TERMINAL_E2E
+BPT_TERMINAL_E2E
+<span class="prompt">$</span> git status --short
+ M README.md
+<span class="prompt">$</span> </pre>
+      </section>
+      <aside class="toolbar">
+        <div class="tool">Conversation</div>
+        <div class="tool">Web preview</div>
+        <div class="tool active">Terminal</div>
+        <div class="tool">Logs</div>
+        <div class="tool">Domain events</div>
+        <div class="tool">Close</div>
+        <div class="tool">Start</div>
+      </aside>
+    </main>
+  </body>
+</html>

@@ -1,7 +1,10 @@
 package frp
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -153,4 +156,145 @@ func TestHTTPProxyRoundTripsThroughWorkerTunnel(t *testing.T) {
 	if body := <-bodyCh; body != "hello" {
 		t.Fatalf("target body = %q, want hello", body)
 	}
+}
+
+func TestWebSocketUpgradeProxyRoundTripsThroughWorkerTunnel(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade target: %v", err)
+			return
+		}
+		defer conn.Close()
+		messageType, message, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("read target websocket message: %v", err)
+			return
+		}
+		if messageType != websocket.TextMessage || string(message) != "ping" {
+			t.Errorf("target websocket message = type %d body %q, want text ping", messageType, message)
+			return
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("pong")); err != nil {
+			t.Errorf("write target websocket message: %v", err)
+		}
+	}))
+	defer target.Close()
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(target.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	left, right := net.Pipe()
+	managerSession, err := yamux.Client(left, nil)
+	if err != nil {
+		t.Fatalf("manager yamux: %v", err)
+	}
+	defer managerSession.Close()
+	workerSession, err := yamux.Server(right, nil)
+	if err != nil {
+		t.Fatalf("worker yamux: %v", err)
+	}
+	defer workerSession.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		if err := ServeWorkerProxy(ctx, workerSession); err != nil && ctx.Err() == nil {
+			t.Errorf("serve worker proxy: %v", err)
+		}
+	}()
+
+	client, manager := net.Pipe()
+	defer client.Close()
+	defer manager.Close()
+	req := httptest.NewRequest(http.MethodGet, "http://manager.local/terminal/tasks/task-1/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", websocketKey(t))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- ProxyUpgrade(ctx, managerSession, req, ProxyTarget{Port: port, Path: "/"}, manager, bufio.NewReader(manager))
+	}()
+
+	reader := bufio.NewReader(client)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		t.Fatalf("read websocket upgrade response: %v", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("websocket upgrade status = %d, want 101", resp.StatusCode)
+	}
+	if err := writeMaskedTextFrame(client, "ping"); err != nil {
+		t.Fatalf("write websocket frame: %v", err)
+	}
+	message, err := readTextFrame(reader)
+	if err != nil {
+		t.Fatalf("read websocket frame: %v", err)
+	}
+	if message != "pong" {
+		t.Fatalf("websocket response = %q, want pong", message)
+	}
+	_ = client.Close()
+
+	select {
+	case err := <-done:
+		if err != nil && !strings.Contains(err.Error(), "closed") {
+			t.Fatalf("proxy upgrade returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for upgrade proxy to close")
+	}
+}
+
+func websocketKey(t *testing.T) string {
+	t.Helper()
+	var key [16]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(key[:])
+}
+
+func writeMaskedTextFrame(w io.Writer, message string) error {
+	payload := []byte(message)
+	header := []byte{0x81, 0x80 | byte(len(payload))}
+	mask := []byte{0x11, 0x22, 0x33, 0x44}
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	if _, err := w.Write(mask); err != nil {
+		return err
+	}
+	masked := make([]byte, len(payload))
+	for i, b := range payload {
+		masked[i] = b ^ mask[i%len(mask)]
+	}
+	_, err := w.Write(masked)
+	return err
+}
+
+func readTextFrame(r *bufio.Reader) (string, error) {
+	first, err := r.ReadByte()
+	if err != nil {
+		return "", err
+	}
+	if first != 0x81 {
+		return "", io.ErrUnexpectedEOF
+	}
+	length, err := r.ReadByte()
+	if err != nil {
+		return "", err
+	}
+	payload := make([]byte, int(length&0x7f))
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return "", err
+	}
+	return string(payload), nil
 }

@@ -932,6 +932,10 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.byKey(const ValueKey('task-detail-section-terminal')),
+      findsOneWidget,
+    );
+    expect(
       find.byKey(const ValueKey('task-detail-section-domain-events')),
       findsOneWidget,
     );
@@ -961,6 +965,7 @@ void main() {
     );
     for (final key in const [
       ValueKey('task-detail-section-conversation'),
+      ValueKey('task-detail-section-terminal'),
       ValueKey('task-detail-section-logs'),
       ValueKey('task-detail-section-domain-events'),
       ValueKey('task-detail-action-close'),
@@ -983,6 +988,14 @@ void main() {
     );
     expect(find.textContaining('done from subscription'), findsNothing);
     expect(find.textContaining('TaskCompleted v2: {}'), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('task-detail-section-terminal')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('/terminal/tasks/task-1/ws'), findsOneWidget);
+    expect(find.byTooltip('Connect worker terminal'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('task-detail-section-logs')));
     await tester.pumpAndSettle();
@@ -1088,6 +1101,94 @@ void main() {
     );
   });
 
+  testWidgets('task detail terminal is unavailable without worktree', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('task-detail-section-terminal')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Terminal unavailable'), findsOneWidget);
+    expect(find.textContaining('Task worktree is not ready'), findsOneWidget);
+    expect(find.byTooltip('Connect worker terminal'), findsNothing);
+  });
+
+  testWidgets('task detail terminal shows preflight error before connecting', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient(
+      terminalCheckError: 'terminal cwd does not exist',
+    )..completeTaskDetail();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('task-detail-section-terminal')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Connect worker terminal'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.terminalCheckCount, 1);
+    expect(find.textContaining('terminal cwd does not exist'), findsWidgets);
+    expect(find.text('Connected'), findsNothing);
+  });
+
+  testWidgets('task detail terminal is unavailable for archived task', (
+    tester,
+  ) async {
+    final archivedTask = TaskItem(
+      id: 'task-archived',
+      title: 'Archived terminal',
+      description: 'Archived task with stale worktree',
+      status: 'ARCHIVED',
+      projectId: _project.id,
+      agentType: 'codex',
+      agentConfig: const AgentExecutionConfigItem(),
+      baseBranch: 'main',
+      preCommands: const [],
+      postCommands: const [],
+      startDate: '2026-04-25T00:00:00Z',
+      endDate: '2026-04-26T00:00:00Z',
+      createdAt: '2026-04-25T00:00:00Z',
+      updatedAt: '2026-04-25T00:00:01Z',
+      workerId: 'worker-1',
+      worktreePath: '/tmp/worker/missing-task-worktree',
+      agentSessionId: 'session-1',
+    );
+    final apiClient = FakeApiClient(
+      tasks: [archivedTask],
+      detailTask: archivedTask,
+    );
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Archived terminal').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('task-detail-section-terminal')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Terminal unavailable'), findsOneWidget);
+    expect(find.textContaining('Task is archived'), findsOneWidget);
+    expect(find.byTooltip('Connect worker terminal'), findsNothing);
+    expect(apiClient.terminalCheckCount, 0);
+  });
+
   testWidgets('settings no longer exposes agent runtime env controls', (
     tester,
   ) async {
@@ -1190,12 +1291,16 @@ class FakeApiClient extends ApiClient {
     List<ProjectItem>? projects,
     List<WorkerItem>? workers,
     List<DomainEventItem>? events,
-  })  : _settings = settings ?? const SettingsData(),
-        _tasks = tasks ?? [_task],
-        _projects = projects ?? [_project],
-        _workers = workers ?? [worker ?? _defaultWorker],
-        _domainEvents = events ?? const [],
-        super('http://manager/graphql');
+    TaskItem? detailTask,
+    String? terminalCheckError,
+  }) : _settings = settings ?? const SettingsData(),
+       _tasks = tasks ?? [_task],
+       _projects = projects ?? [_project],
+       _workers = workers ?? [worker ?? _defaultWorker],
+       _domainEvents = events ?? const [],
+       _detailTask = detailTask,
+       _terminalCheckError = terminalCheckError,
+       super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
       StreamController<DomainEventItem>.broadcast();
@@ -1204,8 +1309,11 @@ class FakeApiClient extends ApiClient {
   final List<ProjectItem> _projects;
   List<WorkerItem> _workers;
   final List<DomainEventItem> _domainEvents;
+  final TaskItem? _detailTask;
+  final String? _terminalCheckError;
   int boardFetches = 0;
   int detailFetches = 0;
+  int terminalCheckCount = 0;
   bool _completedDetail = false;
   String? createdTaskTitle;
   String? createdTaskWorkerId;
@@ -1281,12 +1389,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async =>
-      PagedResult(
-        items:
-            page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
-        totalCount: _filterProjects(_projects, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortProjects(_filterProjects(_projects, search), sort)),
+    totalCount: _filterProjects(_projects, search).length,
+  );
 
   @override
   Future<List<WorkerItem>> fetchWorkers() async => _workers;
@@ -1296,11 +1402,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'CREATED_AT'),
-  }) async =>
-      PagedResult(
-        items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
-        totalCount: _filterWorkers(_workers, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortWorkers(_filterWorkers(_workers, search), sort)),
+    totalCount: _filterWorkers(_workers, search).length,
+  );
 
   @override
   Future<List<DomainEventItem>> fetchEvents() async => _domainEvents;
@@ -1310,12 +1415,10 @@ class FakeApiClient extends ApiClient {
     PageRequest page = const PageRequest(),
     String search = '',
     SortRequest sort = const SortRequest(field: 'OCCURRED_AT'),
-  }) async =>
-      PagedResult(
-        items:
-            page.slice(_sortEvents(_filterEvents(_domainEvents, search), sort)),
-        totalCount: _filterEvents(_domainEvents, search).length,
-      );
+  }) async => PagedResult(
+    items: page.slice(_sortEvents(_filterEvents(_domainEvents, search), sort)),
+    totalCount: _filterEvents(_domainEvents, search).length,
+  );
 
   @override
   Future<SettingsData> fetchSettings() async => _settings;
@@ -1371,13 +1474,12 @@ class FakeApiClient extends ApiClient {
     String? aggregateId,
     String? aggregateType,
     String? eventType,
-  }) =>
-      _events.stream;
+  }) => _events.stream;
 
   @override
   Future<TaskDetailData> fetchTaskDetail(String taskId) async {
     detailFetches++;
-    final task = _completedDetail ? _completedTask : _task;
+    final task = _detailTask ?? (_completedDetail ? _completedTask : _task);
     return TaskDetailData(
       task: task,
       logs: _completedDetail
@@ -1409,6 +1511,15 @@ class FakeApiClient extends ApiClient {
             ]
           : const [],
     );
+  }
+
+  @override
+  Future<void> checkWorkerTerminal(String taskId) async {
+    terminalCheckCount++;
+    final error = _terminalCheckError;
+    if (error != null) {
+      throw StateError(error);
+    }
   }
 
   @override
@@ -1533,8 +1644,8 @@ List<ProjectItem> _sortProjects(List<ProjectItem> projects, SortRequest sort) {
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'GIT_URL' => a.gitUrl.toLowerCase().compareTo(b.gitUrl.toLowerCase()),
       'DEFAULT_BRANCH' => a.defaultBranch.toLowerCase().compareTo(
-            b.defaultBranch.toLowerCase(),
-          ),
+        b.defaultBranch.toLowerCase(),
+      ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1553,8 +1664,8 @@ List<WorkerItem> _sortWorkers(List<WorkerItem> workers, SortRequest sort) {
       'NAME' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
       'STATUS' => a.status.compareTo(b.status),
       'LAST_HEARTBEAT_AT' => (a.lastHeartbeatAt ?? '').compareTo(
-          b.lastHeartbeatAt ?? '',
-        ),
+        b.lastHeartbeatAt ?? '',
+      ),
       _ => a.createdAt.compareTo(b.createdAt),
     };
     if (cmp != 0) {
@@ -1573,14 +1684,14 @@ List<DomainEventItem> _sortEvents(
   out.sort((a, b) {
     final cmp = switch (sort.field) {
       'EVENT_TYPE' => a.eventType.toLowerCase().compareTo(
-            b.eventType.toLowerCase(),
-          ),
+        b.eventType.toLowerCase(),
+      ),
       'AGGREGATE_TYPE' => a.aggregateType.toLowerCase().compareTo(
-            b.aggregateType.toLowerCase(),
-          ),
+        b.aggregateType.toLowerCase(),
+      ),
       'AGGREGATE_ID' => a.aggregateId.toLowerCase().compareTo(
-            b.aggregateId.toLowerCase(),
-          ),
+        b.aggregateId.toLowerCase(),
+      ),
       _ => a.occurredAt.compareTo(b.occurredAt),
     };
     if (cmp != 0) {
@@ -1670,6 +1781,11 @@ final _defaultWorker = WorkerItem(
   projectBindingMode: 'ALL_PROJECTS',
   boundProjectIds: const [],
   currentTaskIds: const [],
+  capabilities: const {
+    'terminal_enabled': 'true',
+    'terminal_host': '127.0.0.1',
+    'terminal_port': '42001',
+  },
 );
 
 final _task = TaskItem(
@@ -1687,6 +1803,7 @@ final _task = TaskItem(
   endDate: '2026-04-26T00:00:00Z',
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:00Z',
+  workerId: 'worker-1',
 );
 
 TaskItem _taskWith({
@@ -1699,27 +1816,26 @@ TaskItem _taskWith({
   String? createdAt,
   String? updatedAt,
   String? projectId,
-}) =>
-    TaskItem(
-      id: id,
-      title: title,
-      description: description ?? _task.description,
-      status: status ?? _task.status,
-      projectId: projectId ?? _task.projectId,
-      agentType: _task.agentType,
-      agentConfig: _task.agentConfig,
-      baseBranch: _task.baseBranch,
-      preCommands: _task.preCommands,
-      postCommands: _task.postCommands,
-      startDate: startDate ?? _task.startDate,
-      endDate: endDate ?? _task.endDate,
-      createdAt: createdAt ?? _task.createdAt,
-      updatedAt: updatedAt ?? _task.updatedAt,
-      workerId: _task.workerId,
-      worktreePath: _task.worktreePath,
-      agentSessionId: _task.agentSessionId,
-      result: _task.result,
-    );
+}) => TaskItem(
+  id: id,
+  title: title,
+  description: description ?? _task.description,
+  status: status ?? _task.status,
+  projectId: projectId ?? _task.projectId,
+  agentType: _task.agentType,
+  agentConfig: _task.agentConfig,
+  baseBranch: _task.baseBranch,
+  preCommands: _task.preCommands,
+  postCommands: _task.postCommands,
+  startDate: startDate ?? _task.startDate,
+  endDate: endDate ?? _task.endDate,
+  createdAt: createdAt ?? _task.createdAt,
+  updatedAt: updatedAt ?? _task.updatedAt,
+  workerId: _task.workerId,
+  worktreePath: _task.worktreePath,
+  agentSessionId: _task.agentSessionId,
+  result: _task.result,
+);
 
 final _completedTask = TaskItem(
   id: 'task-1',
@@ -1735,6 +1851,8 @@ final _completedTask = TaskItem(
   startDate: '2026-04-25T00:00:00Z',
   endDate: '2026-04-26T00:00:00Z',
   result: 'done',
+  worktreePath: '/tmp/worker/task-worktree',
+  workerId: 'worker-1',
   agentSessionId: 'session-1',
   createdAt: '2026-04-25T00:00:00Z',
   updatedAt: '2026-04-25T00:00:01Z',
