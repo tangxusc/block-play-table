@@ -558,6 +558,7 @@ Future<bool?> showWorkerFormDialog(
                         ? const []
                         : boundProjectIds.toList(),
                     agentRuntimeEnv: agentRuntimeEnvInput(),
+                    capabilities: worker.capabilities,
                     lastHeartbeatAt: worker.lastHeartbeatAt,
                     currentTaskIds: worker.currentTaskIds,
                   ),

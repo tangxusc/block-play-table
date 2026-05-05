@@ -230,6 +230,79 @@ func TestRegisterWorkerPreservesRuntimeEnvWhenPayloadOmitsEnv(t *testing.T) {
 	}
 }
 
+func TestUpdateWorkerPreservesCapabilitiesWhenPayloadOmitsCapabilities(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-preserve-capabilities",
+		Name:            "W",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp",
+		Capabilities: map[string]string{
+			"terminal_enabled": "true",
+			"terminal_host":    "127.0.0.1",
+			"terminal_port":    "41001",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.UpdateWorker(ctx, RegisterWorkerInput{
+		ID:              worker.ID,
+		Name:            "W edited",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/edited",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updated.Capabilities["terminal_enabled"]; got != "true" {
+		t.Fatalf("terminal_enabled capability = %q, want true; capabilities=%+v", got, updated.Capabilities)
+	}
+	if got := updated.Capabilities["terminal_host"]; got != "127.0.0.1" {
+		t.Fatalf("terminal_host capability = %q, want 127.0.0.1; capabilities=%+v", got, updated.Capabilities)
+	}
+	if got := updated.Capabilities["terminal_port"]; got != "41001" {
+		t.Fatalf("terminal_port capability = %q, want 41001; capabilities=%+v", got, updated.Capabilities)
+	}
+}
+
+func TestRegisterWorkerRefreshesCapabilitiesWhenPayloadProvidesCapabilities(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              "worker-refresh-capabilities",
+		Name:            "W",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp",
+		Capabilities: map[string]string{
+			"terminal_enabled": "true",
+			"terminal_host":    "127.0.0.1",
+			"terminal_port":    "41001",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID:              worker.ID,
+		Name:            "W reconnected",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/reconnected",
+		Capabilities: map[string]string{
+			"terminal_enabled": "true",
+			"terminal_host":    "127.0.0.1",
+			"terminal_port":    "42002",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := again.Capabilities["terminal_port"]; got != "42002" {
+		t.Fatalf("terminal_port capability = %q, want refreshed port 42002; capabilities=%+v", got, again.Capabilities)
+	}
+}
+
 func TestRegisterAndUpdateWorkerRejectDuplicateNames(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())

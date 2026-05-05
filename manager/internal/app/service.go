@@ -802,6 +802,10 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 			if err := s.ensureWorkerNameUnique(ctx, input.Name, existing.ID); err != nil {
 				return nil, err
 			}
+			capabilities := input.Capabilities
+			if capabilities == nil {
+				capabilities = existing.Capabilities
+			}
 			if err := existing.Update(domain.NewWorkerInput{
 				ID:                     existing.ID,
 				Name:                   input.Name,
@@ -812,7 +816,7 @@ func (s *Service) RegisterWorker(ctx context.Context, input RegisterWorkerInput)
 				BoundProjectIDs:        input.BoundProjectIDs,
 				AgentRuntimeEnv:        input.AgentRuntimeEnv,
 				ReplaceAgentRuntimeEnv: input.ReplaceAgentRuntimeEnv,
-				Capabilities:           input.Capabilities,
+				Capabilities:           capabilities,
 				Now:                    s.clock(),
 			}); err != nil {
 				return nil, err
@@ -943,6 +947,10 @@ func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (
 	if err := s.ensureWorkerNameUnique(ctx, input.Name, worker.ID); err != nil {
 		return nil, err
 	}
+	capabilities := input.Capabilities
+	if capabilities == nil {
+		capabilities = worker.Capabilities
+	}
 	if err := worker.Update(domain.NewWorkerInput{
 		ID:                     worker.ID,
 		Name:                   input.Name,
@@ -953,7 +961,7 @@ func (s *Service) UpdateWorker(ctx context.Context, input RegisterWorkerInput) (
 		BoundProjectIDs:        input.BoundProjectIDs,
 		AgentRuntimeEnv:        input.AgentRuntimeEnv,
 		ReplaceAgentRuntimeEnv: input.ReplaceAgentRuntimeEnv,
-		Capabilities:           input.Capabilities,
+		Capabilities:           capabilities,
 		Now:                    s.clock(),
 	}); err != nil {
 		return nil, err
