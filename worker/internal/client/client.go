@@ -33,6 +33,7 @@ type Config struct {
 	Capabilities    map[string]string
 	HeartbeatEvery  time.Duration
 	Logger          *slog.Logger
+	ReviewRecorder  executor.ReviewRecorder
 }
 
 type Client struct {
@@ -60,8 +61,9 @@ func New(config Config) *Client {
 	}
 	c := &Client{config: config, logger: config.Logger}
 	c.executor = executor.NewExecutor(executor.Config{
-		WorkerID: config.WorkerID,
-		WorkDir:  config.WorkDir,
+		WorkerID:       config.WorkerID,
+		WorkDir:        config.WorkDir,
+		ReviewRecorder: config.ReviewRecorder,
 		Reporter: executor.ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
 			return c.SendWorkerEvent(ctx, event)
 		}),

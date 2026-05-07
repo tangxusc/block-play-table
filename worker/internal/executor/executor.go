@@ -99,11 +99,17 @@ func (fn ReporterFunc) Report(ctx context.Context, event protocol.WorkerEvent) e
 	return fn(ctx, event)
 }
 
+type ReviewRecorder interface {
+	BeginTurn(ctx context.Context, taskID, worktreePath, baseBranch, defaultBranch string) string
+	EndTurn(ctx context.Context, taskID, token string)
+}
+
 type Config struct {
-	WorkerID string
-	WorkDir  string
-	Agents   map[domain.AgentType]Agent
-	Reporter Reporter
+	WorkerID       string
+	WorkDir        string
+	Agents         map[domain.AgentType]Agent
+	Reporter       Reporter
+	ReviewRecorder ReviewRecorder
 }
 
 type Executor struct {
@@ -111,6 +117,7 @@ type Executor struct {
 	workDir  string
 	agents   map[domain.AgentType]Agent
 	reporter Reporter
+	review   ReviewRecorder
 
 	mu      sync.Mutex
 	running map[string]*taskRun
@@ -140,6 +147,7 @@ func NewExecutor(config Config) *Executor {
 		workDir:  config.WorkDir,
 		agents:   agents,
 		reporter: config.Reporter,
+		review:   config.ReviewRecorder,
 		running:  map[string]*taskRun{},
 	}
 }
@@ -176,6 +184,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		}
 	}
 
+	reviewTurn := e.beginReviewTurn(ctx, payload.Task.ID, worktree, payload.Task.BaseBranch, payload.Project.DefaultBranch)
 	finalResult := ""
 	agentFailed := ""
 	finalSessionID := ""
@@ -204,6 +213,7 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 			agentFailed = redact(event.Content)
 		}
 	})
+	e.endReviewTurn(ctx, payload.Task.ID, reviewTurn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			_ = e.report(context.Background(), protocol.WorkerEvent{Type: protocol.MessageTaskInterrupted, TaskID: payload.Task.ID, Result: "interrupted"})
@@ -262,6 +272,7 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 		return err
 	}
 
+	reviewTurn := e.beginReviewTurn(ctx, payload.Task.ID, payload.WorktreePath, payload.Task.BaseBranch, payload.Project.DefaultBranch)
 	finalResult := ""
 	agentFailed := ""
 	finalSessionID := payload.AgentSessionID
@@ -297,6 +308,7 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 			agentFailed = redact(event.Content)
 		}
 	})
+	e.endReviewTurn(ctx, payload.Task.ID, reviewTurn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			_ = e.report(context.Background(), protocol.WorkerEvent{Type: protocol.MessageTaskInterrupted, TaskID: payload.Task.ID, Result: "interrupted", AgentSessionID: finalSessionID})
@@ -530,6 +542,20 @@ func (e *Executor) reportExecutionError(ctx context.Context, taskID string, err 
 		return
 	}
 	_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskFailed, TaskID: taskID, Result: err.Error()})
+}
+
+func (e *Executor) beginReviewTurn(ctx context.Context, taskID, worktreePath, baseBranch, defaultBranch string) string {
+	if e.review == nil || strings.TrimSpace(worktreePath) == "" {
+		return ""
+	}
+	return e.review.BeginTurn(ctx, taskID, worktreePath, baseBranch, defaultBranch)
+}
+
+func (e *Executor) endReviewTurn(ctx context.Context, taskID, token string) {
+	if e.review == nil || token == "" {
+		return
+	}
+	e.review.EndTurn(ctx, taskID, token)
 }
 
 type CommandAgent struct {

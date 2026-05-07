@@ -84,6 +84,39 @@ func TestExecutorRunsPreCommandsAgentAndPostCommands(t *testing.T) {
 	}
 }
 
+func TestExecutorRecordsReviewTurnAroundAgentWork(t *testing.T) {
+	root := t.TempDir()
+	recorder := &recordingReviewRecorder{}
+	exec := NewExecutor(Config{
+		WorkDir:        root,
+		ReviewRecorder: recorder,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentCodex: AgentFunc(func(ctx context.Context, input AgentInput, emit func(AgentEvent)) error {
+				if recorder.beginWorktree == "" || recorder.beginTaskID != input.Task.ID {
+					t.Fatalf("review turn was not begun before agent run: %+v", recorder)
+				}
+				emit(AgentEvent{Type: AgentEventCompleted, Content: "done"})
+				return nil
+			}),
+		},
+		Reporter: ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error { return nil }),
+	})
+
+	if err := exec.Execute(context.Background(), protocol.TaskStartPayload{
+		Task: protocol.TaskPayload{ID: "task-review-turn", AgentType: domain.AgentCodex, BaseBranch: "main"},
+		Project: protocol.ProjectPayload{
+			ID:                 "project-1",
+			DefaultBranch:      "main",
+			WorktreeNamePrefix: "p",
+		},
+	}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if recorder.endTaskID != "task-review-turn" || recorder.endToken != "token-1" {
+		t.Fatalf("review recorder end = task %q token %q, want task-review-turn token-1", recorder.endTaskID, recorder.endToken)
+	}
+}
+
 func TestExecutorInterruptStopsLongRunningAgent(t *testing.T) {
 	root := t.TempDir()
 	started := make(chan struct{})
@@ -121,6 +154,28 @@ func TestExecutorInterruptStopsLongRunningAgent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("executor did not stop after interrupt")
 	}
+}
+
+type recordingReviewRecorder struct {
+	beginTaskID   string
+	beginWorktree string
+	beginBase     string
+	beginDefault  string
+	endTaskID     string
+	endToken      string
+}
+
+func (r *recordingReviewRecorder) BeginTurn(ctx context.Context, taskID, worktreePath, baseBranch, defaultBranch string) string {
+	r.beginTaskID = taskID
+	r.beginWorktree = worktreePath
+	r.beginBase = baseBranch
+	r.beginDefault = defaultBranch
+	return "token-1"
+}
+
+func (r *recordingReviewRecorder) EndTurn(ctx context.Context, taskID, token string) {
+	r.endTaskID = taskID
+	r.endToken = token
 }
 
 func TestExecutorContinuesExistingAgentSessionWithoutCommandsOrWorktree(t *testing.T) {

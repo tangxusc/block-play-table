@@ -24,6 +24,7 @@ type WorkerSender interface {
 	SendTaskInteractionResponse(workerID, taskID string, payload protocol.TaskInteractionResponsePayload) error
 	SendTaskInterrupt(workerID, taskID string) error
 	SendTaskCancel(workerID, taskID string) error
+	ProxyTaskReview(ctx context.Context, taskID, method, path string, input any, out any) error
 }
 
 type Resolver struct {
@@ -311,6 +312,143 @@ func toModelTaskInteractions(interactions []domain.TaskInteraction) []*model.Tas
 	out := make([]*model.TaskInteraction, 0, len(interactions))
 	for index := range interactions {
 		out = append(out, toModelTaskInteraction(&interactions[index]))
+	}
+	return out
+}
+
+func toModelTaskGitDiff(diff *TaskGitDiffResponse) *model.TaskGitDiff {
+	if diff == nil {
+		return nil
+	}
+	files := make([]*model.TaskGitDiffFile, 0, len(diff.Files))
+	for _, file := range diff.Files {
+		files = append(files, &model.TaskGitDiffFile{
+			Path:      file.Path,
+			OldPath:   optionalString(file.OldPath),
+			Status:    file.Status,
+			Staged:    file.Staged,
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+			Patch:     file.Patch,
+			Truncated: file.Truncated,
+		})
+	}
+	return &model.TaskGitDiff{
+		TaskID:      diff.TaskID,
+		Scope:       model.TaskGitDiffScope(diff.Scope),
+		BaseRef:     optionalString(diff.BaseRef),
+		HeadRef:     optionalString(diff.HeadRef),
+		Files:       files,
+		Truncated:   diff.Truncated,
+		GeneratedAt: diff.GeneratedAt,
+	}
+}
+
+func toModelTaskGitChangeResult(result *TaskGitChangeResponse) *model.TaskGitChangeResult {
+	if result == nil {
+		return nil
+	}
+	return &model.TaskGitChangeResult{
+		Ok:     result.OK,
+		Backup: toModelTaskGitBackup(result.Backup),
+		Diff:   toModelTaskGitDiff(result.Diff),
+	}
+}
+
+func toModelTaskReviewRun(run domain.TaskReviewRun, findings []domain.TaskReviewFinding) *model.TaskReviewRun {
+	var agentType *model.AgentType
+	if run.AgentType != "" {
+		value := model.AgentType(run.AgentType)
+		agentType = &value
+	}
+	return &model.TaskReviewRun{
+		ID:          run.ID,
+		TaskID:      run.TaskID,
+		Scope:       model.TaskGitDiffScope(run.Scope),
+		Status:      model.TaskReviewRunStatus(run.Status),
+		AgentType:   agentType,
+		Summary:     run.Summary,
+		RawResult:   run.RawResult,
+		Error:       run.Error,
+		Findings:    toModelTaskReviewFindings(findings),
+		StartedAt:   optionalTime(run.StartedAt),
+		CompletedAt: optionalTime(run.CompletedAt),
+		CreatedAt:   run.CreatedAt,
+		UpdatedAt:   run.UpdatedAt,
+	}
+}
+
+func toModelTaskReviewRuns(runs []domain.TaskReviewRun, findingsByRun map[string][]domain.TaskReviewFinding) []*model.TaskReviewRun {
+	out := make([]*model.TaskReviewRun, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, toModelTaskReviewRun(run, findingsByRun[run.ID]))
+	}
+	return out
+}
+
+func toModelTaskReviewFinding(finding domain.TaskReviewFinding) *model.TaskReviewFinding {
+	return &model.TaskReviewFinding{
+		ID:         finding.ID,
+		RunID:      finding.RunID,
+		TaskID:     finding.TaskID,
+		Path:       finding.Path,
+		Line:       finding.Line,
+		Severity:   model.TaskReviewSeverity(finding.Severity),
+		Status:     model.TaskReviewFindingStatus(finding.Status),
+		Title:      finding.Title,
+		Body:       finding.Body,
+		Suggestion: finding.Suggestion,
+		CreatedAt:  finding.CreatedAt,
+		UpdatedAt:  finding.UpdatedAt,
+	}
+}
+
+func toModelTaskReviewFindings(findings []domain.TaskReviewFinding) []*model.TaskReviewFinding {
+	out := make([]*model.TaskReviewFinding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, toModelTaskReviewFinding(finding))
+	}
+	return out
+}
+
+func toModelTaskReviewComment(comment domain.TaskReviewComment) *model.TaskReviewComment {
+	return &model.TaskReviewComment{
+		ID:        comment.ID,
+		TaskID:    comment.TaskID,
+		Path:      comment.Path,
+		Line:      comment.Line,
+		Body:      comment.Body,
+		Resolved:  comment.Resolved,
+		CreatedAt: comment.CreatedAt,
+		UpdatedAt: comment.UpdatedAt,
+	}
+}
+
+func toModelTaskReviewComments(comments []domain.TaskReviewComment) []*model.TaskReviewComment {
+	out := make([]*model.TaskReviewComment, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, toModelTaskReviewComment(comment))
+	}
+	return out
+}
+
+func toModelTaskGitBackup(backup *domain.TaskGitBackup) *model.TaskGitBackup {
+	if backup == nil {
+		return nil
+	}
+	return &model.TaskGitBackup{
+		ID:        backup.ID,
+		TaskID:    backup.TaskID,
+		Paths:     append([]string(nil), backup.Paths...),
+		PatchPath: backup.PatchPath,
+		CreatedAt: backup.CreatedAt,
+	}
+}
+
+func toModelTaskGitBackups(backups []domain.TaskGitBackup) []*model.TaskGitBackup {
+	out := make([]*model.TaskGitBackup, 0, len(backups))
+	for index := range backups {
+		out = append(out, toModelTaskGitBackup(&backups[index]))
 	}
 	return out
 }

@@ -220,6 +220,68 @@ func (r *mutationResolver) RetryTask(ctx context.Context, taskID *string, id *st
 	return toModelTask(task), err
 }
 
+// StartTaskReview is the resolver for the startTaskReview field.
+func (r *mutationResolver) StartTaskReview(ctx context.Context, input model.StartTaskReviewInput) (*model.TaskReviewRun, error) {
+	return r.startTaskReview(ctx, input)
+}
+
+// AddTaskReviewComment is the resolver for the addTaskReviewComment field.
+func (r *mutationResolver) AddTaskReviewComment(ctx context.Context, input model.AddTaskReviewCommentInput) (*model.TaskReviewComment, error) {
+	comment, err := r.Service.AddTaskReviewComment(ctx, app.AddTaskReviewCommentInput{
+		TaskID: input.TaskID,
+		Path:   input.Path,
+		Line:   input.Line,
+		Body:   input.Body,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewComment(comment), nil
+}
+
+// StageTaskGitChanges is the resolver for the stageTaskGitChanges field.
+func (r *mutationResolver) StageTaskGitChanges(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
+	return r.gitChange(ctx, "stage", input)
+}
+
+// UnstageTaskGitChanges is the resolver for the unstageTaskGitChanges field.
+func (r *mutationResolver) UnstageTaskGitChanges(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
+	return r.gitChange(ctx, "unstage", input)
+}
+
+// DiscardTaskGitChanges is the resolver for the discardTaskGitChanges field.
+func (r *mutationResolver) DiscardTaskGitChanges(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
+	return r.gitChange(ctx, "discard", input)
+}
+
+// RestoreTaskGitBackup is the resolver for the restoreTaskGitBackup field.
+func (r *mutationResolver) RestoreTaskGitBackup(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
+	return r.gitChange(ctx, "restore", input)
+}
+
+// ResolveTaskReviewFinding is the resolver for the resolveTaskReviewFinding field.
+func (r *mutationResolver) ResolveTaskReviewFinding(ctx context.Context, id string) (*model.TaskReviewFinding, error) {
+	finding, err := r.Service.UpdateTaskReviewFindingStatus(ctx, id, domain.TaskReviewFindingResolved)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewFinding(finding), nil
+}
+
+// DismissTaskReviewFinding is the resolver for the dismissTaskReviewFinding field.
+func (r *mutationResolver) DismissTaskReviewFinding(ctx context.Context, id string) (*model.TaskReviewFinding, error) {
+	finding, err := r.Service.UpdateTaskReviewFindingStatus(ctx, id, domain.TaskReviewFindingDismissed)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewFinding(finding), nil
+}
+
+// ContinueTaskWithReviewFeedback is the resolver for the continueTaskWithReviewFeedback field.
+func (r *mutationResolver) ContinueTaskWithReviewFeedback(ctx context.Context, input model.ContinueTaskWithReviewFeedbackInput) (*model.Task, error) {
+	return r.continueWithReviewFeedback(ctx, input)
+}
+
 // CreateWorker is the resolver for the createWorker field.
 func (r *mutationResolver) CreateWorker(ctx context.Context, input model.CreateWorkerInput) (*model.Worker, error) {
 	return r.registerWorkerFromInput(ctx, input.ID, input.Name, input.SupportedAgents, input.WorkDir, input.StartupCommand, input.ProjectBindingMode, input.BoundProjectIds, input.AgentRuntimeEnv, input.Capabilities, true)
@@ -514,6 +576,55 @@ func (r *queryResolver) TaskInteractions(ctx context.Context, taskID string, sta
 		return nil, err
 	}
 	return toModelTaskInteractions(interactions), nil
+}
+
+// TaskGitDiff is the resolver for the taskGitDiff field.
+func (r *queryResolver) TaskGitDiff(ctx context.Context, taskID string, scope model.TaskGitDiffScope, staged *bool) (*model.TaskGitDiff, error) {
+	return r.taskGitDiff(ctx, taskID, scope, staged)
+}
+
+// TaskReviewRuns is the resolver for the taskReviewRuns field.
+func (r *queryResolver) TaskReviewRuns(ctx context.Context, taskID string) ([]*model.TaskReviewRun, error) {
+	runs, err := r.Service.Store().TaskReviewRuns(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	findings, err := r.Service.Store().TaskReviewFindings(ctx, taskID, "")
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewRuns(runs, reviewFindingsByRun(findings)), nil
+}
+
+// TaskReviewFindings is the resolver for the taskReviewFindings field.
+func (r *queryResolver) TaskReviewFindings(ctx context.Context, taskID string, status *model.TaskReviewFindingStatus) ([]*model.TaskReviewFinding, error) {
+	filter := domain.TaskReviewFindingStatus("")
+	if status != nil {
+		filter = domain.TaskReviewFindingStatus(*status)
+	}
+	findings, err := r.Service.Store().TaskReviewFindings(ctx, taskID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewFindings(findings), nil
+}
+
+// TaskReviewComments is the resolver for the taskReviewComments field.
+func (r *queryResolver) TaskReviewComments(ctx context.Context, taskID string) ([]*model.TaskReviewComment, error) {
+	comments, err := r.Service.Store().TaskReviewComments(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskReviewComments(comments), nil
+}
+
+// TaskGitBackups is the resolver for the taskGitBackups field.
+func (r *queryResolver) TaskGitBackups(ctx context.Context, taskID string) ([]*model.TaskGitBackup, error) {
+	backups, err := r.Service.Store().TaskGitBackups(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskGitBackups(backups), nil
 }
 
 // TaskUpdated is the resolver for the taskUpdated field.

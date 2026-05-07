@@ -2698,6 +2698,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                   workers: widget.boardData.workers,
                   actions: actions,
                   onContinue: _continueTask,
+                  onRefresh: _reload,
                   onRespondInteraction: _respondInteraction,
                 ),
                 if (snapshot.connectionState != ConnectionState.done)
@@ -2898,11 +2899,12 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   }
 }
 
-enum _TaskDetailSection { conversation, web, terminal, logs, events }
+enum _TaskDetailSection { conversation, review, web, terminal, logs, events }
 
 IconData _taskDetailSectionIcon(_TaskDetailSection section) =>
     switch (section) {
       _TaskDetailSection.conversation => Icons.chat_bubble_outline,
+      _TaskDetailSection.review => Icons.rate_review_outlined,
       _TaskDetailSection.web => Icons.web_asset,
       _TaskDetailSection.terminal => Icons.terminal,
       _TaskDetailSection.logs => Icons.article_outlined,
@@ -2911,6 +2913,7 @@ IconData _taskDetailSectionIcon(_TaskDetailSection section) =>
 
 String _taskDetailSectionLabel(_TaskDetailSection section) => switch (section) {
   _TaskDetailSection.conversation => 'Conversation',
+  _TaskDetailSection.review => 'Review',
   _TaskDetailSection.web => 'Web preview',
   _TaskDetailSection.terminal => 'Terminal',
   _TaskDetailSection.logs => 'Logs',
@@ -2921,6 +2924,7 @@ Key _taskDetailSectionKey(_TaskDetailSection section) => switch (section) {
   _TaskDetailSection.conversation => const ValueKey(
     'task-detail-section-conversation',
   ),
+  _TaskDetailSection.review => const ValueKey('task-detail-section-review'),
   _TaskDetailSection.web => const ValueKey('task-detail-section-web'),
   _TaskDetailSection.terminal => const ValueKey('task-detail-section-terminal'),
   _TaskDetailSection.logs => const ValueKey('task-detail-section-logs'),
@@ -2955,6 +2959,7 @@ class _TaskDetailBody extends StatefulWidget {
     required this.workers,
     required this.actions,
     required this.onContinue,
+    required this.onRefresh,
     required this.onRespondInteraction,
   });
 
@@ -2964,6 +2969,7 @@ class _TaskDetailBody extends StatefulWidget {
   final List<WorkerItem> workers;
   final List<_TaskDetailAction> actions;
   final Future<void> Function(String message) onContinue;
+  final VoidCallback onRefresh;
   final _TaskInteractionResponder onRespondInteraction;
 
   @override
@@ -2980,7 +2986,7 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 680;
-        final railWidth = compact ? 52.0 : 168.0;
+        final railWidth = compact ? 124.0 : 168.0;
         return Stack(
           children: [
             Padding(
@@ -3038,6 +3044,11 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
       onRespondInteraction: widget.onRespondInteraction,
       footer: _ContinuationComposer(task: task, onContinue: widget.onContinue),
     ),
+    _TaskDetailSection.review => _ReviewTab(
+      apiClient: widget.apiClient,
+      detail: widget.detail,
+      onRefresh: widget.onRefresh,
+    ),
     _TaskDetailSection.web => _WorkerWebTab(
       apiClient: widget.apiClient,
       task: task,
@@ -3081,29 +3092,91 @@ class _FloatingCommandRail extends StatelessWidget {
   Widget build(BuildContext context) {
     return _FloatingRailFrame(
       key: const ValueKey('task-detail-floating-command-rail'),
-      width: compact ? 52 : 168,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final section in _TaskDetailSection.values)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _SectionRailButton(
-                section: section,
-                selected: selected == section,
-                compact: compact,
-                onPressed: () => onSelected(section),
-              ),
+      width: compact ? 124 : 168,
+      child: compact
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _ActionRailColumn(actions: actions, compact: compact),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _SectionRailColumn(
+                    selected: selected,
+                    compact: compact,
+                    onSelected: onSelected,
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _SectionRailColumn(
+                  selected: selected,
+                  compact: compact,
+                  onSelected: onSelected,
+                ),
+                Divider(height: 16, color: Theme.of(context).dividerColor),
+                _ActionRailColumn(actions: actions, compact: compact),
+              ],
             ),
-          Divider(height: 16, color: Theme.of(context).dividerColor),
-          for (final action in actions)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _ActionRailButton(action: action, compact: compact),
+    );
+  }
+}
+
+class _SectionRailColumn extends StatelessWidget {
+  const _SectionRailColumn({
+    required this.selected,
+    required this.compact,
+    required this.onSelected,
+  });
+
+  final _TaskDetailSection selected;
+  final bool compact;
+  final ValueChanged<_TaskDetailSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final section in _TaskDetailSection.values)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _SectionRailButton(
+              section: section,
+              selected: selected == section,
+              compact: compact,
+              onPressed: () => onSelected(section),
             ),
-        ],
-      ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ActionRailColumn extends StatelessWidget {
+  const _ActionRailColumn({required this.actions, required this.compact});
+
+  final List<_TaskDetailAction> actions;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final action in actions)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _ActionRailButton(action: action, compact: compact),
+          ),
+      ],
     );
   }
 }
@@ -3276,6 +3349,1045 @@ class _ConversationTab extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ReviewTab extends StatefulWidget {
+  const _ReviewTab({
+    required this.apiClient,
+    required this.detail,
+    required this.onRefresh,
+  });
+
+  final ApiClient apiClient;
+  final TaskDetailData detail;
+  final VoidCallback onRefresh;
+
+  @override
+  State<_ReviewTab> createState() => _ReviewTabState();
+}
+
+class _ReviewTabState extends State<_ReviewTab> {
+  String _scope = 'UNCOMMITTED';
+  String _changeSet = 'ALL';
+  TaskGitDiffData? _diff;
+  int _selectedFile = 0;
+  bool _busy = false;
+  String? _message;
+  final TextEditingController _commentController = TextEditingController();
+
+  List<TaskReviewFindingData> get _findings => widget.detail.reviewRuns
+      .expand((run) => run.findings)
+      .where((finding) => finding.status != 'DISMISSED')
+      .toList();
+
+  TaskGitDiffFileData? get _file {
+    final files = _diff?.files ?? const <TaskGitDiffFileData>[];
+    if (files.isEmpty) {
+      return null;
+    }
+    final index = math.min(_selectedFile, files.length - 1);
+    return files[index];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _diff = widget.detail.reviewDiff;
+    _message = widget.detail.reviewError;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReviewTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.detail != widget.detail) {
+      _diff = widget.detail.reviewDiff;
+      _message = widget.detail.reviewError;
+      _scope = widget.detail.reviewDiff?.scope ?? 'UNCOMMITTED';
+      _changeSet = 'ALL';
+      _selectedFile = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await action();
+      widget.onRefresh();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _message = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _loadDiff({String? scope, String? changeSet}) async {
+    if (_busy) {
+      return;
+    }
+    final nextScope = scope ?? _scope;
+    final nextChangeSet = changeSet ?? _changeSet;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final diff = await widget.apiClient.fetchTaskGitDiff(
+        widget.detail.task.id!,
+        nextScope,
+        staged: _stagedFilter(nextScope, nextChangeSet),
+      );
+      if (mounted) {
+        setState(() {
+          _scope = nextScope;
+          _changeSet = nextScope == 'UNCOMMITTED' ? nextChangeSet : 'ALL';
+          _diff = diff;
+          _selectedFile = 0;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _message = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  bool? _stagedFilter(String scope, String changeSet) {
+    if (scope != 'UNCOMMITTED') {
+      return null;
+    }
+    return switch (changeSet) {
+      'STAGED' => true,
+      'UNSTAGED' => false,
+      _ => null,
+    };
+  }
+
+  Future<void> _loadScope(String scope) async {
+    await _loadDiff(scope: scope);
+  }
+
+  Future<void> _loadChangeSet(String changeSet) async {
+    await _loadDiff(changeSet: changeSet);
+  }
+
+  Future<void> _startReview() => _run(
+        () => widget.apiClient.startTaskReview(widget.detail.task.id!, _scope),
+      );
+
+  Future<void> _stage() async {
+    final file = _file;
+    if (file == null) {
+      return;
+    }
+    await _run(
+      () => widget.apiClient.stageTaskGitChanges(
+        widget.detail.task.id!,
+        [file.path],
+      ),
+    );
+  }
+
+  Future<void> _stageHunk(String patch) async {
+    final file = _file;
+    if (file == null || patch.trim().isEmpty) {
+      return;
+    }
+    await _run(
+      () => widget.apiClient.stageTaskGitChanges(
+        widget.detail.task.id!,
+        [file.path],
+        patch: patch,
+      ),
+    );
+  }
+
+  Future<void> _unstage() async {
+    final file = _file;
+    if (file == null) {
+      return;
+    }
+    await _run(
+      () => widget.apiClient.unstageTaskGitChanges(
+        widget.detail.task.id!,
+        [file.path],
+      ),
+    );
+  }
+
+  Future<void> _unstageHunk(String patch) async {
+    final file = _file;
+    if (file == null || patch.trim().isEmpty) {
+      return;
+    }
+    await _run(
+      () => widget.apiClient.unstageTaskGitChanges(
+        widget.detail.task.id!,
+        [file.path],
+        patch: patch,
+      ),
+    );
+  }
+
+  Future<void> _discard() async {
+    final file = _file;
+    if (file == null) {
+      return;
+    }
+    final confirmed = await confirmAction(
+      context,
+      title: 'Discard changes',
+      message:
+          'Discard changes in ${file.path}? A backup patch will be created before the worker modifies the worktree.',
+      confirmLabel: 'Discard',
+    );
+    if (!confirmed) {
+      return;
+    }
+    TaskGitBackupData? backup;
+    await _run(
+      () async {
+        backup = await widget.apiClient.discardTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+        );
+        if (mounted && backup != null) {
+          setState(() => _message = 'Backup created: ${backup!.id}');
+        }
+      },
+    );
+  }
+
+  Future<void> _discardHunk(String patch) async {
+    final file = _file;
+    if (file == null || patch.trim().isEmpty) {
+      return;
+    }
+    final confirmed = await confirmAction(
+      context,
+      title: 'Discard hunk',
+      message:
+          'Discard this hunk in ${file.path}? A backup patch will be created before the worker modifies the worktree.',
+      confirmLabel: 'Discard hunk',
+    );
+    if (!confirmed) {
+      return;
+    }
+    TaskGitBackupData? backup;
+    await _run(
+      () async {
+        backup = await widget.apiClient.discardTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+          patch: patch,
+        );
+        if (mounted && backup != null) {
+          setState(() => _message = 'Backup created: ${backup!.id}');
+        }
+      },
+    );
+  }
+
+  Future<void> _restoreLatest() async {
+    if (widget.detail.gitBackups.isEmpty) {
+      return;
+    }
+    final backup = widget.detail.gitBackups.last;
+    await _run(
+      () => widget.apiClient.restoreTaskGitBackup(
+        widget.detail.task.id!,
+        backup.id,
+      ),
+    );
+  }
+
+  Future<void> _addComment() async {
+    final file = _file;
+    final body = _commentController.text.trim();
+    if (file == null || body.isEmpty) {
+      return;
+    }
+    await _run(
+      () => widget.apiClient.addTaskReviewComment(
+        taskId: widget.detail.task.id!,
+        path: file.path,
+        line: _firstChangedLine(file.patch),
+        body: body,
+      ),
+    );
+    _commentController.clear();
+  }
+
+  Future<void> _resolveFinding(String id) =>
+      _run(() => widget.apiClient.resolveTaskReviewFinding(id));
+
+  Future<void> _dismissFinding(String id) =>
+      _run(() => widget.apiClient.dismissTaskReviewFinding(id));
+
+  Future<void> _continueWithFeedback() => _run(
+        () => widget.apiClient.continueTaskWithReviewFeedback(
+          taskId: widget.detail.task.id!,
+          findingIds: _findings
+              .where((finding) => finding.status == 'OPEN')
+              .map((finding) => finding.id)
+              .toList(),
+          commentIds: widget.detail.reviewComments
+              .where((comment) => !comment.resolved)
+              .map((comment) => comment.id)
+              .toList(),
+          message: 'Please address the selected review feedback.',
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final files = _diff?.files ?? const <TaskGitDiffFileData>[];
+    final file = _file;
+    final backups = widget.detail.gitBackups;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'UNCOMMITTED', label: Text('Uncommitted')),
+                ButtonSegment(value: 'BRANCH', label: Text('Branch')),
+                ButtonSegment(value: 'LAST_TURN', label: Text('Last turn')),
+              ],
+              selected: {_scope},
+              onSelectionChanged: _busy
+                  ? null
+                  : (values) => _loadScope(values.first),
+            ),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'ALL', label: Text('All')),
+                ButtonSegment(value: 'STAGED', label: Text('Staged')),
+                ButtonSegment(value: 'UNSTAGED', label: Text('Unstaged')),
+              ],
+              selected: {_changeSet},
+              onSelectionChanged: _busy || _scope != 'UNCOMMITTED'
+                  ? null
+                  : (values) => _loadChangeSet(values.first),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('review-action-ai-review'),
+              onPressed: _busy ? null : _startReview,
+              icon: const Icon(Icons.rate_review),
+              label: const Text('AI Review'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy || file == null ? null : _stage,
+              icon: const Icon(Icons.add_task),
+              label: const Text('Stage'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy || file == null ? null : _unstage,
+              icon: const Icon(Icons.remove_done),
+              label: const Text('Unstage'),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('review-action-discard'),
+              onPressed: _busy || file == null ? null : _discard,
+              icon: const Icon(Icons.undo),
+              label: const Text('Discard'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy || backups.isEmpty ? null : _restoreLatest,
+              icon: const Icon(Icons.restore),
+              label: Text(
+                backups.isEmpty ? 'Restore' : 'Restore ${backups.last.id}',
+              ),
+            ),
+            FilledButton.tonalIcon(
+              key: const ValueKey('review-action-feedback'),
+              onPressed:
+                  _busy || !_canContinueWithFeedback()
+                      ? null
+                      : _continueWithFeedback,
+              icon: const Icon(Icons.send),
+              label: const Text('Handle feedback'),
+            ),
+          ],
+        ),
+        if (_busy) const LinearProgressIndicator(minHeight: 2),
+        if ((_message ?? '').isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_message!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 260,
+                child: _ReviewFileList(
+                  files: files,
+                  selected: _selectedFile,
+                  onSelected: (index) => setState(() => _selectedFile = index),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ReviewDiffPane(
+                  file: file,
+                  findings: _findings,
+                  comments: widget.detail.reviewComments,
+                  controller: _commentController,
+                  onAddComment: _busy ? null : _addComment,
+                  onResolveFinding: _busy ? null : _resolveFinding,
+                  onDismissFinding: _busy ? null : _dismissFinding,
+                  onStageHunk: _busy ? null : _stageHunk,
+                  onUnstageHunk: _busy ? null : _unstageHunk,
+                  onDiscardHunk: _busy ? null : _discardHunk,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _canContinueWithFeedback() =>
+      widget.detail.task.status == 'COMPLETED' &&
+      (widget.detail.task.agentSessionId ?? '').isNotEmpty &&
+      (_findings.any((finding) => finding.status == 'OPEN') ||
+          widget.detail.reviewComments.any((comment) => !comment.resolved));
+}
+
+class _ReviewFileList extends StatelessWidget {
+  const _ReviewFileList({
+    required this.files,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<TaskGitDiffFileData> files;
+  final int selected;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ListView.builder(
+        itemCount: files.isEmpty ? 1 : files.length,
+        itemBuilder: (context, index) {
+          if (files.isEmpty) {
+            return const ListTile(title: Text('No changes'));
+          }
+          final file = files[index];
+          return ListTile(
+            selected: selected == index,
+            dense: true,
+            title: Text(file.path, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${file.status}  +${file.additions} -${file.deletions}'),
+            trailing: file.staged ? const Icon(Icons.check, size: 18) : null,
+            onTap: () => onSelected(index),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ReviewDiffPane extends StatelessWidget {
+  const _ReviewDiffPane({
+    required this.file,
+    required this.findings,
+    required this.comments,
+    required this.controller,
+    required this.onAddComment,
+    required this.onResolveFinding,
+    required this.onDismissFinding,
+    required this.onStageHunk,
+    required this.onUnstageHunk,
+    required this.onDiscardHunk,
+  });
+
+  final TaskGitDiffFileData? file;
+  final List<TaskReviewFindingData> findings;
+  final List<TaskReviewCommentData> comments;
+  final TextEditingController controller;
+  final VoidCallback? onAddComment;
+  final ValueChanged<String>? onResolveFinding;
+  final ValueChanged<String>? onDismissFinding;
+  final Future<void> Function(String patch)? onStageHunk;
+  final Future<void> Function(String patch)? onUnstageHunk;
+  final Future<void> Function(String patch)? onDiscardHunk;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedPath = file?.path ?? '';
+    final selectedFindings =
+        findings.where((finding) => finding.path == selectedPath).toList();
+    final selectedComments =
+        comments.where((comment) => comment.path == selectedPath).toList();
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: file == null
+            ? Text('No diff selected', style: Theme.of(context).textTheme.bodySmall)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      DetailText(icon: Icons.description_outlined, text: file!.path),
+                      DetailText(icon: Icons.add, text: '+${file!.additions}'),
+                      DetailText(icon: Icons.remove, text: '-${file!.deletions}'),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: _ReviewHunkList(
+                      file: file!,
+                      findings: selectedFindings,
+                      comments: selectedComments,
+                      onStageHunk: onStageHunk,
+                      onUnstageHunk: onUnstageHunk,
+                      onDiscardHunk: onDiscardHunk,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _ReviewAnnotations(
+                    findings: selectedFindings,
+                    comments: selectedComments,
+                    onResolveFinding: onResolveFinding,
+                    onDismissFinding: onDismissFinding,
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: controller,
+                          minLines: 1,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Inline comment',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: 'Add inline comment',
+                        onPressed: onAddComment,
+                        icon: const Icon(Icons.add_comment_outlined),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _ReviewHunkList extends StatelessWidget {
+  const _ReviewHunkList({
+    required this.file,
+    required this.findings,
+    required this.comments,
+    required this.onStageHunk,
+    required this.onUnstageHunk,
+    required this.onDiscardHunk,
+  });
+
+  final TaskGitDiffFileData file;
+  final List<TaskReviewFindingData> findings;
+  final List<TaskReviewCommentData> comments;
+  final Future<void> Function(String patch)? onStageHunk;
+  final Future<void> Function(String patch)? onUnstageHunk;
+  final Future<void> Function(String patch)? onDiscardHunk;
+
+  @override
+  Widget build(BuildContext context) {
+    final hunks = _parseDiffHunks(file.patch);
+    if (hunks.isEmpty) {
+      return Text(
+        file.truncated ? '(diff truncated)' : '(empty patch)',
+        style: Theme.of(context).textTheme.bodySmall,
+      );
+    }
+    return ListView.separated(
+      itemCount: hunks.length + (file.truncated ? 1 : 0),
+      separatorBuilder: (context, index) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        if (index >= hunks.length) {
+          return Text(
+            'Diff truncated by worker response limit.',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          );
+        }
+        return _ReviewHunkView(
+          hunk: hunks[index],
+          findings: findings,
+          comments: comments,
+          onStageHunk: onStageHunk,
+          onUnstageHunk: onUnstageHunk,
+          onDiscardHunk: onDiscardHunk,
+        );
+      },
+    );
+  }
+}
+
+class _ReviewHunkView extends StatelessWidget {
+  const _ReviewHunkView({
+    required this.hunk,
+    required this.findings,
+    required this.comments,
+    required this.onStageHunk,
+    required this.onUnstageHunk,
+    required this.onDiscardHunk,
+  });
+
+  final _DiffHunk hunk;
+  final List<TaskReviewFindingData> findings;
+  final List<TaskReviewCommentData> comments;
+  final Future<void> Function(String patch)? onStageHunk;
+  final Future<void> Function(String patch)? onUnstageHunk;
+  final Future<void> Function(String patch)? onDiscardHunk;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final findingsByLine = _findingsByLine(findings);
+    final commentsByLine = _commentsByLine(comments);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.55),
+            padding: const EdgeInsets.only(left: 10, right: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: SelectableText(
+                    hunk.header,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Stage hunk',
+                  onPressed: onStageHunk == null
+                      ? null
+                      : () => onStageHunk?.call(hunk.patch),
+                  icon: const Icon(Icons.add_task, size: 18),
+                ),
+                IconButton(
+                  tooltip: 'Unstage hunk',
+                  onPressed: onUnstageHunk == null
+                      ? null
+                      : () => onUnstageHunk?.call(hunk.patch),
+                  icon: const Icon(Icons.remove_done, size: 18),
+                ),
+                IconButton(
+                  tooltip: 'Discard hunk',
+                  onPressed: onDiscardHunk == null
+                      ? null
+                      : () => onDiscardHunk?.call(hunk.patch),
+                  icon: const Icon(Icons.undo, size: 18),
+                ),
+              ],
+            ),
+          ),
+          for (final line in hunk.lines)
+            _ReviewDiffLineView(
+              line: line,
+              findings:
+                  findingsByLine[line.newLine] ??
+                      const <TaskReviewFindingData>[],
+              comments:
+                  commentsByLine[line.newLine] ??
+                      const <TaskReviewCommentData>[],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewDiffLineView extends StatelessWidget {
+  const _ReviewDiffLineView({
+    required this.line,
+    required this.findings,
+    required this.comments,
+  });
+
+  final _DiffLine line;
+  final List<TaskReviewFindingData> findings;
+  final List<TaskReviewCommentData> comments;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = switch (line.kind) {
+      _DiffLineKind.added => Colors.green.withOpacity(0.08),
+      _DiffLineKind.deleted => Colors.red.withOpacity(0.08),
+      _DiffLineKind.header => theme.colorScheme.surfaceContainerHighest,
+      _ => null,
+    };
+    final hasAnnotations = findings.isNotEmpty || comments.isNotEmpty;
+    return Container(
+      color: color,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 72,
+                child: Text(
+                  '${line.oldLine?.toString() ?? ''}'.padLeft(4) +
+                      ' ' +
+                      '${line.newLine?.toString() ?? ''}'.padLeft(4),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    color: theme.hintColor,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SelectableText(
+                  line.text,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (hasAnnotations)
+            Padding(
+              padding: const EdgeInsets.only(left: 72, top: 4, bottom: 4),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final finding in findings)
+                    Chip(
+                      avatar: const Icon(
+                        Icons.report_problem_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        '${finding.severity}: ${finding.title}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  for (final comment in comments)
+                    Chip(
+                      avatar: const Icon(
+                        Icons.mode_comment_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        comment.body,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewAnnotations extends StatelessWidget {
+  const _ReviewAnnotations({
+    required this.findings,
+    required this.comments,
+    required this.onResolveFinding,
+    required this.onDismissFinding,
+  });
+
+  final List<TaskReviewFindingData> findings;
+  final List<TaskReviewCommentData> comments;
+  final ValueChanged<String>? onResolveFinding;
+  final ValueChanged<String>? onDismissFinding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final finding in findings)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.report_problem_outlined),
+            title: Text(finding.title, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${finding.severity} ${finding.status} line ${finding.line}: ${finding.body}',
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: SizedBox(
+              width: 96,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    tooltip: 'Resolve finding',
+                    onPressed:
+                        finding.status == 'OPEN' && onResolveFinding != null
+                            ? () => onResolveFinding?.call(finding.id)
+                            : null,
+                    icon: const Icon(Icons.check_circle_outline),
+                  ),
+                  IconButton(
+                    tooltip: 'Dismiss finding',
+                    onPressed:
+                        finding.status == 'OPEN' && onDismissFinding != null
+                            ? () => onDismissFinding?.call(finding.id)
+                            : null,
+                    icon: const Icon(Icons.block),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        for (final comment in comments)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.mode_comment_outlined),
+            title: Text(comment.body, overflow: TextOverflow.ellipsis),
+            subtitle: Text('line ${comment.line}'),
+          ),
+      ],
+    );
+  }
+}
+
+enum _DiffLineKind { context, added, deleted, header }
+
+class _DiffHunk {
+  const _DiffHunk({
+    required this.header,
+    required this.patch,
+    required this.lines,
+  });
+
+  final String header;
+  final String patch;
+  final List<_DiffLine> lines;
+}
+
+class _DiffLine {
+  const _DiffLine({
+    required this.text,
+    required this.kind,
+    this.oldLine,
+    this.newLine,
+  });
+
+  final String text;
+  final _DiffLineKind kind;
+  final int? oldLine;
+  final int? newLine;
+}
+
+class _HunkCursor {
+  const _HunkCursor({required this.oldLine, required this.newLine});
+
+  final int oldLine;
+  final int newLine;
+}
+
+List<_DiffHunk> _parseDiffHunks(String patch) {
+  if (patch.trim().isEmpty) {
+    return const [];
+  }
+  final prefix = <String>[];
+  final hunks = <_DiffHunk>[];
+  List<String>? rawHunk;
+  var parsedLines = <_DiffLine>[];
+  var oldLine = 0;
+  var newLine = 0;
+
+  void finishHunk() {
+    final raw = rawHunk;
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    hunks.add(
+      _DiffHunk(
+        header: raw.first,
+        patch: _joinPatchLines([...prefix, ...raw]),
+        lines: parsedLines,
+      ),
+    );
+  }
+
+  for (final line in const LineSplitter().convert(patch)) {
+    if (line.startsWith('@@')) {
+      finishHunk();
+      rawHunk = [line];
+      parsedLines = <_DiffLine>[];
+      final cursor = _parseHunkCursor(line);
+      oldLine = cursor.oldLine;
+      newLine = cursor.newLine;
+      continue;
+    }
+    if (rawHunk == null) {
+      prefix.add(line);
+      continue;
+    }
+    rawHunk!.add(line);
+    if (line.startsWith('\\')) {
+      parsedLines.add(
+        _DiffLine(text: line, kind: _DiffLineKind.header),
+      );
+      continue;
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      parsedLines.add(
+        _DiffLine(
+          text: line,
+          kind: _DiffLineKind.added,
+          newLine: newLine,
+        ),
+      );
+      newLine++;
+      continue;
+    }
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      parsedLines.add(
+        _DiffLine(
+          text: line,
+          kind: _DiffLineKind.deleted,
+          oldLine: oldLine,
+        ),
+      );
+      oldLine++;
+      continue;
+    }
+    parsedLines.add(
+      _DiffLine(
+        text: line,
+        kind: _DiffLineKind.context,
+        oldLine: oldLine,
+        newLine: newLine,
+      ),
+    );
+    oldLine++;
+    newLine++;
+  }
+  finishHunk();
+  if (hunks.isEmpty) {
+    return [
+      _DiffHunk(
+        header: 'File diff',
+        patch: patch.endsWith('\n') ? patch : '$patch\n',
+        lines: const LineSplitter()
+            .convert(patch)
+            .map(
+              (line) => _DiffLine(
+                text: line,
+                kind: _DiffLineKind.context,
+              ),
+            )
+            .toList(),
+      ),
+    ];
+  }
+  return hunks;
+}
+
+_HunkCursor _parseHunkCursor(String header) {
+  final match = RegExp(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+      .firstMatch(header);
+  if (match == null) {
+    return const _HunkCursor(oldLine: 0, newLine: 0);
+  }
+  return _HunkCursor(
+    oldLine: int.tryParse(match.group(1) ?? '') ?? 0,
+    newLine: int.tryParse(match.group(2) ?? '') ?? 0,
+  );
+}
+
+String _joinPatchLines(List<String> lines) => '${lines.join('\n')}\n';
+
+Map<int?, List<TaskReviewFindingData>> _findingsByLine(
+  List<TaskReviewFindingData> findings,
+) {
+  final grouped = <int?, List<TaskReviewFindingData>>{};
+  for (final finding in findings) {
+    grouped.putIfAbsent(finding.line, () => []).add(finding);
+  }
+  return grouped;
+}
+
+Map<int?, List<TaskReviewCommentData>> _commentsByLine(
+  List<TaskReviewCommentData> comments,
+) {
+  final grouped = <int?, List<TaskReviewCommentData>>{};
+  for (final comment in comments) {
+    grouped.putIfAbsent(comment.line, () => []).add(comment);
+  }
+  return grouped;
+}
+
+int _firstChangedLine(String patch) {
+  for (final line in const LineSplitter().convert(patch)) {
+    if (line.startsWith('@@')) {
+      final match = RegExp(r'\+(\d+)').firstMatch(line);
+      if (match != null) {
+        return int.tryParse(match.group(1) ?? '') ?? 0;
+      }
+    }
+  }
+  return 0;
 }
 
 class _WorkerWebTab extends StatefulWidget {

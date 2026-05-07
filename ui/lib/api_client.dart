@@ -438,6 +438,64 @@ class ApiClient {
         variables: {'taskId': taskId},
       ),
     ]);
+    TaskGitDiffData? reviewDiff;
+    var reviewRuns = <TaskReviewRunData>[];
+    var reviewComments = <TaskReviewCommentData>[];
+    var gitBackups = <TaskGitBackupData>[];
+    String? reviewError;
+    try {
+      reviewDiff = await fetchTaskGitDiff(taskId, 'UNCOMMITTED');
+      final runsData = await graphQL(
+        r'''
+          query TaskReviewRuns($taskId: ID!) {
+            taskReviewRuns(taskId: $taskId) {
+              id taskId scope status agentType summary rawResult error createdAt updatedAt
+              findings { id runId taskId path line severity status title body suggestion createdAt updatedAt }
+            }
+          }
+          ''',
+        variables: {'taskId': taskId},
+      );
+      final commentsData = await graphQL(
+        r'''
+          query TaskReviewComments($taskId: ID!) {
+            taskReviewComments(taskId: $taskId) {
+              id taskId path line body resolved createdAt updatedAt
+            }
+          }
+          ''',
+        variables: {'taskId': taskId},
+      );
+      final backupsData = await graphQL(
+        r'''
+          query TaskGitBackups($taskId: ID!) {
+            taskGitBackups(taskId: $taskId) { id taskId paths patchPath createdAt }
+          }
+          ''',
+        variables: {'taskId': taskId},
+      );
+      reviewRuns =
+          (runsData['taskReviewRuns'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => TaskReviewRunData.fromJson(item as Map<String, dynamic>),
+          )
+          .toList();
+      reviewComments =
+          (commentsData['taskReviewComments'] as List<dynamic>? ?? const [])
+          .map(
+            (item) =>
+                TaskReviewCommentData.fromJson(item as Map<String, dynamic>),
+          )
+          .toList();
+      gitBackups =
+          (backupsData['taskGitBackups'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => TaskGitBackupData.fromJson(item as Map<String, dynamic>),
+          )
+          .toList();
+    } catch (error) {
+      reviewError = error.toString();
+    }
     return TaskDetailData(
       task: TaskItem.fromJson(results[0]['task'] as Map<String, dynamic>),
       logs: (results[1]['taskLogs'] as List<dynamic>? ?? [])
@@ -457,6 +515,32 @@ class ApiClient {
       events: (results[4]['taskEvents'] as List<dynamic>? ?? [])
           .map((item) => DomainEventItem.fromJson(item as Map<String, dynamic>))
           .toList(),
+      reviewDiff: reviewDiff,
+      reviewRuns: reviewRuns,
+      reviewComments: reviewComments,
+      gitBackups: gitBackups,
+      reviewError: reviewError,
+    );
+  }
+
+  Future<TaskGitDiffData> fetchTaskGitDiff(
+    String taskId,
+    String scope, {
+    bool? staged,
+  }) async {
+    final data = await graphQL(
+      r'''
+      query TaskGitDiff($taskId: ID!, $scope: TaskGitDiffScope!, $staged: Boolean) {
+        taskGitDiff(taskId: $taskId, scope: $scope, staged: $staged) {
+          taskId scope baseRef headRef truncated generatedAt
+          files { path oldPath status staged additions deletions patch truncated }
+        }
+      }
+      ''',
+      variables: {'taskId': taskId, 'scope': scope, 'staged': staged},
+    );
+    return TaskGitDiffData.fromJson(
+      data['taskGitDiff'] as Map<String, dynamic>? ?? <String, dynamic>{},
     );
   }
 
@@ -686,6 +770,158 @@ class ApiClient {
           'input': {'taskId': taskId, 'message': message},
         },
       ).then((_) {});
+
+  Future<TaskReviewRunData> startTaskReview(String taskId, String scope) async {
+    final data = await graphQL(
+      r'''
+      mutation StartTaskReview($input: StartTaskReviewInput!) {
+        startTaskReview(input: $input) {
+          id taskId scope status agentType summary rawResult error createdAt updatedAt
+          findings { id runId taskId path line severity status title body suggestion createdAt updatedAt }
+        }
+      }
+      ''',
+      variables: {
+        'input': {'taskId': taskId, 'scope': scope},
+      },
+    );
+    return TaskReviewRunData.fromJson(
+      data['startTaskReview'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
+
+  Future<TaskReviewCommentData> addTaskReviewComment({
+    required String taskId,
+    required String path,
+    required int line,
+    required String body,
+  }) async {
+    final data = await graphQL(
+      r'''
+      mutation AddTaskReviewComment($input: AddTaskReviewCommentInput!) {
+        addTaskReviewComment(input: $input) {
+          id taskId path line body resolved createdAt updatedAt
+        }
+      }
+      ''',
+      variables: {
+        'input': {'taskId': taskId, 'path': path, 'line': line, 'body': body},
+      },
+    );
+    return TaskReviewCommentData.fromJson(
+      data['addTaskReviewComment'] as Map<String, dynamic>? ??
+          <String, dynamic>{},
+    );
+  }
+
+  Future<void> stageTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) =>
+      _taskGitChange('stageTaskGitChanges', taskId, paths, patch: patch)
+          .then((_) {});
+
+  Future<void> unstageTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) =>
+      _taskGitChange('unstageTaskGitChanges', taskId, paths, patch: patch)
+          .then((_) {});
+
+  Future<TaskGitBackupData?> discardTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) async {
+    final data = await _taskGitChange(
+      'discardTaskGitChanges',
+      taskId,
+      paths,
+      patch: patch,
+    );
+    final result =
+        (data['discardTaskGitChanges'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
+    final backup = result['backup'];
+    if (backup is Map<String, dynamic>) {
+      return TaskGitBackupData.fromJson(backup);
+    }
+    return null;
+  }
+
+  Future<void> restoreTaskGitBackup(String taskId, String backupId) => graphQL(
+        r'''
+        mutation RestoreTaskGitBackup($input: TaskGitChangeInput!) {
+          restoreTaskGitBackup(input: $input) { ok }
+        }
+        ''',
+        variables: {
+          'input': {'taskId': taskId, 'backupId': backupId},
+        },
+      ).then((_) {});
+
+  Future<void> resolveTaskReviewFinding(String id) => graphQL(
+        r'''
+        mutation ResolveTaskReviewFinding($id: ID!) {
+          resolveTaskReviewFinding(id: $id) { id }
+        }
+        ''',
+        variables: {'id': id},
+      ).then((_) {});
+
+  Future<void> dismissTaskReviewFinding(String id) => graphQL(
+        r'''
+        mutation DismissTaskReviewFinding($id: ID!) {
+          dismissTaskReviewFinding(id: $id) { id }
+        }
+        ''',
+        variables: {'id': id},
+      ).then((_) {});
+
+  Future<void> continueTaskWithReviewFeedback({
+    required String taskId,
+    required List<String> findingIds,
+    required List<String> commentIds,
+    String message = '',
+  }) =>
+      graphQL(
+        r'''
+        mutation ContinueTaskWithReviewFeedback($input: ContinueTaskWithReviewFeedbackInput!) {
+          continueTaskWithReviewFeedback(input: $input) { id }
+        }
+        ''',
+        variables: {
+          'input': {
+            'taskId': taskId,
+            'findingIds': findingIds,
+            'commentIds': commentIds,
+            if (message.trim().isNotEmpty) 'message': message.trim(),
+          },
+        },
+      ).then((_) {});
+
+  Future<Map<String, dynamic>> _taskGitChange(
+    String field,
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) =>
+      graphQL(
+        '''
+        mutation TaskGitChange(\$input: TaskGitChangeInput!) {
+          $field(input: \$input) { ok backup { id taskId paths patchPath createdAt } }
+        }
+        ''',
+        variables: {
+          'input': {
+            'taskId': taskId,
+            'paths': paths,
+            if ((patch ?? '').trim().isNotEmpty) 'patch': patch,
+          },
+        },
+      );
 
   Future<void> respondTaskInteraction({
     required String interactionId,

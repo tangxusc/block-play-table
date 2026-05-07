@@ -328,6 +328,21 @@ func (s *SQLStore) DeleteTask(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM task_interactions WHERE task_id = `+s.bind(1), id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_review_findings WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_review_comments WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_review_runs WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_git_backups WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_git_turn_snapshots WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM task_conversations WHERE task_id = `+s.bind(1), id); err != nil {
 		return err
 	}
@@ -685,6 +700,226 @@ func (s *SQLStore) CancelPendingTaskInteractions(ctx context.Context, taskID str
 	return err
 }
 
+func (s *SQLStore) SaveTaskReviewRun(ctx context.Context, run domain.TaskReviewRun) error {
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+		"task_review_runs",
+		[]string{"id", "task_id", "scope", "status", "agent_type", "summary", "raw_result", "error", "started_at", "completed_at", "created_at", "updated_at"},
+		[]string{"task_id", "scope", "status", "agent_type", "summary", "raw_result", "error", "started_at", "completed_at", "created_at", "updated_at"},
+	),
+		run.ID,
+		run.TaskID,
+		run.Scope,
+		run.Status,
+		nullableString(string(run.AgentType)),
+		run.Summary,
+		run.RawResult,
+		run.Error,
+		nullableTime(run.StartedAt),
+		nullableTime(run.CompletedAt),
+		run.CreatedAt,
+		run.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) TaskReviewRun(ctx context.Context, id string) (*domain.TaskReviewRun, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, scope, status, agent_type, summary, raw_result, error, started_at, completed_at, created_at, updated_at FROM task_review_runs WHERE id = `+s.bind(1), id)
+	run, err := scanTaskReviewRun(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: task review run %s", domain.ErrNotFound, id)
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+func (s *SQLStore) TaskReviewRuns(ctx context.Context, taskID string) ([]domain.TaskReviewRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, scope, status, agent_type, summary, raw_result, error, started_at, completed_at, created_at, updated_at FROM task_review_runs WHERE task_id = `+s.bind(1)+` ORDER BY created_at, id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TaskReviewRun, 0)
+	for rows.Next() {
+		run, err := scanTaskReviewRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *run)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) SaveTaskReviewFinding(ctx context.Context, finding domain.TaskReviewFinding) error {
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+		"task_review_findings",
+		[]string{"id", "run_id", "task_id", "path", "line", "severity", "status", "title", "body", "suggestion", "created_at", "updated_at"},
+		[]string{"run_id", "task_id", "path", "line", "severity", "status", "title", "body", "suggestion", "created_at", "updated_at"},
+	),
+		finding.ID,
+		finding.RunID,
+		finding.TaskID,
+		finding.Path,
+		finding.Line,
+		finding.Severity,
+		finding.Status,
+		finding.Title,
+		finding.Body,
+		finding.Suggestion,
+		finding.CreatedAt,
+		finding.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) TaskReviewFinding(ctx context.Context, id string) (*domain.TaskReviewFinding, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, run_id, task_id, path, line, severity, status, title, body, suggestion, created_at, updated_at FROM task_review_findings WHERE id = `+s.bind(1), id)
+	finding, err := scanTaskReviewFinding(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: task review finding %s", domain.ErrNotFound, id)
+		}
+		return nil, err
+	}
+	return finding, nil
+}
+
+func (s *SQLStore) TaskReviewFindings(ctx context.Context, taskID string, status domain.TaskReviewFindingStatus) ([]domain.TaskReviewFinding, error) {
+	query := `SELECT id, run_id, task_id, path, line, severity, status, title, body, suggestion, created_at, updated_at FROM task_review_findings WHERE task_id = ` + s.bind(1)
+	args := []any{taskID}
+	if status != "" {
+		args = append(args, status)
+		query += ` AND status = ` + s.bind(len(args))
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TaskReviewFinding, 0)
+	for rows.Next() {
+		finding, err := scanTaskReviewFinding(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *finding)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) SaveTaskReviewComment(ctx context.Context, comment domain.TaskReviewComment) error {
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+		"task_review_comments",
+		[]string{"id", "task_id", "path", "line", "body", "resolved", "created_at", "updated_at"},
+		[]string{"task_id", "path", "line", "body", "resolved", "created_at", "updated_at"},
+	),
+		comment.ID,
+		comment.TaskID,
+		comment.Path,
+		comment.Line,
+		comment.Body,
+		comment.Resolved,
+		comment.CreatedAt,
+		comment.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) TaskReviewComment(ctx context.Context, id string) (*domain.TaskReviewComment, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, path, line, body, resolved, created_at, updated_at FROM task_review_comments WHERE id = `+s.bind(1), id)
+	comment, err := scanTaskReviewComment(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: task review comment %s", domain.ErrNotFound, id)
+		}
+		return nil, err
+	}
+	return comment, nil
+}
+
+func (s *SQLStore) TaskReviewComments(ctx context.Context, taskID string) ([]domain.TaskReviewComment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, path, line, body, resolved, created_at, updated_at FROM task_review_comments WHERE task_id = `+s.bind(1)+` ORDER BY created_at, id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TaskReviewComment, 0)
+	for rows.Next() {
+		comment, err := scanTaskReviewComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *comment)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) SaveTaskGitBackup(ctx context.Context, backup domain.TaskGitBackup) error {
+	paths, err := encodeJSON(backup.Paths)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, s.upsertSQL(
+		"task_git_backups",
+		[]string{"id", "task_id", "paths", "patch_path", "created_at"},
+		[]string{"task_id", "paths", "patch_path", "created_at"},
+	),
+		backup.ID,
+		backup.TaskID,
+		paths,
+		backup.PatchPath,
+		backup.CreatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) TaskGitBackups(ctx context.Context, taskID string) ([]domain.TaskGitBackup, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, paths, patch_path, created_at FROM task_git_backups WHERE task_id = `+s.bind(1)+` ORDER BY created_at, id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TaskGitBackup, 0)
+	for rows.Next() {
+		backup, err := scanTaskGitBackup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *backup)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) SaveTaskGitTurnSnapshot(ctx context.Context, snapshot domain.TaskGitTurnSnapshot) error {
+	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+		"task_git_turn_snapshots",
+		[]string{"id", "task_id", "before_tree", "after_tree", "created_at", "updated_at"},
+		[]string{"task_id", "before_tree", "after_tree", "created_at", "updated_at"},
+	),
+		snapshot.ID,
+		snapshot.TaskID,
+		snapshot.BeforeTree,
+		snapshot.AfterTree,
+		snapshot.CreatedAt,
+		snapshot.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLStore) LatestTaskGitTurnSnapshot(ctx context.Context, taskID string) (*domain.TaskGitTurnSnapshot, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, before_tree, after_tree, created_at, updated_at FROM task_git_turn_snapshots WHERE task_id = `+s.bind(1)+` ORDER BY created_at DESC, id DESC LIMIT 1`, taskID)
+	snapshot, err := scanTaskGitTurnSnapshot(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: task git turn snapshot %s", domain.ErrNotFound, taskID)
+		}
+		return nil, err
+	}
+	return snapshot, nil
+}
+
 func (s *SQLStore) AppendEvents(ctx context.Context, events []domain.DomainEvent) error {
 	if len(events) == 0 {
 		return nil
@@ -999,6 +1234,97 @@ func scanTaskInteraction(scanner interface{ Scan(...any) error }) (*domain.TaskI
 	interaction.ResponseDecision = domain.TaskInteractionDecision(fromNullString(responseDecision))
 	interaction.ResponseMessage = fromNullString(responseMessage)
 	return &interaction, nil
+}
+
+func scanTaskReviewRun(scanner interface{ Scan(...any) error }) (*domain.TaskReviewRun, error) {
+	var run domain.TaskReviewRun
+	var agentType sql.NullString
+	var startedAt sql.NullTime
+	var completedAt sql.NullTime
+	if err := scanner.Scan(
+		&run.ID,
+		&run.TaskID,
+		&run.Scope,
+		&run.Status,
+		&agentType,
+		&run.Summary,
+		&run.RawResult,
+		&run.Error,
+		&startedAt,
+		&completedAt,
+		&run.CreatedAt,
+		&run.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	run.AgentType = domain.AgentType(fromNullString(agentType))
+	if startedAt.Valid {
+		value := startedAt.Time
+		run.StartedAt = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time
+		run.CompletedAt = &value
+	}
+	return &run, nil
+}
+
+func scanTaskReviewFinding(scanner interface{ Scan(...any) error }) (*domain.TaskReviewFinding, error) {
+	var finding domain.TaskReviewFinding
+	if err := scanner.Scan(
+		&finding.ID,
+		&finding.RunID,
+		&finding.TaskID,
+		&finding.Path,
+		&finding.Line,
+		&finding.Severity,
+		&finding.Status,
+		&finding.Title,
+		&finding.Body,
+		&finding.Suggestion,
+		&finding.CreatedAt,
+		&finding.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &finding, nil
+}
+
+func scanTaskReviewComment(scanner interface{ Scan(...any) error }) (*domain.TaskReviewComment, error) {
+	var comment domain.TaskReviewComment
+	if err := scanner.Scan(
+		&comment.ID,
+		&comment.TaskID,
+		&comment.Path,
+		&comment.Line,
+		&comment.Body,
+		&comment.Resolved,
+		&comment.CreatedAt,
+		&comment.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &comment, nil
+}
+
+func scanTaskGitBackup(scanner interface{ Scan(...any) error }) (*domain.TaskGitBackup, error) {
+	var backup domain.TaskGitBackup
+	var paths string
+	if err := scanner.Scan(&backup.ID, &backup.TaskID, &paths, &backup.PatchPath, &backup.CreatedAt); err != nil {
+		return nil, err
+	}
+	if err := decodeJSON(paths, &backup.Paths); err != nil {
+		return nil, err
+	}
+	return &backup, nil
+}
+
+func scanTaskGitTurnSnapshot(scanner interface{ Scan(...any) error }) (*domain.TaskGitTurnSnapshot, error) {
+	var snapshot domain.TaskGitTurnSnapshot
+	if err := scanner.Scan(&snapshot.ID, &snapshot.TaskID, &snapshot.BeforeTree, &snapshot.AfterTree, &snapshot.CreatedAt, &snapshot.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
 }
 
 func storeTaskDisplayDate(value time.Time) time.Time {

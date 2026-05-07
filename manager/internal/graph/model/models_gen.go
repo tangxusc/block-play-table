@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+type AddTaskReviewCommentInput struct {
+	TaskID string `json:"taskId"`
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+	Body   string `json:"body"`
+}
+
 type AgentExecutionConfig struct {
 	WorkMode *AgentWorkMode         `json:"workMode,omitempty"`
 	Codex    *CodexExecutionConfig  `json:"codex,omitempty"`
@@ -102,6 +109,13 @@ type CodexExecutionConfigInput struct {
 type ContinueTaskInput struct {
 	TaskID  string `json:"taskId"`
 	Message string `json:"message"`
+}
+
+type ContinueTaskWithReviewFeedbackInput struct {
+	TaskID     string   `json:"taskId"`
+	FindingIds []string `json:"findingIds,omitempty"`
+	CommentIds []string `json:"commentIds,omitempty"`
+	Message    *string  `json:"message,omitempty"`
 }
 
 type ConversationMessage struct {
@@ -263,6 +277,11 @@ type StartTaskInput struct {
 	TaskID string `json:"taskId"`
 }
 
+type StartTaskReviewInput struct {
+	TaskID string           `json:"taskId"`
+	Scope  TaskGitDiffScope `json:"scope"`
+}
+
 type Subscription struct {
 }
 
@@ -302,6 +321,48 @@ type TaskFilter struct {
 	Search          *string     `json:"search,omitempty"`
 }
 
+type TaskGitBackup struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"taskId"`
+	Paths     []string  `json:"paths"`
+	PatchPath string    `json:"patchPath"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type TaskGitChangeInput struct {
+	TaskID   string   `json:"taskId"`
+	Paths    []string `json:"paths,omitempty"`
+	Patch    *string  `json:"patch,omitempty"`
+	BackupID *string  `json:"backupId,omitempty"`
+}
+
+type TaskGitChangeResult struct {
+	Ok     bool           `json:"ok"`
+	Backup *TaskGitBackup `json:"backup,omitempty"`
+	Diff   *TaskGitDiff   `json:"diff,omitempty"`
+}
+
+type TaskGitDiff struct {
+	TaskID      string             `json:"taskId"`
+	Scope       TaskGitDiffScope   `json:"scope"`
+	BaseRef     *string            `json:"baseRef,omitempty"`
+	HeadRef     *string            `json:"headRef,omitempty"`
+	Files       []*TaskGitDiffFile `json:"files"`
+	Truncated   bool               `json:"truncated"`
+	GeneratedAt time.Time          `json:"generatedAt"`
+}
+
+type TaskGitDiffFile struct {
+	Path      string  `json:"path"`
+	OldPath   *string `json:"oldPath,omitempty"`
+	Status    string  `json:"status"`
+	Staged    bool    `json:"staged"`
+	Additions int     `json:"additions"`
+	Deletions int     `json:"deletions"`
+	Patch     string  `json:"patch"`
+	Truncated bool    `json:"truncated"`
+}
+
 type TaskInteraction struct {
 	ID               string                   `json:"id"`
 	TaskID           string                   `json:"taskId"`
@@ -324,6 +385,48 @@ type TaskLog struct {
 	Stream    string    `json:"stream"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type TaskReviewComment struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"taskId"`
+	Path      string    `json:"path"`
+	Line      int       `json:"line"`
+	Body      string    `json:"body"`
+	Resolved  bool      `json:"resolved"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type TaskReviewFinding struct {
+	ID         string                  `json:"id"`
+	RunID      string                  `json:"runId"`
+	TaskID     string                  `json:"taskId"`
+	Path       string                  `json:"path"`
+	Line       int                     `json:"line"`
+	Severity   TaskReviewSeverity      `json:"severity"`
+	Status     TaskReviewFindingStatus `json:"status"`
+	Title      string                  `json:"title"`
+	Body       string                  `json:"body"`
+	Suggestion string                  `json:"suggestion"`
+	CreatedAt  time.Time               `json:"createdAt"`
+	UpdatedAt  time.Time               `json:"updatedAt"`
+}
+
+type TaskReviewRun struct {
+	ID          string               `json:"id"`
+	TaskID      string               `json:"taskId"`
+	Scope       TaskGitDiffScope     `json:"scope"`
+	Status      TaskReviewRunStatus  `json:"status"`
+	AgentType   *AgentType           `json:"agentType,omitempty"`
+	Summary     string               `json:"summary"`
+	RawResult   string               `json:"rawResult"`
+	Error       string               `json:"error"`
+	Findings    []*TaskReviewFinding `json:"findings"`
+	StartedAt   *time.Time           `json:"startedAt,omitempty"`
+	CompletedAt *time.Time           `json:"completedAt,omitempty"`
+	CreatedAt   time.Time            `json:"createdAt"`
+	UpdatedAt   time.Time            `json:"updatedAt"`
 }
 
 type TaskSortInput struct {
@@ -1061,6 +1164,122 @@ func (e SortDirection) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type TaskGitChangeAction string
+
+const (
+	TaskGitChangeActionStage   TaskGitChangeAction = "STAGE"
+	TaskGitChangeActionUnstage TaskGitChangeAction = "UNSTAGE"
+	TaskGitChangeActionDiscard TaskGitChangeAction = "DISCARD"
+	TaskGitChangeActionRestore TaskGitChangeAction = "RESTORE"
+)
+
+var AllTaskGitChangeAction = []TaskGitChangeAction{
+	TaskGitChangeActionStage,
+	TaskGitChangeActionUnstage,
+	TaskGitChangeActionDiscard,
+	TaskGitChangeActionRestore,
+}
+
+func (e TaskGitChangeAction) IsValid() bool {
+	switch e {
+	case TaskGitChangeActionStage, TaskGitChangeActionUnstage, TaskGitChangeActionDiscard, TaskGitChangeActionRestore:
+		return true
+	}
+	return false
+}
+
+func (e TaskGitChangeAction) String() string {
+	return string(e)
+}
+
+func (e *TaskGitChangeAction) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskGitChangeAction(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskGitChangeAction", str)
+	}
+	return nil
+}
+
+func (e TaskGitChangeAction) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskGitChangeAction) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskGitChangeAction) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskGitDiffScope string
+
+const (
+	TaskGitDiffScopeUncommitted TaskGitDiffScope = "UNCOMMITTED"
+	TaskGitDiffScopeBranch      TaskGitDiffScope = "BRANCH"
+	TaskGitDiffScopeLastTurn    TaskGitDiffScope = "LAST_TURN"
+)
+
+var AllTaskGitDiffScope = []TaskGitDiffScope{
+	TaskGitDiffScopeUncommitted,
+	TaskGitDiffScopeBranch,
+	TaskGitDiffScopeLastTurn,
+}
+
+func (e TaskGitDiffScope) IsValid() bool {
+	switch e {
+	case TaskGitDiffScopeUncommitted, TaskGitDiffScopeBranch, TaskGitDiffScopeLastTurn:
+		return true
+	}
+	return false
+}
+
+func (e TaskGitDiffScope) String() string {
+	return string(e)
+}
+
+func (e *TaskGitDiffScope) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskGitDiffScope(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskGitDiffScope", str)
+	}
+	return nil
+}
+
+func (e TaskGitDiffScope) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskGitDiffScope) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskGitDiffScope) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type TaskInteractionDecision string
 
 const (
@@ -1231,6 +1450,183 @@ func (e *TaskInteractionStatus) UnmarshalJSON(b []byte) error {
 }
 
 func (e TaskInteractionStatus) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskReviewFindingStatus string
+
+const (
+	TaskReviewFindingStatusOpen      TaskReviewFindingStatus = "OPEN"
+	TaskReviewFindingStatusResolved  TaskReviewFindingStatus = "RESOLVED"
+	TaskReviewFindingStatusDismissed TaskReviewFindingStatus = "DISMISSED"
+)
+
+var AllTaskReviewFindingStatus = []TaskReviewFindingStatus{
+	TaskReviewFindingStatusOpen,
+	TaskReviewFindingStatusResolved,
+	TaskReviewFindingStatusDismissed,
+}
+
+func (e TaskReviewFindingStatus) IsValid() bool {
+	switch e {
+	case TaskReviewFindingStatusOpen, TaskReviewFindingStatusResolved, TaskReviewFindingStatusDismissed:
+		return true
+	}
+	return false
+}
+
+func (e TaskReviewFindingStatus) String() string {
+	return string(e)
+}
+
+func (e *TaskReviewFindingStatus) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskReviewFindingStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskReviewFindingStatus", str)
+	}
+	return nil
+}
+
+func (e TaskReviewFindingStatus) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskReviewFindingStatus) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskReviewFindingStatus) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskReviewRunStatus string
+
+const (
+	TaskReviewRunStatusQueued    TaskReviewRunStatus = "QUEUED"
+	TaskReviewRunStatusRunning   TaskReviewRunStatus = "RUNNING"
+	TaskReviewRunStatusCompleted TaskReviewRunStatus = "COMPLETED"
+	TaskReviewRunStatusFailed    TaskReviewRunStatus = "FAILED"
+)
+
+var AllTaskReviewRunStatus = []TaskReviewRunStatus{
+	TaskReviewRunStatusQueued,
+	TaskReviewRunStatusRunning,
+	TaskReviewRunStatusCompleted,
+	TaskReviewRunStatusFailed,
+}
+
+func (e TaskReviewRunStatus) IsValid() bool {
+	switch e {
+	case TaskReviewRunStatusQueued, TaskReviewRunStatusRunning, TaskReviewRunStatusCompleted, TaskReviewRunStatusFailed:
+		return true
+	}
+	return false
+}
+
+func (e TaskReviewRunStatus) String() string {
+	return string(e)
+}
+
+func (e *TaskReviewRunStatus) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskReviewRunStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskReviewRunStatus", str)
+	}
+	return nil
+}
+
+func (e TaskReviewRunStatus) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskReviewRunStatus) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskReviewRunStatus) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskReviewSeverity string
+
+const (
+	TaskReviewSeverityInfo     TaskReviewSeverity = "INFO"
+	TaskReviewSeverityLow      TaskReviewSeverity = "LOW"
+	TaskReviewSeverityMedium   TaskReviewSeverity = "MEDIUM"
+	TaskReviewSeverityHigh     TaskReviewSeverity = "HIGH"
+	TaskReviewSeverityCritical TaskReviewSeverity = "CRITICAL"
+)
+
+var AllTaskReviewSeverity = []TaskReviewSeverity{
+	TaskReviewSeverityInfo,
+	TaskReviewSeverityLow,
+	TaskReviewSeverityMedium,
+	TaskReviewSeverityHigh,
+	TaskReviewSeverityCritical,
+}
+
+func (e TaskReviewSeverity) IsValid() bool {
+	switch e {
+	case TaskReviewSeverityInfo, TaskReviewSeverityLow, TaskReviewSeverityMedium, TaskReviewSeverityHigh, TaskReviewSeverityCritical:
+		return true
+	}
+	return false
+}
+
+func (e TaskReviewSeverity) String() string {
+	return string(e)
+}
+
+func (e *TaskReviewSeverity) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskReviewSeverity(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskReviewSeverity", str)
+	}
+	return nil
+}
+
+func (e TaskReviewSeverity) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskReviewSeverity) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskReviewSeverity) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/worker/internal/client"
+	"github.com/tangxusc/block-play-table/worker/internal/review"
 	"github.com/tangxusc/block-play-table/worker/internal/terminal"
 )
 
@@ -45,12 +46,50 @@ func main() {
 		logger.Error("worker terminal failed", "error", err)
 		os.Exit(1)
 	}
-	cfg.Capabilities = terminalServer.Capabilities()
-	logger.Info("worker starting", "managers", strings.Join(cfg.ManagerWSURLs, ","), "workerId", cfg.WorkerID, "trustedMode", true, "terminal", cfg.Capabilities["terminal_enabled"])
+	reviewServer := review.NewServer(review.Config{
+		Enabled: parseBoolEnv("WORKER_REVIEW_ENABLED", true),
+		Host:    getenv("WORKER_REVIEW_HOST", "127.0.0.1"),
+		WorkDir: cfg.WorkDir,
+		Logger:  logger,
+	})
+	if err := reviewServer.Start(ctx); err != nil {
+		logger.Error("worker review failed", "error", err)
+		os.Exit(1)
+	}
+	cfg.ReviewRecorder = reviewRecorder{server: reviewServer}
+	cfg.Capabilities = mergeCapabilities(terminalServer.Capabilities(), reviewServer.Capabilities())
+	logger.Info("worker starting", "managers", strings.Join(cfg.ManagerWSURLs, ","), "workerId", cfg.WorkerID, "trustedMode", true, "terminal", cfg.Capabilities["terminal_enabled"], "review", cfg.Capabilities["review_enabled"])
 	if err := client.New(cfg).Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("worker failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+type reviewRecorder struct {
+	server *review.Server
+}
+
+func (r reviewRecorder) BeginTurn(ctx context.Context, taskID, worktreePath, baseBranch, defaultBranch string) string {
+	if r.server == nil {
+		return ""
+	}
+	return r.server.BeginTurn(ctx, review.TaskContext{TaskID: taskID, WorktreePath: worktreePath, BaseBranch: baseBranch, DefaultBranch: defaultBranch})
+}
+
+func (r reviewRecorder) EndTurn(ctx context.Context, taskID, token string) {
+	if r.server != nil {
+		r.server.EndTurn(ctx, taskID, token)
+	}
+}
+
+func mergeCapabilities(groups ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, group := range groups {
+		for key, value := range group {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func getenv(key, fallback string) string {

@@ -377,6 +377,89 @@ void main() {
     expect(find.text('Conversation'), findsOneWidget);
   });
 
+  testWidgets('task detail review tab renders diff findings and actions', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient(
+      detailTask: _completedTask,
+      reviewDiff: const TaskGitDiffData(
+        taskId: 'task-1',
+        scope: 'UNCOMMITTED',
+        files: [
+          TaskGitDiffFileData(
+            path: 'README.md',
+            status: 'M',
+            additions: 2,
+            deletions: 1,
+            patch: '@@ -1 +1 @@\n-old\n+new\n',
+          ),
+        ],
+      ),
+      reviewRuns: const [
+        TaskReviewRunData(
+          id: 'run-1',
+          taskId: 'task-1',
+          scope: 'UNCOMMITTED',
+          status: 'COMPLETED',
+          summary: '1 finding',
+          findings: [
+            TaskReviewFindingData(
+              id: 'finding-1',
+              runId: 'run-1',
+              taskId: 'task-1',
+              path: 'README.md',
+              line: 4,
+              severity: 'HIGH',
+              status: 'OPEN',
+              title: 'Bug',
+              body: 'Fix validation',
+            ),
+          ],
+        ),
+      ],
+      reviewComments: const [
+        TaskReviewCommentData(
+          id: 'comment-1',
+          taskId: 'task-1',
+          path: 'README.md',
+          line: 4,
+          body: 'Please tighten this.',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refresh board').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('task-detail-section-review')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Uncommitted'), findsOneWidget);
+    expect(find.text('README.md'), findsWidgets);
+    expect(find.text('Bug'), findsOneWidget);
+    expect(find.text('Please tighten this.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('review-action-ai-review')));
+    await tester.pump();
+    expect(apiClient.reviewStartedTaskId, 'task-1');
+
+    await tester.tap(find.byKey(const ValueKey('review-action-discard')));
+    await tester.pumpAndSettle();
+    expect(find.text('Discard changes'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Discard'));
+    await tester.pumpAndSettle();
+    expect(apiClient.discardedTaskId, 'task-1');
+
+    await tester.tap(find.byKey(const ValueKey('review-action-feedback')));
+    await tester.pumpAndSettle();
+    expect(apiClient.continuedWithReviewTaskId, 'task-1');
+    expect(apiClient.continuedWithReviewFindingIds, ['finding-1']);
+    expect(apiClient.continuedWithReviewCommentIds, ['comment-1']);
+  });
+
   testWidgets('board paginates tasks and resets page when view changes', (
     tester,
   ) async {
@@ -1399,6 +1482,10 @@ class FakeApiClient extends ApiClient {
     List<WorkerItem>? workers,
     List<DomainEventItem>? events,
     TaskItem? detailTask,
+    TaskGitDiffData? reviewDiff,
+    List<TaskReviewRunData>? reviewRuns,
+    List<TaskReviewCommentData>? reviewComments,
+    List<TaskGitBackupData>? gitBackups,
     String? terminalCheckError,
   })  : _settings = settings ?? const SettingsData(),
         _tasks = tasks ?? [_task],
@@ -1406,6 +1493,10 @@ class FakeApiClient extends ApiClient {
         _workers = workers ?? [worker ?? _defaultWorker],
         _domainEvents = events ?? const [],
         _detailTask = detailTask,
+        _reviewDiff = reviewDiff,
+        _reviewRuns = reviewRuns ?? const [],
+        _reviewComments = reviewComments ?? const [],
+        _gitBackups = gitBackups ?? const [],
         _terminalCheckError = terminalCheckError,
         super('http://manager/graphql');
 
@@ -1417,6 +1508,10 @@ class FakeApiClient extends ApiClient {
   List<WorkerItem> _workers;
   final List<DomainEventItem> _domainEvents;
   final TaskItem? _detailTask;
+  final TaskGitDiffData? _reviewDiff;
+  final List<TaskReviewRunData> _reviewRuns;
+  final List<TaskReviewCommentData> _reviewComments;
+  final List<TaskGitBackupData> _gitBackups;
   final String? _terminalCheckError;
   int boardFetches = 0;
   int detailFetches = 0;
@@ -1430,6 +1525,11 @@ class FakeApiClient extends ApiClient {
   String? createdTaskEndDate;
   String? continuedTaskId;
   String? continuedMessage;
+  String? reviewStartedTaskId;
+  String? discardedTaskId;
+  String? continuedWithReviewTaskId;
+  List<String>? continuedWithReviewFindingIds;
+  List<String>? continuedWithReviewCommentIds;
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
   String? deletedTaskId;
@@ -1635,7 +1735,91 @@ class FakeApiClient extends ApiClient {
               ),
             ]
           : const [],
+      reviewDiff: _reviewDiff,
+      reviewRuns: _reviewRuns,
+      reviewComments: _reviewComments,
+      gitBackups: _gitBackups,
     );
+  }
+
+  @override
+  Future<TaskGitDiffData> fetchTaskGitDiff(
+    String taskId,
+    String scope, {
+    bool? staged,
+  }) async =>
+      _reviewDiff ?? TaskGitDiffData(taskId: taskId, scope: scope);
+
+  @override
+  Future<TaskReviewRunData> startTaskReview(String taskId, String scope) async {
+    reviewStartedTaskId = taskId;
+    return _reviewRuns.isEmpty
+        ? TaskReviewRunData(
+            id: 'run-new',
+            taskId: taskId,
+            scope: scope,
+            status: 'COMPLETED',
+          )
+        : _reviewRuns.first;
+  }
+
+  @override
+  Future<TaskGitBackupData?> discardTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) async {
+    discardedTaskId = taskId;
+    return TaskGitBackupData(
+      id: 'backup-new',
+      taskId: taskId,
+      paths: paths,
+      patchPath: '/tmp/backup.patch',
+    );
+  }
+
+  @override
+  Future<void> stageTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) async {}
+
+  @override
+  Future<void> unstageTaskGitChanges(
+    String taskId,
+    List<String> paths, {
+    String? patch,
+  }) async {}
+
+  @override
+  Future<void> restoreTaskGitBackup(String taskId, String backupId) async {}
+
+  @override
+  Future<TaskReviewCommentData> addTaskReviewComment({
+    required String taskId,
+    required String path,
+    required int line,
+    required String body,
+  }) async =>
+      TaskReviewCommentData(
+        id: 'comment-new',
+        taskId: taskId,
+        path: path,
+        line: line,
+        body: body,
+      );
+
+  @override
+  Future<void> continueTaskWithReviewFeedback({
+    required String taskId,
+    required List<String> findingIds,
+    required List<String> commentIds,
+    String message = '',
+  }) async {
+    continuedWithReviewTaskId = taskId;
+    continuedWithReviewFindingIds = findingIds;
+    continuedWithReviewCommentIds = commentIds;
   }
 
   @override

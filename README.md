@@ -9,7 +9,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 ## Trusted Mode
 
-GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, and the task terminal endpoint opens a real shell in the task worktree on the Worker, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, the task terminal endpoint opens a real shell in the task worktree on the Worker, and the task Review API can read diffs and stage, unstage, discard, or restore changes inside the task worktree, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -78,6 +78,8 @@ Manager endpoints:
 Browser clients that cannot set custom headers can use `/proxy/web/<worker name>/<host>/<port>/**`. The task detail UI uses that route for its Web preview panel.
 
 Task detail also provides a Worker terminal panel. The UI first calls `GET /terminal/tasks/{taskID}` to validate that the assigned Worker is online, the FRP tunnel is connected, and the recorded `worktreePath` still exists under the Worker `WorkDir`; then it connects to `/terminal/tasks/{taskID}/ws`. Manager proxies the WebSocket through the Worker FRP tunnel to the Worker's local terminal service. The shell starts in the task worktree only; tasks without `worktreePath`, archived tasks, or missing local worktree directories do not fall back to the Worker root directory. Worker terminal support is enabled by default and can be disabled with `WORKER_TERMINAL_ENABLED=false`; `WORKER_TERMINAL_HOST` defaults to `127.0.0.1`, and `WORKER_TERMINAL_SHELL` can override the shell binary on Unix Workers.
+
+Task detail also includes a Review tab. Worker starts a local `127.0.0.1` Review HTTP service and advertises `review_enabled=true`, `review_host`, and `review_port` capabilities. Manager exposes typed GraphQL review queries/mutations and proxies each diff or Git change request to that Worker-local Review service through the existing FRP/yamux tunnel. Manager persists review runs, findings, inline comments, turn snapshots, and backup metadata; full diff content is fetched live from the Worker. `discard` always creates a backup patch before modifying the worktree, and `restore` applies that backup patch back through the Worker.
 
 ## Agent CLI Run Configuration
 
