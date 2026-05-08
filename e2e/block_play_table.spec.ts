@@ -34,6 +34,13 @@ async function enableFlutterAccessibility(page) {
   }
 }
 
+async function openFlutterApp(page) {
+  await page.goto("/", { waitUntil: "networkidle", timeout: 120000 });
+  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 120000 });
+  await page.waitForTimeout(1500);
+  await enableFlutterAccessibility(page);
+}
+
 async function openTaskFromList(page, taskTitle: string) {
   await page.getByRole("button", { name: "List" }).click();
   await page.mouse.move(700, 520);
@@ -160,33 +167,43 @@ async function waitForTerminalWorker(request) {
   return selected!;
 }
 
-async function runTerminalCommand(taskId: string, marker: string) {
+async function runTerminalCommand(
+  taskId: string,
+  marker: string,
+  expectedPath: string,
+) {
   const terminalURL = managerGraphQL
     .replace(/^http/, "ws")
     .replace(/\/graphql$/, `/terminal/tasks/${taskId}/ws`);
   const ws = new WebSocket(terminalURL);
   let output = "";
+  let exitSent = false;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.close();
       reject(new Error(`timed out waiting for terminal output: ${output}`));
     }, 15000);
-    ws.addEventListener(
-      "open",
-      () => {
-        ws.send(
-          JSON.stringify({
-            type: "input",
-            data: `pwd\necho ${marker}\nexit\n`,
-          }),
-        );
-      },
-      { once: true },
-    );
+    ws.addEventListener("open", () => {
+      ws.send(
+        JSON.stringify({
+          type: "input",
+          data: `pwd\n`,
+        }),
+      );
+    });
     ws.addEventListener("message", (message) => {
       const event = JSON.parse(String(message.data));
       if (event.type === "output") {
         output += event.data;
+        if (!exitSent && output.includes(expectedPath)) {
+          exitSent = true;
+          ws.send(
+            JSON.stringify({
+              type: "input",
+              data: `echo ${marker}\nexit\n`,
+            }),
+          );
+        }
       }
       if (event.type === "error") {
         clearTimeout(timeout);
@@ -666,10 +683,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     );
   }
 
-  await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
 
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
   await expect(
@@ -854,11 +868,8 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto("/");
+  await openFlutterApp(page);
   await expect(page).toHaveTitle("Block Play Table");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
 
   const suffix = Date.now();
   const projectName = `E2E Project ${suffix}`;
@@ -908,9 +919,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     },
   );
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   await openWorkerEditor(page, workerName);
   await expect(page.getByText("Runtime environment")).toBeVisible();
   await addWorkerEnvVar(page, "BPT_E2E_AGENT_ENV", "codex-value");
@@ -1090,9 +1099,7 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
     })
     .toBeTruthy();
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   await page.getByRole("button", { name: "Calendar" }).click();
   const calendarSearch = page.getByRole("textbox", { name: /Search/ });
   await expect(calendarSearch).toBeVisible();
@@ -1127,10 +1134,7 @@ test("task detail terminal runs commands in task worktree", async ({
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
 
   const suffix = Date.now();
   const marker = `BPT_TERMINAL_E2E_${suffix}`;
@@ -1182,18 +1186,16 @@ test("task detail terminal runs commands in task worktree", async ({
     })
     .toBeTruthy();
 
-  const output = await runTerminalCommand(task.id, marker);
+  const output = await runTerminalCommand(task.id, marker, worktreePath);
   expect(output).toContain(worktreePath);
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   const terminalSocketURLs: string[] = [];
   page.on("websocket", (socket) => {
     terminalSocketURLs.push(socket.url());
   });
   await openTaskFromList(page, task.title);
-  await page.getByRole("button", { name: "Terminal" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(page.getByText("Terminal unavailable")).toHaveCount(0);
   await page.getByRole("button", { name: "Connect worker terminal" }).click();
   await expect(page.getByText("Connected")).toBeVisible();
@@ -1211,10 +1213,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
 
   const suffix = Date.now();
   const projectName = `E2E Interaction Project ${suffix}`;
@@ -1294,9 +1293,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
       ],
     });
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
     page.getByRole("textbox", { name: /Approve command/ }),
@@ -1377,10 +1374,7 @@ test("claude task detail waits for permission interaction before completion", as
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
 
   const suffix = Date.now();
   const taskTitle = `E2E Claude Interaction Task ${suffix}`;
@@ -1478,9 +1472,7 @@ test("claude task detail waits for permission interaction before completion", as
       ],
     });
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
     page.getByRole("textbox", { name: /Approve Claude file change/ }),
@@ -1522,10 +1514,7 @@ test("task detail continues a completed task with the same agent session", async
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
 
   const suffix = Date.now();
   const projectName = `E2E Continue Project ${suffix}`;
@@ -1619,9 +1608,7 @@ test("task detail continues a completed task with the same agent session", async
       agentSessionId: "session-1",
     });
 
-  await page.reload();
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await openFlutterApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
     page.getByRole("button", { name: /^Conversation$/ }),

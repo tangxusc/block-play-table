@@ -34,6 +34,10 @@ func TestServerDiffStageDiscardRestoreAndLastTurn(t *testing.T) {
 	if !diff.HasFile("tracked.txt") || !diff.HasFile("new.txt") {
 		t.Fatalf("uncommitted files = %+v, want tracked.txt and new.txt", diff.Files)
 	}
+	branch := requestDiff(t, server, "task-1", ScopeBranch, repo)
+	if !branch.HasFile("tracked.txt") || branch.BaseRef == "" || branch.HeadRef == "" {
+		t.Fatalf("branch diff = %+v, want tracked.txt with base/head refs", branch)
+	}
 
 	requestAction(t, server, "task-1", "stage", ActionRequest{Paths: []string{"tracked.txt"}, WorktreePath: repo})
 	staged := requestDiff(t, server, "task-1", ScopeUncommitted, repo)
@@ -48,6 +52,11 @@ func TestServerDiffStageDiscardRestoreAndLastTurn(t *testing.T) {
 	unstagedOnly := requestDiffWithStaged(t, server, "task-1", ScopeUncommitted, repo, boolPtr(false))
 	if unstagedOnly.HasFile("tracked.txt") || !unstagedOnly.HasFile("new.txt") {
 		t.Fatalf("unstaged-only diff = %+v, want untracked new.txt without tracked.txt", unstagedOnly.Files)
+	}
+	requestAction(t, server, "task-1", "unstage", ActionRequest{Paths: []string{"tracked.txt"}, WorktreePath: repo})
+	afterUnstage := requestDiffWithStaged(t, server, "task-1", ScopeUncommitted, repo, boolPtr(true))
+	if afterUnstage.HasFile("tracked.txt") {
+		t.Fatalf("staged diff after unstage = %+v, want tracked.txt removed", afterUnstage.Files)
 	}
 
 	backup := requestAction(t, server, "task-1", "discard", ActionRequest{Paths: []string{"tracked.txt", "new.txt"}, WorktreePath: repo})
@@ -125,6 +134,98 @@ func TestServerStartsReviewRunWithStructuredFindings(t *testing.T) {
 	}
 }
 
+func TestServerLifecycleCapabilitiesAndHTTPNotFound(t *testing.T) {
+	disabled := NewServer(Config{})
+	if err := disabled.Start(context.Background()); err != nil {
+		t.Fatalf("disabled Start returned error: %v", err)
+	}
+	if err := disabled.Close(); err != nil {
+		t.Fatalf("disabled Close returned error: %v", err)
+	}
+	if caps := disabled.Capabilities(); caps["review_enabled"] != "false" {
+		t.Fatalf("disabled capabilities = %+v", caps)
+	}
+
+	missingWorkDir := NewServer(Config{Enabled: true})
+	if err := missingWorkDir.Start(context.Background()); err == nil {
+		t.Fatal("Start should require work dir when review server is enabled")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(Config{Enabled: true, WorkDir: t.TempDir(), Host: "127.0.0.1"})
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer server.Close()
+	if server.Addr() == "" || server.Port() == 0 {
+		t.Fatalf("server address = %q port = %d", server.Addr(), server.Port())
+	}
+	caps := server.Capabilities()
+	if caps["review_enabled"] != "true" || caps["review_host"] != "127.0.0.1" || caps["review_port"] != strconv.Itoa(server.Port()) {
+		t.Fatalf("enabled capabilities = %+v", caps)
+	}
+	resp, err := http.Get("http://" + server.Addr() + "/review/tasks/task-1")
+	if err != nil {
+		t.Fatalf("GET started server returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("not found response = %d", resp.StatusCode)
+	}
+}
+
+func TestServerRejectsMalformedReviewRequestsAndFailedRun(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "task-worktree")
+	initGitRepo(t, repo)
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		status int
+		want   string
+	}{
+		{name: "bad staged filter", method: http.MethodGet, path: "/review/tasks/task-1/diff?scope=UNCOMMITTED&staged=maybe&cwd=" + repo, status: http.StatusBadRequest, want: "staged"},
+		{name: "method not allowed", method: http.MethodPost, path: "/review/tasks/task-1/diff", body: `{}`, status: http.StatusMethodNotAllowed, want: "method not allowed"},
+		{name: "unsupported scope", method: http.MethodGet, path: "/review/tasks/task-1/diff?scope=BAD&cwd=" + repo, status: http.StatusBadRequest, want: "unsupported diff scope"},
+		{name: "missing last turn", method: http.MethodGet, path: "/review/tasks/task-1/diff?scope=LAST_TURN&cwd=" + repo, status: http.StatusConflict, want: "last-turn diff is not available"},
+		{name: "bad action json", method: http.MethodPost, path: "/review/tasks/task-1/stage", body: `{`, status: http.StatusBadRequest, want: "unexpected EOF"},
+		{name: "bad run json", method: http.MethodPost, path: "/review/tasks/task-1/runs", body: `{`, status: http.StatusBadRequest, want: "unexpected EOF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("response = %d %q, want %d containing %q", rec.Code, rec.Body.String(), tc.status, tc.want)
+			}
+		})
+	}
+
+	raw, err := json.Marshal(ReviewRunRequest{Scope: ScopeLastTurn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/review/tasks/task-1/runs?cwd="+repo, bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("failed run response = %d %q", rec.Code, rec.Body.String())
+	}
+	var response ReviewRunResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Run.Status != ReviewRunFailed || !strings.Contains(response.Run.Error, "last-turn diff is not available") || len(response.Findings) != 0 {
+		t.Fatalf("failed review run = %+v findings %+v", response.Run, response.Findings)
+	}
+}
+
 func TestServerRejectsWorktreeOutsideWorkerDir(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -170,6 +271,58 @@ func TestServerRejectsPatchPathEscape(t *testing.T) {
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid") {
 		t.Fatalf("patch escape response = %d %q, want 400 invalid path", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReviewHelpersCoverEdgeCases(t *testing.T) {
+	if line := firstAddedLine("context\n+new\n"); line != 1 {
+		t.Fatalf("firstAddedLine without hunk = %d, want 1", line)
+	}
+	if line := firstAddedLine("@@ -1 +4 @@\n context\n+new\n"); line != 5 {
+		t.Fatalf("firstAddedLine with context = %d, want 5", line)
+	}
+	if line := firstAddedLine("@@ -1 +bad @@\n+new\n"); line != 1 {
+		t.Fatalf("firstAddedLine bad hunk = %d, want 1", line)
+	}
+	status, path, oldPath := parseNameStatus("R100\told.txt\tnew.txt")
+	if status != "R" || path != "new.txt" || oldPath != "old.txt" {
+		t.Fatalf("rename status = %q %q %q", status, path, oldPath)
+	}
+	status, path, oldPath = parseNameStatus("M")
+	if status != "M" || path != "" || oldPath != "" {
+		t.Fatalf("short status = %q %q %q", status, path, oldPath)
+	}
+	add, del := patchStats("--- a/file\n+++ b/file\n-old\n+new\n context\n")
+	if add != 1 || del != 1 {
+		t.Fatalf("patchStats = %d %d, want 1 1", add, del)
+	}
+	files := []DiffFile{
+		{Path: "big.txt", Patch: strings.Repeat("x", 5)},
+		{Path: "later.txt", Patch: strings.Repeat("y", 5)},
+	}
+	if !truncateDiffFiles(files, 5, 3) || files[0].Patch != "xxx" || files[1].Patch != "" || !files[0].Truncated || !files[1].Truncated {
+		t.Fatalf("truncated files = %+v", files)
+	}
+	if _, err := cleanPaths("/tmp", nil); err == nil {
+		t.Fatal("cleanPaths should reject empty paths")
+	}
+	if _, err := cleanPaths("/tmp", []string{"/abs"}); err == nil {
+		t.Fatal("cleanPaths should reject absolute paths")
+	}
+	paths, err := cleanPaths("/tmp", []string{"./a/../b.txt"})
+	if err != nil || len(paths) != 1 || paths[0] != "b.txt" {
+		t.Fatalf("cleanPaths valid = %+v, %v", paths, err)
+	}
+	patchPaths := patchPaths("diff --git a/old.txt b/new.txt\n--- /dev/null\n+++ b/new.txt\n")
+	if len(patchPaths) != 2 || patchPaths[0] != "old.txt" || patchPaths[1] != "new.txt" {
+		t.Fatalf("patchPaths = %+v", patchPaths)
+	}
+	unique := uniqueStrings([]string{"", "a", " a ", "b"})
+	if len(unique) != 2 || unique[0] != "a" || unique[1] != "b" {
+		t.Fatalf("uniqueStrings = %+v", unique)
+	}
+	if trimPatchPath("/dev/null") != "" || trimPatchPath("a/file.txt") != "file.txt" || trimPatchPath("b/file.txt") != "file.txt" {
+		t.Fatal("trimPatchPath returned unexpected value")
 	}
 }
 

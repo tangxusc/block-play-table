@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,11 +21,38 @@ func TestDisabledServerReportsTerminalDisabled(t *testing.T) {
 	if err := server.Start(context.Background()); err != nil {
 		t.Fatalf("start disabled terminal server: %v", err)
 	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("close disabled terminal server: %v", err)
+	}
 	if server.Addr() != "" {
 		t.Fatalf("disabled terminal addr = %q, want empty", server.Addr())
 	}
+	if server.Port() != 0 {
+		t.Fatalf("disabled terminal port = %d, want 0", server.Port())
+	}
 	if got := server.Capabilities()["terminal_enabled"]; got != "false" {
 		t.Fatalf("terminal_enabled capability = %q, want false", got)
+	}
+}
+
+func TestEnabledServerReportsTerminalCapabilities(t *testing.T) {
+	if err := NewServer(Config{Enabled: true}).Start(context.Background()); err == nil {
+		t.Fatal("enabled terminal server should require work dir")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(Config{Enabled: true, WorkDir: t.TempDir(), Host: "127.0.0.1"})
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("start enabled terminal server: %v", err)
+	}
+	defer server.Close()
+	if server.Addr() == "" || server.Port() == 0 {
+		t.Fatalf("enabled terminal addr = %q port = %d", server.Addr(), server.Port())
+	}
+	caps := server.Capabilities()
+	if caps["terminal_enabled"] != "true" || caps["terminal_host"] != "127.0.0.1" || caps["terminal_port"] != strconv.Itoa(server.Port()) {
+		t.Fatalf("terminal capabilities = %+v", caps)
 	}
 }
 
@@ -77,6 +105,16 @@ func TestTerminalCheckReportsMissingCwdBeforeWebSocketUpgrade(t *testing.T) {
 		t.Fatalf("valid cwd status = %d, want 200", res.StatusCode)
 	}
 
+	postURL := url.URL{Scheme: "http", Host: server.Addr(), Path: "/terminal/check"}
+	res, err = http.Post(postURL.String(), "text/plain", strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("check post method: %v", err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("post check status = %d, want 405", res.StatusCode)
+	}
+
 	missingURL := url.URL{Scheme: "http", Host: server.Addr(), Path: "/terminal/check"}
 	q = missingURL.Query()
 	q.Set("cwd", filepath.Join(root, "missing"))
@@ -89,6 +127,20 @@ func TestTerminalCheckReportsMissingCwdBeforeWebSocketUpgrade(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "does not exist") {
 		t.Fatalf("missing cwd response = %d %q, want 400 does not exist", res.StatusCode, body)
+	}
+
+	missingWSURL := url.URL{Scheme: "http", Host: server.Addr(), Path: "/terminal/ws"}
+	q = missingWSURL.Query()
+	q.Set("cwd", filepath.Join(root, "missing"))
+	missingWSURL.RawQuery = q.Encode()
+	res, err = http.Get(missingWSURL.String())
+	if err != nil {
+		t.Fatalf("terminal websocket missing cwd: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ = io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "does not exist") {
+		t.Fatalf("missing terminal cwd response = %d %q, want 400 does not exist", res.StatusCode, body)
 	}
 }
 
