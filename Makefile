@@ -1,6 +1,7 @@
 GO ?= go
 GO_TEST_ENV ?= GOTOOLCHAIN=local
-DOCKER_COMPOSE ?= docker compose
+DOCKER ?= docker
+DOCKER_COMPOSE ?= $(DOCKER) compose
 LOCAL_COMPOSE_FILE ?= docker-compose.team.yml
 LOCAL_COMPOSE_PROJECT ?= block-play-table-local
 POSTGRES_PASSWORD ?= password
@@ -41,12 +42,12 @@ build:
 	$(GO_TEST_ENV) $(GO) build ./manager/cmd/manager ./worker/cmd/worker
 
 flutter-test:
-	docker build -f ui/Dockerfile --target builder .
+	$(DOCKER) build -f ui/Dockerfile --target builder .
 
 docker-build:
-	docker build -f Dockerfile.manager -t block-play-table-manager .
-	docker build -f Dockerfile.worker -t block-play-table-worker .
-	docker build -f ui/Dockerfile -t block-play-table-ui .
+	$(DOCKER) build -f Dockerfile.manager -t block-play-table-manager .
+	$(DOCKER) build -f Dockerfile.worker -t block-play-table-worker .
+	$(DOCKER) build -f ui/Dockerfile -t block-play-table-ui .
 
 e2e:
 	$(GO_TEST_ENV) $(GO) test ./manager/e2e -count=1
