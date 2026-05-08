@@ -314,7 +314,8 @@ func registrationServer(t *testing.T) (string, <-chan protocol.Envelope, func())
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	registered := make(chan protocol.Envelope, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/worker/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Errorf("upgrade: %v", err)
@@ -332,8 +333,9 @@ func registrationServer(t *testing.T) (string, <-chan protocol.Envelope, func())
 				return
 			}
 		}
-	}))
-	return "ws" + strings.TrimPrefix(server.URL, "http"), registered, server.Close
+	})
+	server := httptest.NewServer(mux)
+	return "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/ws", registered, server.Close
 }
 
 func readEnvelope(t *testing.T, conn *websocket.Conn) protocol.Envelope {

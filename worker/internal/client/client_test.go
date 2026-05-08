@@ -136,7 +136,8 @@ func TestSendWorkerEventSerializesConcurrentWrites(t *testing.T) {
 func TestConnectAndServeSendsRegistration(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	registered := make(chan protocol.Envelope, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/worker/ws", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("token"); got != "secret" {
 			t.Errorf("token query = %q, want secret", got)
 		}
@@ -152,13 +153,14 @@ func TestConnectAndServeSendsRegistration(t *testing.T) {
 			return
 		}
 		registered <- envelope
-	}))
+	})
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := New(Config{
-		ManagerWSURL:    "ws" + strings.TrimPrefix(server.URL, "http"),
+		ManagerWSURL:    "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/ws",
 		WorkerID:        "worker-1",
 		WorkerToken:     "secret",
 		Name:            "W",
