@@ -155,6 +155,21 @@ npm install
 npm run e2e
 ```
 
+## GitHub Actions
+
+The repository defines two workflows:
+
+- `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs `make test`, `make coverage`, `make build`, `make flutter-test`, and `make docker-build`. It intentionally does not run Playwright, `make run-local`, or `make stop-local`.
+- `Real Agent Release Gate` runs on manual dispatch and `v*` tags. It requires a self-hosted Linux runner labeled `real-agent` with Go, Node.js, npm, bash, curl, python3, Codex CLI, and Claude CLI installed and authenticated. The workflow runs `npm run e2e:real-agents`.
+
+When `CI` passes on `main`, it publishes Docker images to GHCR:
+
+- `ghcr.io/<owner>/<repo>-manager`
+- `ghcr.io/<owner>/<repo>-worker`
+- `ghcr.io/<owner>/<repo>-ui`
+
+Main images are tagged as `latest`, `main`, and `sha-<short-sha>`. Version tags publish after the real Agent gate passes and use `vX.Y.Z`, `X.Y.Z`, `X.Y`, and `sha-<short-sha>` tags.
+
 ## Real Agent E2E
 
 Real Agent E2E is a release gate and must cover both Codex and Claude. The Worker expects:
