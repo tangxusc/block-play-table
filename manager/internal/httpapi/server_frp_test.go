@@ -10,10 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
-	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
@@ -38,22 +35,7 @@ func TestProxyRoutesByWorkerNameThroughFRPTunnel(t *testing.T) {
 	defer target.Close()
 	port := mustPort(t, target.URL)
 
-	wsURL := "ws" + strings.TrimPrefix(manager.URL, "http") + "/worker/frp?worker_id=worker-1&worker_name=Proxy%20Worker"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial frp: %v", err)
-	}
-	defer ws.Close()
-	session, err := yamux.Client(frp.NewWebSocketConn(ws), nil)
-	if err != nil {
-		t.Fatalf("yamux client: %v", err)
-	}
-	defer session.Close()
-	go func() {
-		if err := frp.ServeWorkerProxy(nil, session); err != nil && err != yamux.ErrSessionShutdown {
-			t.Errorf("worker proxy: %v", err)
-		}
-	}()
+	connectFRPTunnel(t, manager.URL, "worker-1", "Proxy Worker")
 
 	req, err := http.NewRequest(http.MethodPost, manager.URL+"/proxy/echo?x=1", strings.NewReader("hello"))
 	if err != nil {
@@ -108,22 +90,7 @@ func TestProxyWebRouteTargetsWorkerNetworkHostThroughFRPTunnel(t *testing.T) {
 	defer target.Close()
 	port := mustPort(t, target.URL)
 
-	wsURL := "ws" + strings.TrimPrefix(manager.URL, "http") + "/worker/frp?worker_id=worker-1&worker_name=Proxy%20Worker"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial frp: %v", err)
-	}
-	defer ws.Close()
-	session, err := yamux.Client(frp.NewWebSocketConn(ws), nil)
-	if err != nil {
-		t.Fatalf("yamux client: %v", err)
-	}
-	defer session.Close()
-	go func() {
-		if err := frp.ServeWorkerProxy(nil, session); err != nil && err != yamux.ErrSessionShutdown {
-			t.Errorf("worker proxy: %v", err)
-		}
-	}()
+	connectFRPTunnel(t, manager.URL, "worker-1", "Proxy Worker")
 
 	res, err := http.Get(manager.URL + "/proxy/web/Proxy%20Worker/localhost/" + strconv.Itoa(port) + "/dashboard?tab=preview")
 	if err != nil {

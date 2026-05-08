@@ -71,9 +71,9 @@ func TestTaskTerminalProxiesWebSocketToWorkerTerminal(t *testing.T) {
 	defer manager.Close()
 	connectFRPTunnel(t, manager.URL, "worker-terminal", "Terminal Worker")
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(manager.URL, "http")+"/terminal/tasks/"+task.ID+"/ws", nil)
+	conn, res, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(manager.URL, "http")+"/terminal/tasks/"+task.ID+"/ws", nil)
 	if err != nil {
-		t.Fatalf("dial task terminal: %v", err)
+		t.Fatalf("dial task terminal: %v (status=%v)", err, responseStatus(res))
 	}
 	defer conn.Close()
 	if err := conn.WriteJSON(map[string]any{"type": "input", "data": "echo hi\n"}); err != nil {
@@ -218,11 +218,35 @@ func connectFRPTunnel(t *testing.T, managerURL, workerID, workerName string) {
 		t.Fatalf("yamux client: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
+	waitForFRPTunnelReady(t, session)
 	go func() {
 		if err := frp.ServeWorkerProxy(nil, session); err != nil && err != yamux.ErrSessionShutdown {
 			t.Errorf("worker proxy: %v", err)
 		}
 	}()
+}
+
+func waitForFRPTunnelReady(t *testing.T, session *yamux.Session) {
+	t.Helper()
+	stream, err := session.OpenStream()
+	if err != nil {
+		t.Fatalf("open frp readiness stream: %v", err)
+	}
+	defer stream.Close()
+	if err := stream.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set frp readiness stream deadline: %v", err)
+	}
+	var buf [1]byte
+	n, err := stream.Read(buf[:])
+	if err == nil {
+		t.Fatalf("frp readiness stream read %d bytes, want close", n)
+	}
+	if timeout, ok := err.(interface{ Timeout() bool }); ok && timeout.Timeout() {
+		t.Fatalf("timed out waiting for frp tunnel readiness")
+	}
+	if session.IsClosed() {
+		t.Fatalf("frp session closed before readiness: %v", err)
+	}
 }
 
 func responseStatus(res *http.Response) int {
