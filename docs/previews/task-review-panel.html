@@ -195,6 +195,10 @@
         </div>
         <div class="actions">
           <button class="primary">AI Review</button>
+          <button>Fetch</button>
+          <button>Pull/Rebase</button>
+          <button>Commit staged</button>
+          <button class="primary">Publish</button>
           <button>Handle feedback</button>
         </div>
       </div>
@@ -227,9 +231,11 @@
           <div class="toolbar">
             <div><strong>worker/internal/review/server.go</strong> <span class="muted">+42 -6</span></div>
             <div class="actions">
+              <button>Merge base</button>
               <button>Stage file</button>
               <button>Unstage file</button>
               <button class="danger">Discard file</button>
+              <button>Push branch</button>
             </div>
           </div>
           <div class="diff">
@@ -267,6 +273,12 @@
             <strong>Latest backup</strong>
             <div class="muted">backup_1770000123456</div>
             <button>Restore backup</button>
+          </div>
+          <div class="backup">
+            <strong>Publish status</strong>
+            <div class="muted">Fast-forward to main after staged commit</div>
+            <button class="primary">Publish fast-forward</button>
+            <button>Publish merge commit</button>
           </div>
         </section>
       </div>

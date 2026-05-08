@@ -151,6 +151,21 @@ enum TaskGitChangeAction {
   RESTORE
 }
 
+enum TaskGitCommand {
+  FETCH
+  PULL
+  REBASE
+  MERGE_BASE
+  COMMIT
+  PUSH_BRANCH
+  PUBLISH
+}
+
+enum TaskGitPublishStrategy {
+  FAST_FORWARD
+  MERGE_COMMIT
+}
+
 enum TaskReviewRunStatus {
   QUEUED
   RUNNING
@@ -333,6 +348,15 @@ type TaskGitBackup {
 type TaskGitChangeResult {
   ok: Boolean!
   backup: TaskGitBackup
+  diff: TaskGitDiff
+}
+
+type TaskGitCommandResult {
+  ok: Boolean!
+  command: TaskGitCommand!
+  output: String!
+  headRef: String
+  baseRef: String
   diff: TaskGitDiff
 }
 
@@ -583,6 +607,15 @@ input TaskGitChangeInput {
   backupId: ID
 }
 
+input TaskGitCommandInput {
+  taskId: ID!
+  command: TaskGitCommand!
+  message: String
+  remote: String
+  branch: String
+  publishStrategy: TaskGitPublishStrategy
+}
+
 input ContinueTaskWithReviewFeedbackInput {
   taskId: ID!
   findingIds: [ID!]
@@ -715,6 +748,7 @@ type Mutation {
   unstageTaskGitChanges(input: TaskGitChangeInput!): TaskGitChangeResult!
   discardTaskGitChanges(input: TaskGitChangeInput!): TaskGitChangeResult!
   restoreTaskGitBackup(input: TaskGitChangeInput!): TaskGitChangeResult!
+  runTaskGitCommand(input: TaskGitCommandInput!): TaskGitCommandResult!
   resolveTaskReviewFinding(id: ID!): TaskReviewFinding!
   dismissTaskReviewFinding(id: ID!): TaskReviewFinding!
   continueTaskWithReviewFeedback(input: ContinueTaskWithReviewFeedbackInput!): Task!

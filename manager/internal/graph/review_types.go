@@ -39,6 +39,23 @@ type TaskGitChangeResponse struct {
 	Diff   *TaskGitDiffResponse  `json:"diff,omitempty"`
 }
 
+type TaskGitCommandRequest struct {
+	Command         string `json:"command"`
+	Message         string `json:"message,omitempty"`
+	Remote          string `json:"remote,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	PublishStrategy string `json:"publishStrategy,omitempty"`
+}
+
+type TaskGitCommandResponse struct {
+	OK      bool                 `json:"ok"`
+	Command string               `json:"command"`
+	Output  string               `json:"output,omitempty"`
+	HeadRef string               `json:"headRef,omitempty"`
+	BaseRef string               `json:"baseRef,omitempty"`
+	Diff    *TaskGitDiffResponse `json:"diff,omitempty"`
+}
+
 type TaskReviewRunResponse struct {
 	Run      domain.TaskReviewRun       `json:"run"`
 	Findings []domain.TaskReviewFinding `json:"findings"`

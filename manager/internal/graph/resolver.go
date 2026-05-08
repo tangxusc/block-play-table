@@ -355,6 +355,20 @@ func toModelTaskGitChangeResult(result *TaskGitChangeResponse) *model.TaskGitCha
 	}
 }
 
+func toModelTaskGitCommandResult(result *TaskGitCommandResponse) *model.TaskGitCommandResult {
+	if result == nil {
+		return nil
+	}
+	return &model.TaskGitCommandResult{
+		Ok:      result.OK,
+		Command: model.TaskGitCommand(result.Command),
+		Output:  result.Output,
+		HeadRef: optionalString(result.HeadRef),
+		BaseRef: optionalString(result.BaseRef),
+		Diff:    toModelTaskGitDiff(result.Diff),
+	}
+}
+
 func toModelTaskReviewRun(run domain.TaskReviewRun, findings []domain.TaskReviewFinding) *model.TaskReviewRun {
 	var agentType *model.AgentType
 	if run.AgentType != "" {

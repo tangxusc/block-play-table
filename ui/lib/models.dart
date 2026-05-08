@@ -406,7 +406,8 @@ class TaskGitDiffData {
         baseRef: json['baseRef'] as String?,
         headRef: json['headRef'] as String?,
         files: (json['files'] as List<dynamic>? ?? [])
-            .map((item) => TaskGitDiffFileData.fromJson(item as Map<String, dynamic>))
+            .map((item) =>
+                TaskGitDiffFileData.fromJson(item as Map<String, dynamic>))
             .toList(),
         truncated: json['truncated'] as bool? ?? false,
         generatedAt: json['generatedAt'] as String? ?? '',
@@ -481,7 +482,8 @@ class TaskReviewRunData {
         rawResult: json['rawResult'] as String? ?? '',
         error: json['error'] as String? ?? '',
         findings: (json['findings'] as List<dynamic>? ?? [])
-            .map((item) => TaskReviewFindingData.fromJson(item as Map<String, dynamic>))
+            .map((item) =>
+                TaskReviewFindingData.fromJson(item as Map<String, dynamic>))
             .toList(),
         createdAt: json['createdAt'] as String? ?? '',
         updatedAt: json['updatedAt'] as String? ?? '',
@@ -603,6 +605,36 @@ class TaskGitBackupData {
   final List<String> paths;
   final String patchPath;
   final String createdAt;
+}
+
+class TaskGitCommandResultData {
+  const TaskGitCommandResultData({
+    required this.ok,
+    required this.command,
+    this.output = '',
+    this.headRef,
+    this.baseRef,
+    this.diff,
+  });
+
+  factory TaskGitCommandResultData.fromJson(Map<String, dynamic> json) =>
+      TaskGitCommandResultData(
+        ok: json['ok'] as bool? ?? false,
+        command: json['command'] as String? ?? '',
+        output: json['output'] as String? ?? '',
+        headRef: json['headRef'] as String?,
+        baseRef: json['baseRef'] as String?,
+        diff: json['diff'] is Map<String, dynamic>
+            ? TaskGitDiffData.fromJson(json['diff'] as Map<String, dynamic>)
+            : null,
+      );
+
+  final bool ok;
+  final String command;
+  final String output;
+  final String? headRef;
+  final String? baseRef;
+  final TaskGitDiffData? diff;
 }
 
 class TaskLogItem {
@@ -814,7 +846,8 @@ class WorkerItem {
             json['projectBindingMode'] as String? ?? 'ALL_PROJECTS',
         boundProjectIds: stringList(json['boundProjectIds']),
         currentTaskIds: stringList(json['currentTaskIds']),
-        capabilities: _keyValuesToMap(json['capabilities'] as List<dynamic>? ?? []),
+        capabilities:
+            _keyValuesToMap(json['capabilities'] as List<dynamic>? ?? []),
         agentRuntimeEnv: (json['agentRuntimeEnv'] as List<dynamic>? ?? [])
             .map(
               (item) => WorkerAgentRuntimeEnvItem.fromJson(

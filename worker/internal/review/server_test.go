@@ -134,6 +134,122 @@ func TestServerStartsReviewRunWithStructuredFindings(t *testing.T) {
 	}
 }
 
+func TestServerGitCommandCommitPushAndFastForwardPublish(t *testing.T) {
+	root := t.TempDir()
+	remote, repo := initRemoteReviewWorktree(t, root, "task-1")
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\nreview change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "tracked.txt")
+
+	commit := requestGitCommand(t, server, "task-1", GitCommandRequest{
+		WorktreePath: repo,
+		Command:      GitCommandCommit,
+		Message:      "review commit",
+	})
+	if !commit.OK || commit.Command != GitCommandCommit || commit.HeadRef == "" || !strings.Contains(gitOutputTest(t, repo, "log", "-1", "--pretty=%s"), "review commit") {
+		t.Fatalf("commit response = %+v", commit)
+	}
+	if status := gitOutputTest(t, repo, "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("status after commit = %q, want clean", status)
+	}
+
+	push := requestGitCommand(t, server, "task-1", GitCommandRequest{
+		WorktreePath: repo,
+		Command:      GitCommandPushBranch,
+	})
+	if !push.OK || !strings.Contains(push.Output, "task/task-1") {
+		t.Fatalf("push branch response = %+v", push)
+	}
+
+	publish := requestGitCommand(t, server, "task-1", GitCommandRequest{
+		WorktreePath:    repo,
+		Command:         GitCommandPublish,
+		PublishStrategy: GitPublishFastForward,
+	})
+	if !publish.OK || publish.BaseRef == "" || publish.HeadRef == "" {
+		t.Fatalf("publish response = %+v", publish)
+	}
+	if got := gitOutputTest(t, remote, "log", "-1", "--pretty=%s", "main"); got != "review commit" {
+		t.Fatalf("remote main subject = %q, want review commit", got)
+	}
+}
+
+func TestServerGitCommandRebaseMergeAndMergeCommitPublish(t *testing.T) {
+	root := t.TempDir()
+	remote, repo := initRemoteReviewWorktree(t, root, "task-1")
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	advanceRemoteMain(t, root, remote, "base.txt", "base side\n", "base side")
+	fetch := requestGitCommand(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandFetch})
+	if !fetch.OK || fetch.HeadRef == "" {
+		t.Fatalf("fetch response = %+v", fetch)
+	}
+	rebase := requestGitCommand(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandRebase})
+	if !rebase.OK || !strings.Contains(gitOutputTest(t, repo, "log", "--pretty=%s", "-1"), "base") {
+		t.Fatalf("rebase response = %+v", rebase)
+	}
+
+	advanceRemoteMain(t, root, remote, "merge-base.txt", "merge base\n", "merge base side")
+	merge := requestGitCommand(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandMergeBase})
+	if !merge.OK || !strings.Contains(merge.Output, "merge") {
+		t.Fatalf("merge base response = %+v", merge)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "task.txt"), []byte("task side\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "task.txt")
+	requestGitCommand(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandCommit, Message: "task side"})
+	advanceRemoteMain(t, root, remote, "remote.txt", "remote side\n", "remote side")
+
+	failedPublish := requestGitCommandError(t, server, "task-1", GitCommandRequest{
+		WorktreePath:    repo,
+		Command:         GitCommandPublish,
+		PublishStrategy: GitPublishFastForward,
+	})
+	if !strings.Contains(failedPublish, "fast-forward") {
+		t.Fatalf("fast-forward publish error = %q, want fast-forward", failedPublish)
+	}
+
+	publish := requestGitCommand(t, server, "task-1", GitCommandRequest{
+		WorktreePath:    repo,
+		Command:         GitCommandPublish,
+		PublishStrategy: GitPublishMergeCommit,
+	})
+	if !publish.OK || !strings.Contains(gitOutputTest(t, remote, "show", "main:task.txt"), "task side") || !strings.Contains(gitOutputTest(t, remote, "show", "main:remote.txt"), "remote side") {
+		t.Fatalf("merge commit publish response = %+v", publish)
+	}
+}
+
+func TestServerGitCommandPullAndValidation(t *testing.T) {
+	root := t.TempDir()
+	_, repo := initRemoteReviewWorktree(t, root, "task-1")
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	pull := requestGitCommand(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandPull})
+	if !pull.OK || pull.HeadRef == "" {
+		t.Fatalf("pull response = %+v", pull)
+	}
+	if got := requestGitCommandError(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandFetch, Remote: "origin;rm"}); !strings.Contains(got, "invalid remote") {
+		t.Fatalf("invalid remote response = %q", got)
+	}
+	if got := requestGitCommandError(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandRebase, Branch: "../main"}); !strings.Contains(got, "invalid branch") {
+		t.Fatalf("invalid branch response = %q", got)
+	}
+	if got := requestGitCommandError(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandCommit, Message: "   "}); !strings.Contains(got, "commit message is required") {
+		t.Fatalf("empty commit message response = %q", got)
+	}
+	if got := requestGitCommandError(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandCommit, Message: "empty"}); !strings.Contains(got, "no staged changes") {
+		t.Fatalf("empty commit response = %q", got)
+	}
+}
+
 func TestServerLifecycleCapabilitiesAndHTTPNotFound(t *testing.T) {
 	disabled := NewServer(Config{})
 	if err := disabled.Start(context.Background()); err != nil {
@@ -351,6 +467,58 @@ func runGitTest(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func gitOutputTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func initRemoteReviewWorktree(t *testing.T, root, taskID string) (string, string) {
+	t.Helper()
+	remote := filepath.Join(root, "remote.git")
+	seed := filepath.Join(root, "seed")
+	repo := filepath.Join(root, "task-worktree")
+	runGitTest(t, root, "init", "--bare", remote)
+	if err := os.MkdirAll(seed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, seed, "init", "-b", "main")
+	runGitTest(t, seed, "config", "user.email", "bpt@example.test")
+	runGitTest(t, seed, "config", "user.name", "Block Play Table")
+	if err := os.WriteFile(filepath.Join(seed, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, seed, "add", ".")
+	runGitTest(t, seed, "commit", "-m", "base")
+	runGitTest(t, seed, "remote", "add", "origin", remote)
+	runGitTest(t, seed, "push", "origin", "main")
+	runGitTest(t, root, "clone", remote, repo)
+	runGitTest(t, repo, "config", "user.email", "bpt@example.test")
+	runGitTest(t, repo, "config", "user.name", "Block Play Table")
+	runGitTest(t, repo, "checkout", "-b", "task/"+taskID, "origin/main")
+	return remote, repo
+}
+
+func advanceRemoteMain(t *testing.T, root, remote, name, content, message string) {
+	t.Helper()
+	clone := filepath.Join(root, "advance-"+strings.ReplaceAll(name, "/", "-"))
+	runGitTest(t, root, "clone", remote, clone)
+	runGitTest(t, clone, "config", "user.email", "bpt@example.test")
+	runGitTest(t, clone, "config", "user.name", "Block Play Table")
+	runGitTest(t, clone, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(clone, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, clone, "add", name)
+	runGitTest(t, clone, "commit", "-m", message)
+	runGitTest(t, clone, "push", "origin", "main")
+}
+
 func requestDiff(t *testing.T, server *Server, taskID string, scope DiffScope, cwd string) DiffResponse {
 	return requestDiffWithStaged(t, server, taskID, scope, cwd, nil)
 }
@@ -396,4 +564,40 @@ func requestAction(t *testing.T, server *Server, taskID, action string, input Ac
 		t.Fatal(err)
 	}
 	return response
+}
+
+func requestGitCommand(t *testing.T, server *Server, taskID string, input GitCommandRequest) GitCommandResponse {
+	t.Helper()
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/review/tasks/"+taskID+"/git-command", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("git-command response = %d %q", rec.Code, rec.Body.String())
+	}
+	var response GitCommandResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func requestGitCommandError(t *testing.T, server *Server, taskID string, input GitCommandRequest) string {
+	t.Helper()
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/review/tasks/"+taskID+"/git-command", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("git-command response = %d %q, want error", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
 }

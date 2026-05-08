@@ -474,21 +474,19 @@ class ApiClient {
           ''',
         variables: {'taskId': taskId},
       );
-      reviewRuns =
-          (runsData['taskReviewRuns'] as List<dynamic>? ?? const [])
+      reviewRuns = (runsData['taskReviewRuns'] as List<dynamic>? ?? const [])
           .map(
             (item) => TaskReviewRunData.fromJson(item as Map<String, dynamic>),
           )
           .toList();
-      reviewComments =
-          (commentsData['taskReviewComments'] as List<dynamic>? ?? const [])
+      reviewComments = (commentsData['taskReviewComments'] as List<dynamic>? ??
+              const [])
           .map(
             (item) =>
                 TaskReviewCommentData.fromJson(item as Map<String, dynamic>),
           )
           .toList();
-      gitBackups =
-          (backupsData['taskGitBackups'] as List<dynamic>? ?? const [])
+      gitBackups = (backupsData['taskGitBackups'] as List<dynamic>? ?? const [])
           .map(
             (item) => TaskGitBackupData.fromJson(item as Map<String, dynamic>),
           )
@@ -841,8 +839,7 @@ class ApiClient {
       paths,
       patch: patch,
     );
-    final result =
-        (data['discardTaskGitChanges'] as Map<String, dynamic>?) ??
+    final result = (data['discardTaskGitChanges'] as Map<String, dynamic>?) ??
         <String, dynamic>{};
     final backup = result['backup'];
     if (backup is Map<String, dynamic>) {
@@ -861,6 +858,42 @@ class ApiClient {
           'input': {'taskId': taskId, 'backupId': backupId},
         },
       ).then((_) {});
+
+  Future<TaskGitCommandResultData> runTaskGitCommand({
+    required String taskId,
+    required String command,
+    String message = '',
+    String remote = '',
+    String branch = '',
+    String publishStrategy = '',
+  }) async {
+    final input = {
+      'taskId': taskId,
+      'command': command,
+      if (message.trim().isNotEmpty) 'message': message.trim(),
+      if (remote.trim().isNotEmpty) 'remote': remote.trim(),
+      if (branch.trim().isNotEmpty) 'branch': branch.trim(),
+      if (publishStrategy.trim().isNotEmpty)
+        'publishStrategy': publishStrategy.trim(),
+    };
+    final data = await graphQL(
+      r'''
+      mutation RunTaskGitCommand($input: TaskGitCommandInput!) {
+        runTaskGitCommand(input: $input) {
+          ok command output headRef baseRef
+          diff {
+            taskId scope baseRef headRef truncated generatedAt
+            files { path oldPath status staged additions deletions patch truncated }
+          }
+        }
+      }
+      ''',
+      variables: {'input': input},
+    );
+    return TaskGitCommandResultData.fromJson(
+      data['runTaskGitCommand'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
 
   Future<void> resolveTaskReviewFinding(String id) => graphQL(
         r'''

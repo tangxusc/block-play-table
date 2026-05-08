@@ -69,6 +69,26 @@ func (r *Resolver) gitChange(ctx context.Context, action string, input model.Tas
 	return toModelTaskGitChangeResult(&response), nil
 }
 
+func (r *Resolver) runTaskGitCommand(ctx context.Context, input model.TaskGitCommandInput) (*model.TaskGitCommandResult, error) {
+	if r.WorkerSender == nil {
+		return nil, fmt.Errorf("worker sender is not configured")
+	}
+	request := TaskGitCommandRequest{
+		Command: string(input.Command),
+		Message: valueOrEmpty(input.Message),
+		Remote:  valueOrEmpty(input.Remote),
+		Branch:  valueOrEmpty(input.Branch),
+	}
+	if input.PublishStrategy != nil {
+		request.PublishStrategy = string(*input.PublishStrategy)
+	}
+	var response TaskGitCommandResponse
+	if err := r.WorkerSender.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/git-command", request, &response); err != nil {
+		return nil, err
+	}
+	return toModelTaskGitCommandResult(&response), nil
+}
+
 func (r *Resolver) continueWithReviewFeedback(ctx context.Context, input model.ContinueTaskWithReviewFeedbackInput) (*model.Task, error) {
 	task, payload, err := r.Service.ContinueTaskWithReviewFeedback(ctx, app.ContinueTaskWithReviewFeedbackInput{
 		TaskID:     input.TaskID,

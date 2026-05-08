@@ -259,6 +259,11 @@ func (r *mutationResolver) RestoreTaskGitBackup(ctx context.Context, input model
 	return r.gitChange(ctx, "restore", input)
 }
 
+// RunTaskGitCommand is the resolver for the runTaskGitCommand field.
+func (r *mutationResolver) RunTaskGitCommand(ctx context.Context, input model.TaskGitCommandInput) (*model.TaskGitCommandResult, error) {
+	return r.runTaskGitCommand(ctx, input)
+}
+
 // ResolveTaskReviewFinding is the resolver for the resolveTaskReviewFinding field.
 func (r *mutationResolver) ResolveTaskReviewFinding(ctx context.Context, id string) (*model.TaskReviewFinding, error) {
 	finding, err := r.Service.UpdateTaskReviewFindingStatus(ctx, id, domain.TaskReviewFindingResolved)

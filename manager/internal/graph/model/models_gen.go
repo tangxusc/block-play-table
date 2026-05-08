@@ -342,6 +342,24 @@ type TaskGitChangeResult struct {
 	Diff   *TaskGitDiff   `json:"diff,omitempty"`
 }
 
+type TaskGitCommandInput struct {
+	TaskID          string                  `json:"taskId"`
+	Command         TaskGitCommand          `json:"command"`
+	Message         *string                 `json:"message,omitempty"`
+	Remote          *string                 `json:"remote,omitempty"`
+	Branch          *string                 `json:"branch,omitempty"`
+	PublishStrategy *TaskGitPublishStrategy `json:"publishStrategy,omitempty"`
+}
+
+type TaskGitCommandResult struct {
+	Ok      bool           `json:"ok"`
+	Command TaskGitCommand `json:"command"`
+	Output  string         `json:"output"`
+	HeadRef *string        `json:"headRef,omitempty"`
+	BaseRef *string        `json:"baseRef,omitempty"`
+	Diff    *TaskGitDiff   `json:"diff,omitempty"`
+}
+
 type TaskGitDiff struct {
 	TaskID      string             `json:"taskId"`
 	Scope       TaskGitDiffScope   `json:"scope"`
@@ -1223,6 +1241,71 @@ func (e TaskGitChangeAction) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type TaskGitCommand string
+
+const (
+	TaskGitCommandFetch      TaskGitCommand = "FETCH"
+	TaskGitCommandPull       TaskGitCommand = "PULL"
+	TaskGitCommandRebase     TaskGitCommand = "REBASE"
+	TaskGitCommandMergeBase  TaskGitCommand = "MERGE_BASE"
+	TaskGitCommandCommit     TaskGitCommand = "COMMIT"
+	TaskGitCommandPushBranch TaskGitCommand = "PUSH_BRANCH"
+	TaskGitCommandPublish    TaskGitCommand = "PUBLISH"
+)
+
+var AllTaskGitCommand = []TaskGitCommand{
+	TaskGitCommandFetch,
+	TaskGitCommandPull,
+	TaskGitCommandRebase,
+	TaskGitCommandMergeBase,
+	TaskGitCommandCommit,
+	TaskGitCommandPushBranch,
+	TaskGitCommandPublish,
+}
+
+func (e TaskGitCommand) IsValid() bool {
+	switch e {
+	case TaskGitCommandFetch, TaskGitCommandPull, TaskGitCommandRebase, TaskGitCommandMergeBase, TaskGitCommandCommit, TaskGitCommandPushBranch, TaskGitCommandPublish:
+		return true
+	}
+	return false
+}
+
+func (e TaskGitCommand) String() string {
+	return string(e)
+}
+
+func (e *TaskGitCommand) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskGitCommand(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskGitCommand", str)
+	}
+	return nil
+}
+
+func (e TaskGitCommand) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskGitCommand) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskGitCommand) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type TaskGitDiffScope string
 
 const (
@@ -1275,6 +1358,61 @@ func (e *TaskGitDiffScope) UnmarshalJSON(b []byte) error {
 }
 
 func (e TaskGitDiffScope) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskGitPublishStrategy string
+
+const (
+	TaskGitPublishStrategyFastForward TaskGitPublishStrategy = "FAST_FORWARD"
+	TaskGitPublishStrategyMergeCommit TaskGitPublishStrategy = "MERGE_COMMIT"
+)
+
+var AllTaskGitPublishStrategy = []TaskGitPublishStrategy{
+	TaskGitPublishStrategyFastForward,
+	TaskGitPublishStrategyMergeCommit,
+}
+
+func (e TaskGitPublishStrategy) IsValid() bool {
+	switch e {
+	case TaskGitPublishStrategyFastForward, TaskGitPublishStrategyMergeCommit:
+		return true
+	}
+	return false
+}
+
+func (e TaskGitPublishStrategy) String() string {
+	return string(e)
+}
+
+func (e *TaskGitPublishStrategy) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskGitPublishStrategy(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskGitPublishStrategy", str)
+	}
+	return nil
+}
+
+func (e TaskGitPublishStrategy) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskGitPublishStrategy) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskGitPublishStrategy) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

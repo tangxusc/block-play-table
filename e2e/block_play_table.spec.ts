@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import WebSocket from "ws";
 
 const managerGraphQL =
@@ -165,6 +168,103 @@ async function waitForTerminalWorker(request) {
     })
     .toBeTruthy();
   return selected!;
+}
+
+async function waitForReviewWorker(request) {
+  let selected: {
+    id: string;
+    name: string;
+    status: string;
+    supportedAgents: string[];
+    capabilities: Array<{ key: string; value: string }>;
+  } | null = null;
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Workers {
+          workers {
+            id name status supportedAgents capabilities { key value }
+          }
+        }`,
+      );
+      selected =
+        data.workers.find(
+          (worker: {
+            id: string;
+            name: string;
+            status: string;
+            supportedAgents: string[];
+            capabilities: Array<{ key: string; value: string }>;
+          }) => {
+            const capabilities = keyValuesToRecord(worker.capabilities);
+            return (
+              worker.status === "ONLINE" &&
+              worker.supportedAgents.includes("codex") &&
+              capabilities.review_enabled === "true" &&
+              Number(capabilities.review_port) > 0
+            );
+          },
+        ) || null;
+      return Boolean(selected);
+    })
+    .toBeTruthy();
+  return selected!;
+}
+
+function runGit(cwd: string, args: string[]) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function runWorkerGit(cwd: string, args: string[]) {
+  const workerContainer =
+    process.env.BPT_WORKER_CONTAINER || "block-play-table-local-worker-1";
+  return execFileSync("docker", [
+    "exec",
+    workerContainer,
+    "git",
+    "-C",
+    cwd,
+    ...args,
+  ], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function createReviewGitFixture(suffix: number) {
+  const workerDataHost = path.resolve(
+    process.env.BPT_WORKER_DATA_SOURCE ||
+      process.env.WORKER_DATA_SOURCE ||
+      "worker-data",
+  );
+  mkdirSync(workerDataHost, { recursive: true });
+  const fixtureName = `review-git-${suffix}`;
+  const fixtureHost = path.join(workerDataHost, fixtureName);
+  const remoteHost = path.join(fixtureHost, "remote.git");
+  const seedHost = path.join(fixtureHost, "seed");
+  mkdirSync(seedHost, { recursive: true });
+
+  runGit(fixtureHost, ["init", "--bare", remoteHost]);
+  runGit(seedHost, ["init", "-b", "main"]);
+  runGit(seedHost, ["config", "user.email", "bpt@example.test"]);
+  runGit(seedHost, ["config", "user.name", "Block Play Table"]);
+  writeFileSync(path.join(seedHost, "tracked.txt"), "base\n");
+  runGit(seedHost, ["add", "tracked.txt"]);
+  runGit(seedHost, ["commit", "-m", "base"]);
+  runGit(seedHost, ["remote", "add", "origin", remoteHost]);
+  runGit(seedHost, ["push", "origin", "main"]);
+
+  return {
+    remoteHost,
+    gitUrl: `file:///worker-data/${fixtureName}/remote.git`,
+    hostPathForWorkerPath: (workerPath: string) =>
+      workerPath.replace(/^\/worker-data/, workerDataHost),
+  };
 }
 
 async function runTerminalCommand(
@@ -1206,6 +1306,104 @@ test("task detail terminal runs commands in task worktree", async ({
       ),
     )
     .toBeTruthy();
+});
+
+test("task detail review git workflow commits and publishes staged changes", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openFlutterApp(page);
+
+  const suffix = Date.now();
+  const fixture = createReviewGitFixture(suffix);
+  const worker = await waitForReviewWorker(request);
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `Review Git Project ${suffix}`,
+          gitUrl: fixture.gitUrl,
+          defaultBranch: "main",
+          worktreeNamePrefix: `review-git-${suffix}`,
+        },
+      },
+    )
+  ).createProject;
+  const task = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title } }",
+      {
+        input: {
+          title: `Review Git Task ${suffix}`,
+          projectId: project.id,
+          workerId: worker.id,
+          agentType: "codex",
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask;
+
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId: task.id },
+  );
+
+  let worktreePath = "";
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query Task($id: ID!) { task(id: $id) { worktreePath } }",
+        { id: task.id },
+      );
+      worktreePath = data.task.worktreePath || "";
+      return worktreePath;
+    })
+    .not.toBe("");
+
+  const worktreeHost = fixture.hostPathForWorkerPath(worktreePath);
+  await expect
+    .poll(() => existsSync(path.join(worktreeHost, "tracked.txt")))
+    .toBeTruthy();
+  runWorkerGit(worktreePath, ["config", "user.email", "bpt@example.test"]);
+  runWorkerGit(worktreePath, ["config", "user.name", "Block Play Table"]);
+  writeFileSync(path.join(worktreeHost, "tracked.txt"), "base\npublished\n");
+  runWorkerGit(worktreePath, ["add", "tracked.txt"]);
+
+  await openFlutterApp(page);
+  await openTaskFromList(page, task.title);
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(page.getByRole("button", { name: /tracked\.txt/ })).toBeVisible({
+    timeout: 15000,
+  });
+  await page.getByRole("button", { name: "Commit staged" }).click();
+  await fillFlutterTextField(
+    page,
+    page.getByLabel("Commit message"),
+    "review git publish",
+  );
+  await page.getByRole("button", { name: "Commit", exact: true }).click();
+  await expect
+    .poll(() => runWorkerGit(worktreePath, ["log", "-1", "--pretty=%s"]))
+    .toBe("review git publish");
+
+  await page.getByRole("button", { name: "Publish" }).click();
+  await page.getByText("Publish fast-forward").click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect
+    .poll(() =>
+      runGit(fixture.remoteHost, ["log", "-1", "--pretty=%s", "main"]),
+    )
+    .toBe("review git publish");
+  expect(runGit(fixture.remoteHost, ["show", "main:tracked.txt"])).toContain(
+    "published",
+  );
 });
 
 test("task detail approves a live agent interaction and refreshes results", async ({

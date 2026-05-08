@@ -131,10 +131,48 @@ type ActionRequest struct {
 	BackupID     string   `json:"backupId,omitempty"`
 }
 
+type GitCommand string
+
+const (
+	GitCommandFetch      GitCommand = "FETCH"
+	GitCommandPull       GitCommand = "PULL"
+	GitCommandRebase     GitCommand = "REBASE"
+	GitCommandMergeBase  GitCommand = "MERGE_BASE"
+	GitCommandCommit     GitCommand = "COMMIT"
+	GitCommandPushBranch GitCommand = "PUSH_BRANCH"
+	GitCommandPublish    GitCommand = "PUBLISH"
+)
+
+type GitPublishStrategy string
+
+const (
+	GitPublishFastForward GitPublishStrategy = "FAST_FORWARD"
+	GitPublishMergeCommit GitPublishStrategy = "MERGE_COMMIT"
+)
+
+type GitCommandRequest struct {
+	WorktreePath    string             `json:"worktreePath,omitempty"`
+	BaseBranch      string             `json:"baseBranch,omitempty"`
+	Command         GitCommand         `json:"command"`
+	Message         string             `json:"message,omitempty"`
+	Remote          string             `json:"remote,omitempty"`
+	Branch          string             `json:"branch,omitempty"`
+	PublishStrategy GitPublishStrategy `json:"publishStrategy,omitempty"`
+}
+
 type ActionResponse struct {
 	OK     bool           `json:"ok"`
 	Backup *TaskGitBackup `json:"backup,omitempty"`
 	Diff   *DiffResponse  `json:"diff,omitempty"`
+}
+
+type GitCommandResponse struct {
+	OK      bool          `json:"ok"`
+	Command GitCommand    `json:"command"`
+	Output  string        `json:"output,omitempty"`
+	HeadRef string        `json:"headRef,omitempty"`
+	BaseRef string        `json:"baseRef,omitempty"`
+	Diff    *DiffResponse `json:"diff,omitempty"`
 }
 
 type ReviewRunRequest struct {
@@ -367,6 +405,8 @@ func (s *Server) handleTaskReview(w http.ResponseWriter, r *http.Request) {
 		s.handleRun(w, r, taskID)
 	case r.Method == http.MethodPost && (action == "stage" || action == "unstage" || action == "discard" || action == "restore"):
 		s.handleAction(w, r, taskID, action)
+	case r.Method == http.MethodPost && action == "git-command":
+		s.handleGitCommand(w, r, taskID)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -432,6 +472,27 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, taskID, ac
 		return
 	}
 	response.OK = true
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleGitCommand(w http.ResponseWriter, r *http.Request, taskID string) {
+	var input GitCommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cwd := firstNonEmpty(input.WorktreePath, r.URL.Query().Get("cwd"))
+	baseBranch := firstNonEmpty(input.BaseBranch, r.URL.Query().Get("baseBranch"))
+	task, err := s.resolveTask(taskID, cwd, baseBranch, r.URL.Query().Get("defaultBranch"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	response, err := s.runGitCommand(r.Context(), task, input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -751,6 +812,258 @@ func (s *Server) restore(ctx context.Context, task TaskContext, input ActionRequ
 		return nil
 	}
 	return applyPatch(ctx, task.WorktreePath, string(raw))
+}
+
+func (s *Server) runGitCommand(ctx context.Context, task TaskContext, input GitCommandRequest) (GitCommandResponse, error) {
+	remote, err := safeGitRemote(input.Remote)
+	if err != nil {
+		return GitCommandResponse{}, err
+	}
+	branch, err := safeGitBranch(firstNonEmpty(input.Branch, task.BaseBranch, task.DefaultBranch, "main"))
+	if err != nil {
+		return GitCommandResponse{}, err
+	}
+	response := GitCommandResponse{OK: true, Command: input.Command}
+	var output strings.Builder
+	appendOutput := func(label string, out string) {
+		out = strings.TrimSpace(out)
+		if out == "" {
+			return
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n")
+		}
+		output.WriteString("$ git ")
+		output.WriteString(label)
+		output.WriteByte('\n')
+		output.WriteString(out)
+	}
+	run := func(args ...string) error {
+		out, err := gitOutput(ctx, task.WorktreePath, nil, args...)
+		appendOutput(strings.Join(args, " "), out)
+		return err
+	}
+	fetch := func() error {
+		return run("fetch", "--prune", remote)
+	}
+	remoteRef := remote + "/" + branch
+
+	switch input.Command {
+	case GitCommandFetch:
+		if err := fetch(); err != nil {
+			return GitCommandResponse{}, err
+		}
+	case GitCommandPull, GitCommandRebase:
+		if err := fetch(); err != nil {
+			return GitCommandResponse{}, err
+		}
+		if err := run("rebase", remoteRef); err != nil {
+			return GitCommandResponse{}, err
+		}
+	case GitCommandMergeBase:
+		if err := fetch(); err != nil {
+			return GitCommandResponse{}, err
+		}
+		if err := run("merge", "--no-edit", remoteRef); err != nil {
+			return GitCommandResponse{}, err
+		}
+	case GitCommandCommit:
+		if strings.TrimSpace(input.Message) == "" {
+			return GitCommandResponse{}, fmt.Errorf("commit message is required")
+		}
+		hasChanges, err := hasStagedChanges(ctx, task.WorktreePath)
+		if err != nil {
+			return GitCommandResponse{}, err
+		}
+		if !hasChanges {
+			return GitCommandResponse{}, fmt.Errorf("no staged changes")
+		}
+		if err := run("commit", "-m", strings.TrimSpace(input.Message)); err != nil {
+			return GitCommandResponse{}, err
+		}
+	case GitCommandPushBranch:
+		current, err := currentBranch(ctx, task.WorktreePath)
+		if err != nil {
+			return GitCommandResponse{}, err
+		}
+		current, err = safeGitBranch(current)
+		if err != nil {
+			return GitCommandResponse{}, err
+		}
+		if err := run("push", remote, "HEAD:refs/heads/"+current); err != nil {
+			return GitCommandResponse{}, err
+		}
+	case GitCommandPublish:
+		if err := s.publishGitCommand(ctx, task, remote, branch, input.PublishStrategy, &output); err != nil {
+			return GitCommandResponse{}, err
+		}
+	default:
+		return GitCommandResponse{}, fmt.Errorf("unsupported git command %q", input.Command)
+	}
+
+	response.Output = strings.TrimSpace(output.String())
+	response.HeadRef, _ = gitRef(ctx, task.WorktreePath, "HEAD")
+	response.BaseRef, _ = gitRef(ctx, task.WorktreePath, remoteRef)
+	if diff, err := s.diff(ctx, task, ScopeUncommitted, nil); err == nil {
+		response.Diff = &diff
+	}
+	return response, nil
+}
+
+func (s *Server) publishGitCommand(ctx context.Context, task TaskContext, remote, branch string, strategy GitPublishStrategy, output *strings.Builder) error {
+	appendOutput := func(label string, out string) {
+		out = strings.TrimSpace(out)
+		if out == "" {
+			return
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n")
+		}
+		output.WriteString("$ git ")
+		output.WriteString(label)
+		output.WriteByte('\n')
+		output.WriteString(out)
+	}
+	run := func(dir string, args ...string) error {
+		out, err := gitOutput(ctx, dir, nil, args...)
+		appendOutput(strings.Join(args, " "), out)
+		return err
+	}
+	if strategy == "" {
+		strategy = GitPublishFastForward
+	}
+	if strategy != GitPublishFastForward && strategy != GitPublishMergeCommit {
+		return fmt.Errorf("unsupported publish strategy %q", strategy)
+	}
+	if status, err := gitOutput(ctx, task.WorktreePath, nil, "status", "--porcelain"); err != nil {
+		return err
+	} else if strings.TrimSpace(status) != "" {
+		return fmt.Errorf("publish requires clean worktree")
+	}
+	if err := run(task.WorktreePath, "fetch", "--prune", remote); err != nil {
+		return err
+	}
+	remoteRef := remote + "/" + branch
+	if _, err := gitRef(ctx, task.WorktreePath, remoteRef); err != nil {
+		return err
+	}
+	switch strategy {
+	case GitPublishFastForward:
+		if err := runGit(ctx, task.WorktreePath, nil, "merge-base", "--is-ancestor", remoteRef, "HEAD"); err != nil {
+			return fmt.Errorf("fast-forward publish requires %s to be an ancestor of HEAD", remoteRef)
+		}
+		return run(task.WorktreePath, "push", remote, "HEAD:refs/heads/"+branch)
+	case GitPublishMergeCommit:
+		return s.publishMergeCommit(ctx, task, remote, branch, remoteRef, output)
+	default:
+		return fmt.Errorf("unsupported publish strategy %q", strategy)
+	}
+}
+
+func (s *Server) publishMergeCommit(ctx context.Context, task TaskContext, remote, branch, remoteRef string, output *strings.Builder) error {
+	taskHead, err := gitRef(ctx, task.WorktreePath, "HEAD")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.workDir, ".review-publish", task.TaskID, fmt.Sprintf("%d", time.Now().UnixNano()))
+	tempBranch := fmt.Sprintf("bpt-publish-%d", time.Now().UnixNano())
+	appendOutput := func(label string, out string) {
+		out = strings.TrimSpace(out)
+		if out == "" {
+			return
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n")
+		}
+		output.WriteString("$ git ")
+		output.WriteString(label)
+		output.WriteByte('\n')
+		output.WriteString(out)
+	}
+	run := func(workDir string, args ...string) error {
+		out, err := gitOutput(ctx, workDir, nil, args...)
+		appendOutput(strings.Join(args, " "), out)
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := run(task.WorktreePath, "worktree", "add", "-B", tempBranch, dir, remoteRef); err != nil {
+		return err
+	}
+	defer func() {
+		_ = runGit(context.Background(), task.WorktreePath, nil, "worktree", "remove", "--force", dir)
+		_ = runGit(context.Background(), task.WorktreePath, nil, "branch", "-D", tempBranch)
+		_ = os.RemoveAll(dir)
+	}()
+	if err := run(dir, "merge", "--no-ff", "--no-edit", taskHead); err != nil {
+		return err
+	}
+	return run(dir, "push", remote, "HEAD:refs/heads/"+branch)
+}
+
+func safeGitRemote(remote string) (string, error) {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		remote = "origin"
+	}
+	if !safeGitName(remote) || strings.Contains(remote, "/") {
+		return "", fmt.Errorf("invalid remote %q", remote)
+	}
+	return remote, nil
+}
+
+func safeGitBranch(branch string) (string, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || !safeGitName(branch) || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") || strings.Contains(branch, "//") {
+		return "", fmt.Errorf("invalid branch %q", branch)
+	}
+	return branch, nil
+}
+
+func safeGitName(value string) bool {
+	if value == "" || strings.HasPrefix(value, "-") || strings.Contains(value, "..") || strings.Contains(value, "@{") {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-', r == '/':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func hasStagedChanges(ctx context.Context, dir string) (bool, error) {
+	_, err := gitOutputAllowExit(ctx, dir, nil, []int{0, 1}, "diff", "--cached", "--quiet")
+	if err != nil {
+		return false, err
+	}
+	return runGit(ctx, dir, nil, "diff", "--cached", "--quiet") != nil, nil
+}
+
+func currentBranch(ctx context.Context, dir string) (string, error) {
+	out, err := gitOutput(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSpace(out)
+	if branch == "HEAD" || branch == "" {
+		return "", fmt.Errorf("current branch is required")
+	}
+	return branch, nil
+}
+
+func gitRef(ctx context.Context, dir, ref string) (string, error) {
+	out, err := gitOutput(ctx, dir, nil, "rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func (s *Server) createBackup(ctx context.Context, task TaskContext, paths []string, patch string) (*TaskGitBackup, error) {

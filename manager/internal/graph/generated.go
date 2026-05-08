@@ -144,6 +144,7 @@ type ComplexityRoot struct {
 		RespondTaskInteraction         func(childComplexity int, input model.RespondTaskInteractionInput) int
 		RestoreTaskGitBackup           func(childComplexity int, input model.TaskGitChangeInput) int
 		RetryTask                      func(childComplexity int, taskID *string, id *string) int
+		RunTaskGitCommand              func(childComplexity int, input model.TaskGitCommandInput) int
 		StageTaskGitChanges            func(childComplexity int, input model.TaskGitChangeInput) int
 		StartTask                      func(childComplexity int, input *model.StartTaskInput, taskID *string, id *string) int
 		StartTaskReview                func(childComplexity int, input model.StartTaskReviewInput) int
@@ -262,6 +263,15 @@ type ComplexityRoot struct {
 		Backup func(childComplexity int) int
 		Diff   func(childComplexity int) int
 		Ok     func(childComplexity int) int
+	}
+
+	TaskGitCommandResult struct {
+		BaseRef func(childComplexity int) int
+		Command func(childComplexity int) int
+		Diff    func(childComplexity int) int
+		HeadRef func(childComplexity int) int
+		Ok      func(childComplexity int) int
+		Output  func(childComplexity int) int
 	}
 
 	TaskGitDiff struct {
@@ -397,6 +407,7 @@ type MutationResolver interface {
 	UnstageTaskGitChanges(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error)
 	DiscardTaskGitChanges(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error)
 	RestoreTaskGitBackup(ctx context.Context, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error)
+	RunTaskGitCommand(ctx context.Context, input model.TaskGitCommandInput) (*model.TaskGitCommandResult, error)
 	ResolveTaskReviewFinding(ctx context.Context, id string) (*model.TaskReviewFinding, error)
 	DismissTaskReviewFinding(ctx context.Context, id string) (*model.TaskReviewFinding, error)
 	ContinueTaskWithReviewFeedback(ctx context.Context, input model.ContinueTaskWithReviewFeedbackInput) (*model.Task, error)
@@ -1007,6 +1018,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.RetryTask(childComplexity, args["taskId"].(*string), args["id"].(*string)), true
+	case "Mutation.runTaskGitCommand":
+		if e.ComplexityRoot.Mutation.RunTaskGitCommand == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_runTaskGitCommand_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.RunTaskGitCommand(childComplexity, args["input"].(model.TaskGitCommandInput)), true
 	case "Mutation.stageTaskGitChanges":
 		if e.ComplexityRoot.Mutation.StageTaskGitChanges == nil {
 			break
@@ -1727,6 +1749,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.TaskGitChangeResult.Ok(childComplexity), true
 
+	case "TaskGitCommandResult.baseRef":
+		if e.ComplexityRoot.TaskGitCommandResult.BaseRef == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.BaseRef(childComplexity), true
+	case "TaskGitCommandResult.command":
+		if e.ComplexityRoot.TaskGitCommandResult.Command == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.Command(childComplexity), true
+	case "TaskGitCommandResult.diff":
+		if e.ComplexityRoot.TaskGitCommandResult.Diff == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.Diff(childComplexity), true
+	case "TaskGitCommandResult.headRef":
+		if e.ComplexityRoot.TaskGitCommandResult.HeadRef == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.HeadRef(childComplexity), true
+	case "TaskGitCommandResult.ok":
+		if e.ComplexityRoot.TaskGitCommandResult.Ok == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.Ok(childComplexity), true
+	case "TaskGitCommandResult.output":
+		if e.ComplexityRoot.TaskGitCommandResult.Output == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitCommandResult.Output(childComplexity), true
+
 	case "TaskGitDiff.baseRef":
 		if e.ComplexityRoot.TaskGitDiff.BaseRef == nil {
 			break
@@ -2278,6 +2337,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputStartTaskReviewInput,
 		ec.unmarshalInputTaskFilter,
 		ec.unmarshalInputTaskGitChangeInput,
+		ec.unmarshalInputTaskGitCommandInput,
 		ec.unmarshalInputTaskSortInput,
 		ec.unmarshalInputUpdateProjectInput,
 		ec.unmarshalInputUpdateTaskInput,
@@ -2655,6 +2715,17 @@ func (ec *executionContext) field_Mutation_retryTask_args(ctx context.Context, r
 		return nil, err
 	}
 	args["id"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_runTaskGitCommand_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNTaskGitCommandInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommandInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -6000,6 +6071,61 @@ func (ec *executionContext) fieldContext_Mutation_restoreTaskGitBackup(ctx conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_restoreTaskGitBackup_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_runTaskGitCommand(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_runTaskGitCommand,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().RunTaskGitCommand(ctx, fc.Args["input"].(model.TaskGitCommandInput))
+		},
+		nil,
+		ec.marshalNTaskGitCommandResult2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommandResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_runTaskGitCommand(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "ok":
+				return ec.fieldContext_TaskGitCommandResult_ok(ctx, field)
+			case "command":
+				return ec.fieldContext_TaskGitCommandResult_command(ctx, field)
+			case "output":
+				return ec.fieldContext_TaskGitCommandResult_output(ctx, field)
+			case "headRef":
+				return ec.fieldContext_TaskGitCommandResult_headRef(ctx, field)
+			case "baseRef":
+				return ec.fieldContext_TaskGitCommandResult_baseRef(ctx, field)
+			case "diff":
+				return ec.fieldContext_TaskGitCommandResult_diff(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TaskGitCommandResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_runTaskGitCommand_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -10281,6 +10407,196 @@ func (ec *executionContext) _TaskGitChangeResult_diff(ctx context.Context, field
 func (ec *executionContext) fieldContext_TaskGitChangeResult_diff(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "TaskGitChangeResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "taskId":
+				return ec.fieldContext_TaskGitDiff_taskId(ctx, field)
+			case "scope":
+				return ec.fieldContext_TaskGitDiff_scope(ctx, field)
+			case "baseRef":
+				return ec.fieldContext_TaskGitDiff_baseRef(ctx, field)
+			case "headRef":
+				return ec.fieldContext_TaskGitDiff_headRef(ctx, field)
+			case "files":
+				return ec.fieldContext_TaskGitDiff_files(ctx, field)
+			case "truncated":
+				return ec.fieldContext_TaskGitDiff_truncated(ctx, field)
+			case "generatedAt":
+				return ec.fieldContext_TaskGitDiff_generatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TaskGitDiff", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_ok(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_ok,
+		func(ctx context.Context) (any, error) {
+			return obj.Ok, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_ok(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_command(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_command,
+		func(ctx context.Context) (any, error) {
+			return obj.Command, nil
+		},
+		nil,
+		ec.marshalNTaskGitCommand2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommand,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_command(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type TaskGitCommand does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_output(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_output,
+		func(ctx context.Context) (any, error) {
+			return obj.Output, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_output(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_headRef(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_headRef,
+		func(ctx context.Context) (any, error) {
+			return obj.HeadRef, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_headRef(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_baseRef(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_baseRef,
+		func(ctx context.Context) (any, error) {
+			return obj.BaseRef, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_baseRef(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitCommandResult_diff(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitCommandResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitCommandResult_diff,
+		func(ctx context.Context) (any, error) {
+			return obj.Diff, nil
+		},
+		nil,
+		ec.marshalOTaskGitDiff2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitDiff,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitCommandResult_diff(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitCommandResult",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -15512,6 +15828,71 @@ func (ec *executionContext) unmarshalInputTaskGitChangeInput(ctx context.Context
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputTaskGitCommandInput(ctx context.Context, obj any) (model.TaskGitCommandInput, error) {
+	var it model.TaskGitCommandInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"taskId", "command", "message", "remote", "branch", "publishStrategy"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "taskId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("taskId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TaskID = data
+		case "command":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("command"))
+			data, err := ec.unmarshalNTaskGitCommand2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommand(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Command = data
+		case "message":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("message"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Message = data
+		case "remote":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("remote"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Remote = data
+		case "branch":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("branch"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Branch = data
+		case "publishStrategy":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("publishStrategy"))
+			data, err := ec.unmarshalOTaskGitPublishStrategy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitPublishStrategy(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PublishStrategy = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputTaskSortInput(ctx context.Context, obj any) (model.TaskSortInput, error) {
 	var it model.TaskSortInput
 	if obj == nil {
@@ -16687,6 +17068,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "restoreTaskGitBackup":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_restoreTaskGitBackup(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "runTaskGitCommand":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_runTaskGitCommand(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -17867,6 +18255,61 @@ func (ec *executionContext) _TaskGitChangeResult(ctx context.Context, sel ast.Se
 			out.Values[i] = ec._TaskGitChangeResult_backup(ctx, field, obj)
 		case "diff":
 			out.Values[i] = ec._TaskGitChangeResult_diff(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var taskGitCommandResultImplementors = []string{"TaskGitCommandResult"}
+
+func (ec *executionContext) _TaskGitCommandResult(ctx context.Context, sel ast.SelectionSet, obj *model.TaskGitCommandResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, taskGitCommandResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TaskGitCommandResult")
+		case "ok":
+			out.Values[i] = ec._TaskGitCommandResult_ok(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "command":
+			out.Values[i] = ec._TaskGitCommandResult_command(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "output":
+			out.Values[i] = ec._TaskGitCommandResult_output(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "headRef":
+			out.Values[i] = ec._TaskGitCommandResult_headRef(ctx, field, obj)
+		case "baseRef":
+			out.Values[i] = ec._TaskGitCommandResult_baseRef(ctx, field, obj)
+		case "diff":
+			out.Values[i] = ec._TaskGitCommandResult_diff(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -19577,6 +20020,35 @@ func (ec *executionContext) marshalNTaskGitChangeResult2ᚖgithubᚗcomᚋtangxu
 	return ec._TaskGitChangeResult(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalNTaskGitCommand2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommand(ctx context.Context, v any) (model.TaskGitCommand, error) {
+	var res model.TaskGitCommand
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNTaskGitCommand2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommand(ctx context.Context, sel ast.SelectionSet, v model.TaskGitCommand) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNTaskGitCommandInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommandInput(ctx context.Context, v any) (model.TaskGitCommandInput, error) {
+	res, err := ec.unmarshalInputTaskGitCommandInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNTaskGitCommandResult2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommandResult(ctx context.Context, sel ast.SelectionSet, v model.TaskGitCommandResult) graphql.Marshaler {
+	return ec._TaskGitCommandResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNTaskGitCommandResult2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitCommandResult(ctx context.Context, sel ast.SelectionSet, v *model.TaskGitCommandResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._TaskGitCommandResult(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNTaskGitDiff2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitDiff(ctx context.Context, sel ast.SelectionSet, v model.TaskGitDiff) graphql.Marshaler {
 	return ec._TaskGitDiff(ctx, sel, &v)
 }
@@ -20571,6 +21043,22 @@ func (ec *executionContext) marshalOTaskGitDiff2ᚖgithubᚗcomᚋtangxuscᚋblo
 		return graphql.Null
 	}
 	return ec._TaskGitDiff(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOTaskGitPublishStrategy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitPublishStrategy(ctx context.Context, v any) (*model.TaskGitPublishStrategy, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.TaskGitPublishStrategy)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTaskGitPublishStrategy2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitPublishStrategy(ctx context.Context, sel ast.SelectionSet, v *model.TaskGitPublishStrategy) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) unmarshalOTaskInteractionDecision2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteractionDecision(ctx context.Context, v any) (*model.TaskInteractionDecision, error) {

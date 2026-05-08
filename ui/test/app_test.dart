@@ -137,6 +137,31 @@ void main() {
     },
   );
 
+  test('runTaskGitCommand sends command input and parses result', () async {
+    final apiClient = GitCommandRecordingApiClient();
+
+    final result = await apiClient.runTaskGitCommand(
+      taskId: 'task-1',
+      command: 'PUBLISH',
+      message: 'publish task',
+      remote: 'origin',
+      branch: 'main',
+      publishStrategy: 'MERGE_COMMIT',
+    );
+
+    expect(apiClient.lastVariables?['input'], {
+      'taskId': 'task-1',
+      'command': 'PUBLISH',
+      'message': 'publish task',
+      'remote': 'origin',
+      'branch': 'main',
+      'publishStrategy': 'MERGE_COMMIT',
+    });
+    expect(result.command, 'PUBLISH');
+    expect(result.output, contains('published'));
+    expect(result.diff?.taskId, 'task-1');
+  });
+
   testWidgets(
     'renders workspace navigation without Tasks and opens task dialog',
     (tester) async {
@@ -441,6 +466,12 @@ void main() {
     expect(find.text('README.md'), findsWidgets);
     expect(find.text('Bug'), findsOneWidget);
     expect(find.text('Please tighten this.'), findsOneWidget);
+    expect(find.text('Fetch'), findsOneWidget);
+    expect(find.text('Pull/Rebase'), findsOneWidget);
+    expect(find.text('Merge base'), findsOneWidget);
+    expect(find.text('Commit staged'), findsOneWidget);
+    expect(find.text('Push branch'), findsOneWidget);
+    expect(find.text('Publish'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('review-action-ai-review')));
     await tester.pump();
@@ -458,6 +489,28 @@ void main() {
     expect(apiClient.continuedWithReviewTaskId, 'task-1');
     expect(apiClient.continuedWithReviewFindingIds, ['finding-1']);
     expect(apiClient.continuedWithReviewCommentIds, ['comment-1']);
+
+    await tester.tap(find.byKey(const ValueKey('review-action-commit')));
+    await tester.pumpAndSettle();
+    expect(find.text('Commit staged changes'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('review-commit-message')),
+      'review commit',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Commit'));
+    await tester.pumpAndSettle();
+    expect(apiClient.gitCommands.last['command'], 'COMMIT');
+    expect(apiClient.gitCommands.last['message'], 'review commit');
+
+    await tester.tap(find.byKey(const ValueKey('review-action-publish')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Publish fast-forward').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Publish to base'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Publish').last);
+    await tester.pumpAndSettle();
+    expect(apiClient.gitCommands.last['command'], 'PUBLISH');
+    expect(apiClient.gitCommands.last['publishStrategy'], 'FAST_FORWARD');
   });
 
   testWidgets('board paginates tasks and resets page when view changes', (
@@ -1530,6 +1583,7 @@ class FakeApiClient extends ApiClient {
   String? continuedWithReviewTaskId;
   List<String>? continuedWithReviewFindingIds;
   List<String>? continuedWithReviewCommentIds;
+  final List<Map<String, String>> gitCommands = [];
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
   String? deletedTaskId;
@@ -1796,6 +1850,32 @@ class FakeApiClient extends ApiClient {
   Future<void> restoreTaskGitBackup(String taskId, String backupId) async {}
 
   @override
+  Future<TaskGitCommandResultData> runTaskGitCommand({
+    required String taskId,
+    required String command,
+    String message = '',
+    String remote = '',
+    String branch = '',
+    String publishStrategy = '',
+  }) async {
+    gitCommands.add({
+      'taskId': taskId,
+      'command': command,
+      if (message.trim().isNotEmpty) 'message': message.trim(),
+      if (remote.trim().isNotEmpty) 'remote': remote.trim(),
+      if (branch.trim().isNotEmpty) 'branch': branch.trim(),
+      if (publishStrategy.trim().isNotEmpty)
+        'publishStrategy': publishStrategy.trim(),
+    });
+    return TaskGitCommandResultData(
+      ok: true,
+      command: command,
+      output: '$command completed',
+      diff: _reviewDiff,
+    );
+  }
+
+  @override
   Future<TaskReviewCommentData> addTaskReviewComment({
     required String taskId,
     required String path,
@@ -2034,6 +2114,36 @@ class RecordingApiClient extends ApiClient {
   }) async {
     lastVariables = variables;
     return <String, dynamic>{};
+  }
+}
+
+class GitCommandRecordingApiClient extends ApiClient {
+  GitCommandRecordingApiClient() : super('http://manager/graphql');
+
+  Map<String, dynamic>? lastVariables;
+
+  @override
+  Future<Map<String, dynamic>> graphQL(
+    String query, {
+    Map<String, dynamic>? variables,
+  }) async {
+    lastVariables = variables;
+    return {
+      'runTaskGitCommand': {
+        'ok': true,
+        'command': 'PUBLISH',
+        'output': 'published',
+        'headRef': 'abc123',
+        'baseRef': 'def456',
+        'diff': {
+          'taskId': 'task-1',
+          'scope': 'UNCOMMITTED',
+          'files': [],
+          'truncated': false,
+          'generatedAt': '2026-05-05T10:00:00Z',
+        },
+      },
+    };
   }
 }
 

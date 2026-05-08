@@ -121,6 +121,27 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 					"createdAt": time.Date(2026, 5, 5, 10, 0, 2, 0, time.UTC),
 				},
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/review/tasks/task-review/git-command":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["command"] != "COMMIT" || input["message"] != "review commit" {
+				t.Fatalf("git command input = %#v", input)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":      true,
+				"command": "COMMIT",
+				"output":  "[task/task-review abc123] review commit",
+				"headRef": "abc123",
+				"baseRef": "def456",
+				"diff": map[string]any{
+					"taskId":      "task-review",
+					"scope":       "UNCOMMITTED",
+					"generatedAt": time.Date(2026, 5, 5, 10, 0, 3, 0, time.UTC),
+					"files":       []map[string]any{},
+				},
+			})
 		case r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/stage") || strings.HasSuffix(r.URL.Path, "/unstage") || strings.HasSuffix(r.URL.Path, "/restore")):
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		default:
@@ -173,6 +194,16 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 	backup := discardResult["data"].(map[string]any)["discardTaskGitChanges"].(map[string]any)["backup"].(map[string]any)
 	if backup["id"] != "backup-worker" || backup["paths"].([]any)[0] != "README.md" {
 		t.Fatalf("discardTaskGitChanges backup = %#v", backup)
+	}
+
+	commandResult := postGraphQL(t, server.URL, `mutation GitCommand($taskId: ID!) {
+		runTaskGitCommand(input: { taskId: $taskId, command: COMMIT, message: "review commit" }) {
+			ok command output headRef baseRef diff { taskId scope files { path } }
+		}
+	}`, map[string]any{"taskId": task.ID})
+	command := commandResult["data"].(map[string]any)["runTaskGitCommand"].(map[string]any)
+	if command["command"] != "COMMIT" || command["headRef"] != "abc123" || command["baseRef"] != "def456" {
+		t.Fatalf("runTaskGitCommand = %#v", command)
 	}
 
 	lists := postGraphQL(t, server.URL, `query ReviewLists($taskId: ID!) {
