@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -247,6 +248,67 @@ func TestServerGitCommandPullAndValidation(t *testing.T) {
 	}
 	if got := requestGitCommandError(t, server, "task-1", GitCommandRequest{WorktreePath: repo, Command: GitCommandCommit, Message: "empty"}); !strings.Contains(got, "no staged changes") {
 		t.Fatalf("empty commit response = %q", got)
+	}
+}
+
+func TestServerGitStatusReportsTargetAndDirtyState(t *testing.T) {
+	root := t.TempDir()
+	_, repo := initRemoteReviewWorktree(t, root, "task-1")
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	if err := os.WriteFile(filepath.Join(repo, "task.txt"), []byte("task side\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "task.txt")
+	runGitTest(t, repo, "commit", "-m", "task side")
+	advanceRemoteMain(t, root, filepath.Join(root, "remote.git"), "remote.txt", "remote side\n", "remote side")
+	runGitTest(t, repo, "fetch", "origin")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\nstaged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "tracked.txt")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\nstaged\nunstaged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status := requestGitStatus(t, server, "task-1", repo, "", "")
+	if status.TaskID != "task-1" || status.Remote != "origin" || status.Branch != "main" {
+		t.Fatalf("status identity = %+v", status)
+	}
+	if status.CurrentBranch != "task/task-1" || status.HeadRef == "" || status.TargetRef == "" {
+		t.Fatalf("status refs = %+v", status)
+	}
+	if status.Ahead != 1 || status.Behind != 1 {
+		t.Fatalf("status ahead/behind = %d/%d, want 1/1", status.Ahead, status.Behind)
+	}
+	if !status.HasStagedChanges || !status.HasUnstagedChanges || !status.HasUntrackedFiles {
+		t.Fatalf("status dirty flags = %+v", status)
+	}
+	if status.GeneratedAt.IsZero() {
+		t.Fatalf("status generatedAt should be set: %+v", status)
+	}
+
+	missing := requestGitStatus(t, server, "task-1", repo, "origin", "missing-target")
+	if missing.TargetRef != "" || missing.Ahead != 0 || missing.Behind != 0 {
+		t.Fatalf("missing target status = %+v, want empty target and zero counts", missing)
+	}
+}
+
+func TestServerGitStatusRejectsInvalidRemoteAndBranch(t *testing.T) {
+	root := t.TempDir()
+	_, repo := initRemoteReviewWorktree(t, root, "task-1")
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main"})
+
+	if got := requestGitStatusError(t, server, "task-1", repo, "origin;rm", "main"); !strings.Contains(got, "invalid remote") {
+		t.Fatalf("invalid remote response = %q", got)
+	}
+	if got := requestGitStatusError(t, server, "task-1", repo, "origin", "../main"); !strings.Contains(got, "invalid branch") {
+		t.Fatalf("invalid branch response = %q", got)
 	}
 }
 
@@ -598,6 +660,46 @@ func requestGitCommandError(t *testing.T, server *Server, taskID string, input G
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Fatalf("git-command response = %d %q, want error", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+func requestGitStatus(t *testing.T, server *Server, taskID, cwd, remote, branch string) GitStatusResponse {
+	t.Helper()
+	path := "/review/tasks/" + taskID + "/git-status?cwd=" + url.QueryEscape(cwd)
+	if remote != "" {
+		path += "&remote=" + url.QueryEscape(remote)
+	}
+	if branch != "" {
+		path += "&branch=" + url.QueryEscape(branch)
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("git-status response = %d %q", rec.Code, rec.Body.String())
+	}
+	var response GitStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func requestGitStatusError(t *testing.T, server *Server, taskID, cwd, remote, branch string) string {
+	t.Helper()
+	path := "/review/tasks/" + taskID + "/git-status?cwd=" + url.QueryEscape(cwd)
+	if remote != "" {
+		path += "&remote=" + url.QueryEscape(remote)
+	}
+	if branch != "" {
+		path += "&branch=" + url.QueryEscape(branch)
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("git-status response = %d %q, want error", rec.Code, rec.Body.String())
 	}
 	return rec.Body.String()
 }

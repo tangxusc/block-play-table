@@ -261,6 +261,7 @@ function createReviewGitFixture(suffix: number) {
 
   return {
     remoteHost,
+    seedHost,
     gitUrl: `file:///worker-data/${fixtureName}/remote.git`,
     hostPathForWorkerPath: (workerPath: string) =>
       workerPath.replace(/^\/worker-data/, workerDataHost),
@@ -1379,9 +1380,12 @@ test("task detail review git workflow commits and publishes staged changes", asy
   await openFlutterApp(page);
   await openTaskFromList(page, task.title);
   await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.getByLabel("Remote").fill("origin");
+  await page.getByLabel("Target branch").fill("main");
   await expect(page.getByRole("button", { name: /tracked\.txt/ })).toBeVisible({
     timeout: 15000,
   });
+  await page.getByRole("button", { name: "Fetch" }).click();
   await page.getByRole("button", { name: "Commit staged" }).click();
   await fillFlutterTextField(
     page,
@@ -1393,8 +1397,7 @@ test("task detail review git workflow commits and publishes staged changes", asy
     .poll(() => runWorkerGit(worktreePath, ["log", "-1", "--pretty=%s"]))
     .toBe("review git publish");
 
-  await page.getByRole("button", { name: "Publish" }).click();
-  await page.getByText("Publish fast-forward").click();
+  await page.getByRole("button", { name: "Publish fast-forward" }).click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect
     .poll(() =>
@@ -1403,6 +1406,95 @@ test("task detail review git workflow commits and publishes staged changes", asy
     .toBe("review git publish");
   expect(runGit(fixture.remoteHost, ["show", "main:tracked.txt"])).toContain(
     "published",
+  );
+});
+
+test("task detail review git workflow fetches and rebases after remote main advances", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openFlutterApp(page);
+
+  const suffix = Date.now();
+  const fixture = createReviewGitFixture(suffix);
+  const worker = await waitForReviewWorker(request);
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `Review Git Sync Project ${suffix}`,
+          gitUrl: fixture.gitUrl,
+          defaultBranch: "main",
+          worktreeNamePrefix: `review-git-sync-${suffix}`,
+        },
+      },
+    )
+  ).createProject;
+  const task = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title } }",
+      {
+        input: {
+          title: `Review Git Sync Task ${suffix}`,
+          projectId: project.id,
+          workerId: worker.id,
+          agentType: "codex",
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask;
+
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId: task.id },
+  );
+
+  let worktreePath = "";
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query Task($id: ID!) { task(id: $id) { worktreePath } }",
+        { id: task.id },
+      );
+      worktreePath = data.task.worktreePath || "";
+      return worktreePath;
+    })
+    .not.toBe("");
+
+  const worktreeHost = fixture.hostPathForWorkerPath(worktreePath);
+  await expect
+    .poll(() => existsSync(path.join(worktreeHost, "tracked.txt")))
+    .toBeTruthy();
+
+  runGit(fixture.seedHost, ["config", "user.email", "bpt@example.test"]);
+  runGit(fixture.seedHost, ["config", "user.name", "Block Play Table"]);
+  writeFileSync(path.join(fixture.seedHost, "tracked.txt"), "base\nremote\n");
+  runGit(fixture.seedHost, ["add", "tracked.txt"]);
+  runGit(fixture.seedHost, ["commit", "-m", "remote main update"]);
+  runGit(fixture.seedHost, ["push", "origin", "main"]);
+
+  await openFlutterApp(page);
+  await openTaskFromList(page, task.title);
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.getByLabel("Remote").fill("origin");
+  await page.getByLabel("Target branch").fill("main");
+
+  await page.getByRole("button", { name: "Fetch" }).click();
+  await expect(page.getByText("behind 1")).toBeVisible({ timeout: 15000 });
+
+  await page.getByRole("button", { name: "Rebase onto target" }).click();
+  await expect
+    .poll(() => runWorkerGit(worktreePath, ["log", "-1", "--pretty=%s"]))
+    .toBe("remote main update");
+  expect(runWorkerGit(worktreePath, ["show", "HEAD:tracked.txt"])).toContain(
+    "remote",
   );
 });
 

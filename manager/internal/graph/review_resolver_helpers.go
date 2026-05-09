@@ -27,6 +27,28 @@ func (r *Resolver) taskGitDiff(ctx context.Context, taskID string, scope model.T
 	return toModelTaskGitDiff(&response), nil
 }
 
+func (r *Resolver) taskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error) {
+	if r.WorkerSender == nil {
+		return nil, fmt.Errorf("worker sender is not configured")
+	}
+	query := url.Values{}
+	if remote != nil {
+		query.Set("remote", *remote)
+	}
+	if branch != nil {
+		query.Set("branch", *branch)
+	}
+	path := "/git-status"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response TaskGitStatusResponse
+	if err := r.WorkerSender.ProxyTaskReview(ctx, taskID, http.MethodGet, path, nil, &response); err != nil {
+		return nil, err
+	}
+	return toModelTaskGitStatus(&response), nil
+}
+
 func (r *Resolver) startTaskReview(ctx context.Context, input model.StartTaskReviewInput) (*model.TaskReviewRun, error) {
 	if r.WorkerSender == nil {
 		return nil, fmt.Errorf("worker sender is not configured")

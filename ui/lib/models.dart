@@ -373,6 +373,7 @@ class TaskDetailData {
     this.reviewRuns = const [],
     this.reviewComments = const [],
     this.gitBackups = const [],
+    this.gitStatus,
     this.reviewError,
   });
 
@@ -385,6 +386,7 @@ class TaskDetailData {
   final List<TaskReviewRunData> reviewRuns;
   final List<TaskReviewCommentData> reviewComments;
   final List<TaskGitBackupData> gitBackups;
+  final TaskGitStatusData? gitStatus;
   final String? reviewError;
 }
 
@@ -635,6 +637,52 @@ class TaskGitCommandResultData {
   final String? headRef;
   final String? baseRef;
   final TaskGitDiffData? diff;
+}
+
+class TaskGitStatusData {
+  const TaskGitStatusData({
+    required this.taskId,
+    required this.remote,
+    required this.branch,
+    required this.currentBranch,
+    this.headRef,
+    this.targetRef,
+    this.ahead = 0,
+    this.behind = 0,
+    this.hasStagedChanges = false,
+    this.hasUnstagedChanges = false,
+    this.hasUntrackedFiles = false,
+    this.generatedAt = '',
+  });
+
+  factory TaskGitStatusData.fromJson(Map<String, dynamic> json) =>
+      TaskGitStatusData(
+        taskId: json['taskId'] as String? ?? '',
+        remote: json['remote'] as String? ?? 'origin',
+        branch: json['branch'] as String? ?? 'main',
+        currentBranch: json['currentBranch'] as String? ?? '',
+        headRef: json['headRef'] as String?,
+        targetRef: json['targetRef'] as String?,
+        ahead: json['ahead'] as int? ?? 0,
+        behind: json['behind'] as int? ?? 0,
+        hasStagedChanges: json['hasStagedChanges'] as bool? ?? false,
+        hasUnstagedChanges: json['hasUnstagedChanges'] as bool? ?? false,
+        hasUntrackedFiles: json['hasUntrackedFiles'] as bool? ?? false,
+        generatedAt: json['generatedAt'] as String? ?? '',
+      );
+
+  final String taskId;
+  final String remote;
+  final String branch;
+  final String currentBranch;
+  final String? headRef;
+  final String? targetRef;
+  final int ahead;
+  final int behind;
+  final bool hasStagedChanges;
+  final bool hasUnstagedChanges;
+  final bool hasUntrackedFiles;
+  final String generatedAt;
 }
 
 class TaskLogItem {

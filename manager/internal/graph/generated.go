@@ -195,6 +195,7 @@ type ComplexityRoot struct {
 		TaskEvents             func(childComplexity int, taskID string) int
 		TaskGitBackups         func(childComplexity int, taskID string) int
 		TaskGitDiff            func(childComplexity int, taskID string, scope model.TaskGitDiffScope, staged *bool) int
+		TaskGitStatus          func(childComplexity int, taskID string, remote *string, branch *string) int
 		TaskInteractions       func(childComplexity int, taskID string, status *model.TaskInteractionStatus) int
 		TaskList               func(childComplexity int, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) int
 		TaskLogs               func(childComplexity int, taskID string) int
@@ -293,6 +294,21 @@ type ComplexityRoot struct {
 		Staged    func(childComplexity int) int
 		Status    func(childComplexity int) int
 		Truncated func(childComplexity int) int
+	}
+
+	TaskGitStatus struct {
+		Ahead              func(childComplexity int) int
+		Behind             func(childComplexity int) int
+		Branch             func(childComplexity int) int
+		CurrentBranch      func(childComplexity int) int
+		GeneratedAt        func(childComplexity int) int
+		HasStagedChanges   func(childComplexity int) int
+		HasUnstagedChanges func(childComplexity int) int
+		HasUntrackedFiles  func(childComplexity int) int
+		HeadRef            func(childComplexity int) int
+		Remote             func(childComplexity int) int
+		TargetRef          func(childComplexity int) int
+		TaskID             func(childComplexity int) int
 	}
 
 	TaskInteraction struct {
@@ -443,6 +459,7 @@ type QueryResolver interface {
 	TaskConversations(ctx context.Context, taskID string) ([]*model.ConversationMessage, error)
 	TaskInteractions(ctx context.Context, taskID string, status *model.TaskInteractionStatus) ([]*model.TaskInteraction, error)
 	TaskGitDiff(ctx context.Context, taskID string, scope model.TaskGitDiffScope, staged *bool) (*model.TaskGitDiff, error)
+	TaskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error)
 	TaskReviewRuns(ctx context.Context, taskID string) ([]*model.TaskReviewRun, error)
 	TaskReviewFindings(ctx context.Context, taskID string, status *model.TaskReviewFindingStatus) ([]*model.TaskReviewFinding, error)
 	TaskReviewComments(ctx context.Context, taskID string) ([]*model.TaskReviewComment, error)
@@ -1367,6 +1384,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.TaskGitDiff(childComplexity, args["taskId"].(string), args["scope"].(model.TaskGitDiffScope), args["staged"].(*bool)), true
+	case "Query.taskGitStatus":
+		if e.ComplexityRoot.Query.TaskGitStatus == nil {
+			break
+		}
+
+		args, err := ec.field_Query_taskGitStatus_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.TaskGitStatus(childComplexity, args["taskId"].(string), args["remote"].(*string), args["branch"].(*string)), true
 	case "Query.taskInteractions":
 		if e.ComplexityRoot.Query.TaskInteractions == nil {
 			break
@@ -1877,6 +1905,79 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.TaskGitDiffFile.Truncated(childComplexity), true
+
+	case "TaskGitStatus.ahead":
+		if e.ComplexityRoot.TaskGitStatus.Ahead == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.Ahead(childComplexity), true
+	case "TaskGitStatus.behind":
+		if e.ComplexityRoot.TaskGitStatus.Behind == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.Behind(childComplexity), true
+	case "TaskGitStatus.branch":
+		if e.ComplexityRoot.TaskGitStatus.Branch == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.Branch(childComplexity), true
+	case "TaskGitStatus.currentBranch":
+		if e.ComplexityRoot.TaskGitStatus.CurrentBranch == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.CurrentBranch(childComplexity), true
+	case "TaskGitStatus.generatedAt":
+		if e.ComplexityRoot.TaskGitStatus.GeneratedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.GeneratedAt(childComplexity), true
+	case "TaskGitStatus.hasStagedChanges":
+		if e.ComplexityRoot.TaskGitStatus.HasStagedChanges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.HasStagedChanges(childComplexity), true
+	case "TaskGitStatus.hasUnstagedChanges":
+		if e.ComplexityRoot.TaskGitStatus.HasUnstagedChanges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.HasUnstagedChanges(childComplexity), true
+	case "TaskGitStatus.hasUntrackedFiles":
+		if e.ComplexityRoot.TaskGitStatus.HasUntrackedFiles == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.HasUntrackedFiles(childComplexity), true
+	case "TaskGitStatus.headRef":
+		if e.ComplexityRoot.TaskGitStatus.HeadRef == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.HeadRef(childComplexity), true
+	case "TaskGitStatus.remote":
+		if e.ComplexityRoot.TaskGitStatus.Remote == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.Remote(childComplexity), true
+	case "TaskGitStatus.targetRef":
+		if e.ComplexityRoot.TaskGitStatus.TargetRef == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.TargetRef(childComplexity), true
+	case "TaskGitStatus.taskId":
+		if e.ComplexityRoot.TaskGitStatus.TaskID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TaskGitStatus.TaskID(childComplexity), true
 
 	case "TaskInteraction.agentSessionId":
 		if e.ComplexityRoot.TaskInteraction.AgentSessionID == nil {
@@ -3052,6 +3153,27 @@ func (ec *executionContext) field_Query_taskGitDiff_args(ctx context.Context, ra
 		return nil, err
 	}
 	args["staged"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_taskGitStatus_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "taskId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["taskId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "remote", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["remote"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "branch", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["branch"] = arg2
 	return args, nil
 }
 
@@ -8695,6 +8817,73 @@ func (ec *executionContext) fieldContext_Query_taskGitDiff(ctx context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_taskGitStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_taskGitStatus,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().TaskGitStatus(ctx, fc.Args["taskId"].(string), fc.Args["remote"].(*string), fc.Args["branch"].(*string))
+		},
+		nil,
+		ec.marshalNTaskGitStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitStatus,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_taskGitStatus(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "taskId":
+				return ec.fieldContext_TaskGitStatus_taskId(ctx, field)
+			case "remote":
+				return ec.fieldContext_TaskGitStatus_remote(ctx, field)
+			case "branch":
+				return ec.fieldContext_TaskGitStatus_branch(ctx, field)
+			case "currentBranch":
+				return ec.fieldContext_TaskGitStatus_currentBranch(ctx, field)
+			case "headRef":
+				return ec.fieldContext_TaskGitStatus_headRef(ctx, field)
+			case "targetRef":
+				return ec.fieldContext_TaskGitStatus_targetRef(ctx, field)
+			case "ahead":
+				return ec.fieldContext_TaskGitStatus_ahead(ctx, field)
+			case "behind":
+				return ec.fieldContext_TaskGitStatus_behind(ctx, field)
+			case "hasStagedChanges":
+				return ec.fieldContext_TaskGitStatus_hasStagedChanges(ctx, field)
+			case "hasUnstagedChanges":
+				return ec.fieldContext_TaskGitStatus_hasUnstagedChanges(ctx, field)
+			case "hasUntrackedFiles":
+				return ec.fieldContext_TaskGitStatus_hasUntrackedFiles(ctx, field)
+			case "generatedAt":
+				return ec.fieldContext_TaskGitStatus_generatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TaskGitStatus", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_taskGitStatus_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_taskReviewRuns(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -11071,6 +11260,354 @@ func (ec *executionContext) fieldContext_TaskGitDiffFile_truncated(_ context.Con
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_taskId(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_taskId,
+		func(ctx context.Context) (any, error) {
+			return obj.TaskID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_taskId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_remote(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_remote,
+		func(ctx context.Context) (any, error) {
+			return obj.Remote, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_remote(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_branch(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_branch,
+		func(ctx context.Context) (any, error) {
+			return obj.Branch, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_branch(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_currentBranch(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_currentBranch,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrentBranch, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_currentBranch(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_headRef(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_headRef,
+		func(ctx context.Context) (any, error) {
+			return obj.HeadRef, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_headRef(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_targetRef(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_targetRef,
+		func(ctx context.Context) (any, error) {
+			return obj.TargetRef, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_targetRef(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_ahead(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_ahead,
+		func(ctx context.Context) (any, error) {
+			return obj.Ahead, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_ahead(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_behind(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_behind,
+		func(ctx context.Context) (any, error) {
+			return obj.Behind, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_behind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_hasStagedChanges(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_hasStagedChanges,
+		func(ctx context.Context) (any, error) {
+			return obj.HasStagedChanges, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_hasStagedChanges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_hasUnstagedChanges(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_hasUnstagedChanges,
+		func(ctx context.Context) (any, error) {
+			return obj.HasUnstagedChanges, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_hasUnstagedChanges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_hasUntrackedFiles(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_hasUntrackedFiles,
+		func(ctx context.Context) (any, error) {
+			return obj.HasUntrackedFiles, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_hasUntrackedFiles(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TaskGitStatus_generatedAt(ctx context.Context, field graphql.CollectedField, obj *model.TaskGitStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TaskGitStatus_generatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.GeneratedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TaskGitStatus_generatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TaskGitStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -17807,6 +18344,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "taskGitStatus":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_taskGitStatus(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "taskReviewRuns":
 			field := field
 
@@ -18441,6 +19000,94 @@ func (ec *executionContext) _TaskGitDiffFile(ctx context.Context, sel ast.Select
 			}
 		case "truncated":
 			out.Values[i] = ec._TaskGitDiffFile_truncated(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var taskGitStatusImplementors = []string{"TaskGitStatus"}
+
+func (ec *executionContext) _TaskGitStatus(ctx context.Context, sel ast.SelectionSet, obj *model.TaskGitStatus) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, taskGitStatusImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TaskGitStatus")
+		case "taskId":
+			out.Values[i] = ec._TaskGitStatus_taskId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "remote":
+			out.Values[i] = ec._TaskGitStatus_remote(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "branch":
+			out.Values[i] = ec._TaskGitStatus_branch(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "currentBranch":
+			out.Values[i] = ec._TaskGitStatus_currentBranch(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "headRef":
+			out.Values[i] = ec._TaskGitStatus_headRef(ctx, field, obj)
+		case "targetRef":
+			out.Values[i] = ec._TaskGitStatus_targetRef(ctx, field, obj)
+		case "ahead":
+			out.Values[i] = ec._TaskGitStatus_ahead(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "behind":
+			out.Values[i] = ec._TaskGitStatus_behind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasStagedChanges":
+			out.Values[i] = ec._TaskGitStatus_hasStagedChanges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasUnstagedChanges":
+			out.Values[i] = ec._TaskGitStatus_hasUnstagedChanges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasUntrackedFiles":
+			out.Values[i] = ec._TaskGitStatus_hasUntrackedFiles(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "generatedAt":
+			out.Values[i] = ec._TaskGitStatus_generatedAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -20097,6 +20744,20 @@ func (ec *executionContext) unmarshalNTaskGitDiffScope2githubᚗcomᚋtangxusc�
 
 func (ec *executionContext) marshalNTaskGitDiffScope2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitDiffScope(ctx context.Context, sel ast.SelectionSet, v model.TaskGitDiffScope) graphql.Marshaler {
 	return v
+}
+
+func (ec *executionContext) marshalNTaskGitStatus2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitStatus(ctx context.Context, sel ast.SelectionSet, v model.TaskGitStatus) graphql.Marshaler {
+	return ec._TaskGitStatus(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNTaskGitStatus2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskGitStatus(ctx context.Context, sel ast.SelectionSet, v *model.TaskGitStatus) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._TaskGitStatus(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNTaskInteraction2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐTaskInteraction(ctx context.Context, sel ast.SelectionSet, v model.TaskInteraction) graphql.Marshaler {

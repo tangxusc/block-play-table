@@ -360,6 +360,21 @@ type TaskGitCommandResult {
   diff: TaskGitDiff
 }
 
+type TaskGitStatus {
+  taskId: ID!
+  remote: String!
+  branch: String!
+  currentBranch: String!
+  headRef: String
+  targetRef: String
+  ahead: Int!
+  behind: Int!
+  hasStagedChanges: Boolean!
+  hasUnstagedChanges: Boolean!
+  hasUntrackedFiles: Boolean!
+  generatedAt: Time!
+}
+
 type ConversationMessage {
   id: ID!
   taskId: ID!
@@ -725,6 +740,7 @@ type Query {
   taskConversations(taskId: ID!): [ConversationMessage!]!
   taskInteractions(taskId: ID!, status: TaskInteractionStatus): [TaskInteraction!]!
   taskGitDiff(taskId: ID!, scope: TaskGitDiffScope!, staged: Boolean): TaskGitDiff!
+  taskGitStatus(taskId: ID!, remote: String, branch: String): TaskGitStatus!
   taskReviewRuns(taskId: ID!): [TaskReviewRun!]!
   taskReviewFindings(taskId: ID!, status: TaskReviewFindingStatus): [TaskReviewFinding!]!
   taskReviewComments(taskId: ID!): [TaskReviewComment!]!

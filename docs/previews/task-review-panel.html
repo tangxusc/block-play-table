@@ -102,6 +102,54 @@
       margin-bottom: 12px;
       flex-wrap: wrap;
     }
+    .git-workspace {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .git-row, .git-groups {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .git-row strong { font-size: 15px; }
+    .field {
+      display: grid;
+      gap: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .input {
+      min-width: 140px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 7px 9px;
+      color: var(--text);
+      background: #fff;
+      font-size: 14px;
+    }
+    .git-status {
+      margin: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .git-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding-right: 12px;
+      border-right: 1px solid var(--line);
+    }
+    .git-group:last-child { border-right: 0; }
+    .git-group strong {
+      min-width: 58px;
+      font-size: 13px;
+    }
     .diff {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -193,14 +241,6 @@
             <span class="pill">Logs</span>
           </div>
         </div>
-        <div class="actions">
-          <button class="primary">AI Review</button>
-          <button>Fetch</button>
-          <button>Pull/Rebase</button>
-          <button>Commit staged</button>
-          <button class="primary">Publish</button>
-          <button>Handle feedback</button>
-        </div>
       </div>
       <div class="body">
         <aside>
@@ -228,14 +268,45 @@
           </div>
         </aside>
         <main>
+          <div class="git-workspace">
+            <div class="git-row">
+              <strong>Git workspace</strong>
+              <label class="field">Remote <span class="input">origin</span></label>
+              <label class="field">Target branch <span class="input">main</span></label>
+              <button>Refresh status</button>
+              <button class="primary">AI Review</button>
+              <button>Handle feedback</button>
+            </div>
+            <div class="git-status">branch task/review-142 · HEAD 8ac41f2a · target 4c91de77 · ahead 2 · behind 1 · staged changes, unstaged changes</div>
+            <div class="git-groups">
+              <div class="git-group">
+                <strong>Sync</strong>
+                <button>Fetch</button>
+                <button>Rebase onto target</button>
+                <button>Merge target into task branch</button>
+              </div>
+              <div class="git-group">
+                <strong>Changes</strong>
+                <button>Stage</button>
+                <button>Unstage</button>
+                <button>Commit staged</button>
+                <button class="danger">Discard</button>
+                <button>Restore backup_1770000123456</button>
+              </div>
+              <div class="git-group">
+                <strong>Publish</strong>
+                <button>Push branch</button>
+                <button class="primary">Publish fast-forward</button>
+                <button>Publish merge commit</button>
+              </div>
+            </div>
+          </div>
           <div class="toolbar">
             <div><strong>worker/internal/review/server.go</strong> <span class="muted">+42 -6</span></div>
             <div class="actions">
-              <button>Merge base</button>
               <button>Stage file</button>
               <button>Unstage file</button>
               <button class="danger">Discard file</button>
-              <button>Push branch</button>
             </div>
           </div>
           <div class="diff">
@@ -273,12 +344,6 @@
             <strong>Latest backup</strong>
             <div class="muted">backup_1770000123456</div>
             <button>Restore backup</button>
-          </div>
-          <div class="backup">
-            <strong>Publish status</strong>
-            <div class="muted">Fast-forward to main after staged commit</div>
-            <button class="primary">Publish fast-forward</button>
-            <button>Publish merge commit</button>
           </div>
         </section>
       </div>

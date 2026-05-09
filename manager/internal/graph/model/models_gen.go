@@ -381,6 +381,21 @@ type TaskGitDiffFile struct {
 	Truncated bool    `json:"truncated"`
 }
 
+type TaskGitStatus struct {
+	TaskID             string    `json:"taskId"`
+	Remote             string    `json:"remote"`
+	Branch             string    `json:"branch"`
+	CurrentBranch      string    `json:"currentBranch"`
+	HeadRef            *string   `json:"headRef,omitempty"`
+	TargetRef          *string   `json:"targetRef,omitempty"`
+	Ahead              int       `json:"ahead"`
+	Behind             int       `json:"behind"`
+	HasStagedChanges   bool      `json:"hasStagedChanges"`
+	HasUnstagedChanges bool      `json:"hasUnstagedChanges"`
+	HasUntrackedFiles  bool      `json:"hasUntrackedFiles"`
+	GeneratedAt        time.Time `json:"generatedAt"`
+}
+
 type TaskInteraction struct {
 	ID               string                   `json:"id"`
 	TaskID           string                   `json:"taskId"`

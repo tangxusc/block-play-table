@@ -80,6 +80,24 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 					"patch":     "@@ -1 +1 @@\n-old\n+new\n",
 				}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/review/tasks/task-review/git-status":
+			if r.URL.Query().Get("remote") != "upstream" || r.URL.Query().Get("branch") != "develop" || r.URL.Query().Get("cwd") != worktree {
+				t.Fatalf("git-status query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"taskId":             "task-review",
+				"remote":             "upstream",
+				"branch":             "develop",
+				"currentBranch":      "task/task-review",
+				"headRef":            "abc123",
+				"targetRef":          "def456",
+				"ahead":              2,
+				"behind":             1,
+				"hasStagedChanges":   true,
+				"hasUnstagedChanges": false,
+				"hasUntrackedFiles":  true,
+				"generatedAt":        time.Date(2026, 5, 5, 10, 0, 4, 0, time.UTC),
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/review/tasks/task-review/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"run": map[string]any{
@@ -163,6 +181,16 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 	diffData := diff["data"].(map[string]any)["taskGitDiff"].(map[string]any)
 	if diffData["scope"] != "UNCOMMITTED" || diffData["files"].([]any)[0].(map[string]any)["path"] != "README.md" {
 		t.Fatalf("taskGitDiff = %#v", diffData)
+	}
+
+	statusResult := postGraphQL(t, server.URL, `query GitStatus($taskId: ID!) {
+		taskGitStatus(taskId: $taskId, remote: "upstream", branch: "develop") {
+			taskId remote branch currentBranch headRef targetRef ahead behind hasStagedChanges hasUnstagedChanges hasUntrackedFiles
+		}
+	}`, map[string]any{"taskId": task.ID})
+	status := statusResult["data"].(map[string]any)["taskGitStatus"].(map[string]any)
+	if status["remote"] != "upstream" || status["branch"] != "develop" || status["ahead"] != float64(2) || status["behind"] != float64(1) || status["hasUntrackedFiles"] != true {
+		t.Fatalf("taskGitStatus = %#v", status)
 	}
 
 	runResult := postGraphQL(t, server.URL, `mutation StartReview($taskId: ID!) {

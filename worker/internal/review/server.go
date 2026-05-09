@@ -160,6 +160,21 @@ type GitCommandRequest struct {
 	PublishStrategy GitPublishStrategy `json:"publishStrategy,omitempty"`
 }
 
+type GitStatusResponse struct {
+	TaskID             string    `json:"taskId"`
+	Remote             string    `json:"remote"`
+	Branch             string    `json:"branch"`
+	CurrentBranch      string    `json:"currentBranch"`
+	HeadRef            string    `json:"headRef,omitempty"`
+	TargetRef          string    `json:"targetRef,omitempty"`
+	Ahead              int       `json:"ahead"`
+	Behind             int       `json:"behind"`
+	HasStagedChanges   bool      `json:"hasStagedChanges"`
+	HasUnstagedChanges bool      `json:"hasUnstagedChanges"`
+	HasUntrackedFiles  bool      `json:"hasUntrackedFiles"`
+	GeneratedAt        time.Time `json:"generatedAt"`
+}
+
 type ActionResponse struct {
 	OK     bool           `json:"ok"`
 	Backup *TaskGitBackup `json:"backup,omitempty"`
@@ -401,6 +416,8 @@ func (s *Server) handleTaskReview(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && action == "diff":
 		s.handleDiff(w, r, taskID)
+	case r.Method == http.MethodGet && action == "git-status":
+		s.handleGitStatus(w, r, taskID)
 	case r.Method == http.MethodPost && action == "runs":
 		s.handleRun(w, r, taskID)
 	case r.Method == http.MethodPost && (action == "stage" || action == "unstage" || action == "discard" || action == "restore"):
@@ -441,6 +458,20 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request, taskID strin
 		return
 	}
 	writeJSON(w, http.StatusOK, diff)
+}
+
+func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request, taskID string) {
+	task, err := s.resolveTask(taskID, r.URL.Query().Get("cwd"), r.URL.Query().Get("baseBranch"), r.URL.Query().Get("defaultBranch"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	status, err := s.gitStatus(r.Context(), task, r.URL.Query().Get("remote"), r.URL.Query().Get("branch"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, taskID, action string) {
@@ -814,6 +845,61 @@ func (s *Server) restore(ctx context.Context, task TaskContext, input ActionRequ
 	return applyPatch(ctx, task.WorktreePath, string(raw))
 }
 
+func (s *Server) gitStatus(ctx context.Context, task TaskContext, remoteInput, branchInput string) (GitStatusResponse, error) {
+	remote, err := safeGitRemote(remoteInput)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	branch, err := safeGitBranch(firstNonEmpty(branchInput, task.BaseBranch, task.DefaultBranch, "main"))
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	current, err := gitOutput(ctx, task.WorktreePath, nil, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	head, err := gitRef(ctx, task.WorktreePath, "HEAD")
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	staged, err := hasStagedChanges(ctx, task.WorktreePath)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	unstaged, err := hasUnstagedChanges(ctx, task.WorktreePath)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	untracked, err := hasUntrackedFiles(ctx, task.WorktreePath)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	response := GitStatusResponse{
+		TaskID:             task.TaskID,
+		Remote:             remote,
+		Branch:             branch,
+		CurrentBranch:      strings.TrimSpace(current),
+		HeadRef:            head,
+		HasStagedChanges:   staged,
+		HasUnstagedChanges: unstaged,
+		HasUntrackedFiles:  untracked,
+		GeneratedAt:        time.Now().UTC(),
+	}
+	remoteRef := remote + "/" + branch
+	target, err := gitRef(ctx, task.WorktreePath, remoteRef)
+	if err != nil {
+		return response, nil
+	}
+	response.TargetRef = target
+	ahead, behind, err := aheadBehind(ctx, task.WorktreePath, "HEAD", remoteRef)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	response.Ahead = ahead
+	response.Behind = behind
+	return response, nil
+}
+
 func (s *Server) runGitCommand(ctx context.Context, task TaskContext, input GitCommandRequest) (GitCommandResponse, error) {
 	remote, err := safeGitRemote(input.Remote)
 	if err != nil {
@@ -1044,6 +1130,42 @@ func hasStagedChanges(ctx context.Context, dir string) (bool, error) {
 		return false, err
 	}
 	return runGit(ctx, dir, nil, "diff", "--cached", "--quiet") != nil, nil
+}
+
+func hasUnstagedChanges(ctx context.Context, dir string) (bool, error) {
+	_, err := gitOutputAllowExit(ctx, dir, nil, []int{0, 1}, "diff", "--quiet")
+	if err != nil {
+		return false, err
+	}
+	return runGit(ctx, dir, nil, "diff", "--quiet") != nil, nil
+}
+
+func hasUntrackedFiles(ctx context.Context, dir string) (bool, error) {
+	out, err := gitOutput(ctx, dir, nil, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+func aheadBehind(ctx context.Context, dir, left, right string) (int, int, error) {
+	out, err := gitOutput(ctx, dir, nil, "rev-list", "--left-right", "--count", left+"..."+right)
+	if err != nil {
+		return 0, 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("unexpected ahead/behind output %q", strings.TrimSpace(out))
+	}
+	ahead, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	behind, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return ahead, behind, nil
 }
 
 func currentBranch(ctx context.Context, dir string) (string, error) {

@@ -588,6 +588,11 @@ func (r *queryResolver) TaskGitDiff(ctx context.Context, taskID string, scope mo
 	return r.taskGitDiff(ctx, taskID, scope, staged)
 }
 
+// TaskGitStatus is the resolver for the taskGitStatus field.
+func (r *queryResolver) TaskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error) {
+	return r.taskGitStatus(ctx, taskID, remote, branch)
+}
+
 // TaskReviewRuns is the resolver for the taskReviewRuns field.
 func (r *queryResolver) TaskReviewRuns(ctx context.Context, taskID string) ([]*model.TaskReviewRun, error) {
 	runs, err := r.Service.Store().TaskReviewRuns(ctx, taskID)

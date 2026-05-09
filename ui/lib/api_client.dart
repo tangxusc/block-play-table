@@ -442,9 +442,11 @@ class ApiClient {
     var reviewRuns = <TaskReviewRunData>[];
     var reviewComments = <TaskReviewCommentData>[];
     var gitBackups = <TaskGitBackupData>[];
+    TaskGitStatusData? gitStatus;
     String? reviewError;
     try {
       reviewDiff = await fetchTaskGitDiff(taskId, 'UNCOMMITTED');
+      gitStatus = await fetchTaskGitStatus(taskId);
       final runsData = await graphQL(
         r'''
           query TaskReviewRuns($taskId: ID!) {
@@ -517,6 +519,7 @@ class ApiClient {
       reviewRuns: reviewRuns,
       reviewComments: reviewComments,
       gitBackups: gitBackups,
+      gitStatus: gitStatus,
       reviewError: reviewError,
     );
   }
@@ -539,6 +542,31 @@ class ApiClient {
     );
     return TaskGitDiffData.fromJson(
       data['taskGitDiff'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
+
+  Future<TaskGitStatusData> fetchTaskGitStatus(
+    String taskId, {
+    String remote = '',
+    String branch = '',
+  }) async {
+    final data = await graphQL(
+      r'''
+      query TaskGitStatus($taskId: ID!, $remote: String, $branch: String) {
+        taskGitStatus(taskId: $taskId, remote: $remote, branch: $branch) {
+          taskId remote branch currentBranch headRef targetRef ahead behind
+          hasStagedChanges hasUnstagedChanges hasUntrackedFiles generatedAt
+        }
+      }
+      ''',
+      variables: {
+        'taskId': taskId,
+        if (remote.trim().isNotEmpty) 'remote': remote.trim(),
+        if (branch.trim().isNotEmpty) 'branch': branch.trim(),
+      },
+    );
+    return TaskGitStatusData.fromJson(
+      data['taskGitStatus'] as Map<String, dynamic>? ?? <String, dynamic>{},
     );
   }
 

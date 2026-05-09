@@ -56,6 +56,21 @@ type TaskGitCommandResponse struct {
 	Diff    *TaskGitDiffResponse `json:"diff,omitempty"`
 }
 
+type TaskGitStatusResponse struct {
+	TaskID             string    `json:"taskId"`
+	Remote             string    `json:"remote"`
+	Branch             string    `json:"branch"`
+	CurrentBranch      string    `json:"currentBranch"`
+	HeadRef            string    `json:"headRef,omitempty"`
+	TargetRef          string    `json:"targetRef,omitempty"`
+	Ahead              int       `json:"ahead"`
+	Behind             int       `json:"behind"`
+	HasStagedChanges   bool      `json:"hasStagedChanges"`
+	HasUnstagedChanges bool      `json:"hasUnstagedChanges"`
+	HasUntrackedFiles  bool      `json:"hasUntrackedFiles"`
+	GeneratedAt        time.Time `json:"generatedAt"`
+}
+
 type TaskReviewRunResponse struct {
 	Run      domain.TaskReviewRun       `json:"run"`
 	Findings []domain.TaskReviewFinding `json:"findings"`

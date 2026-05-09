@@ -369,6 +369,26 @@ func toModelTaskGitCommandResult(result *TaskGitCommandResponse) *model.TaskGitC
 	}
 }
 
+func toModelTaskGitStatus(status *TaskGitStatusResponse) *model.TaskGitStatus {
+	if status == nil {
+		return nil
+	}
+	return &model.TaskGitStatus{
+		TaskID:             status.TaskID,
+		Remote:             status.Remote,
+		Branch:             status.Branch,
+		CurrentBranch:      status.CurrentBranch,
+		HeadRef:            optionalString(status.HeadRef),
+		TargetRef:          optionalString(status.TargetRef),
+		Ahead:              status.Ahead,
+		Behind:             status.Behind,
+		HasStagedChanges:   status.HasStagedChanges,
+		HasUnstagedChanges: status.HasUnstagedChanges,
+		HasUntrackedFiles:  status.HasUntrackedFiles,
+		GeneratedAt:        status.GeneratedAt,
+	}
+}
+
 func toModelTaskReviewRun(run domain.TaskReviewRun, findings []domain.TaskReviewFinding) *model.TaskReviewRun {
 	var agentType *model.AgentType
 	if run.AgentType != "" {

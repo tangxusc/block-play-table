@@ -1109,7 +1109,7 @@ class _AgentConfigFields extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2656,7 +2656,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
       ),
       content: SizedBox(
         width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
-        height: math.min(MediaQuery.sizeOf(context).height * 0.82, 820),
+        height: math.min(MediaQuery.sizeOf(context).height * 0.90, 900),
         child: FutureBuilder<TaskDetailData>(
           future: _future,
           builder: (context, snapshot) {
@@ -3352,11 +3352,14 @@ class _ReviewTabState extends State<_ReviewTab> {
   String _scope = 'UNCOMMITTED';
   String _changeSet = 'ALL';
   TaskGitDiffData? _diff;
+  TaskGitStatusData? _gitStatus;
   int _selectedFile = 0;
   bool _busy = false;
   String? _message;
   bool _messageIsError = false;
   final TextEditingController _commentController = TextEditingController();
+  late final TextEditingController _remoteController;
+  late final TextEditingController _branchController;
 
   List<TaskReviewFindingData> get _findings => widget.detail.reviewRuns
       .expand((run) => run.findings)
@@ -3376,6 +3379,13 @@ class _ReviewTabState extends State<_ReviewTab> {
   void initState() {
     super.initState();
     _diff = widget.detail.reviewDiff;
+    _gitStatus = widget.detail.gitStatus;
+    _remoteController = TextEditingController(
+      text: _gitStatus?.remote ?? 'origin',
+    );
+    _branchController = TextEditingController(
+      text: _gitStatus?.branch ?? _defaultBranch(),
+    );
     _message = widget.detail.reviewError;
     _messageIsError = (widget.detail.reviewError ?? '').isNotEmpty;
   }
@@ -3385,18 +3395,40 @@ class _ReviewTabState extends State<_ReviewTab> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.detail != widget.detail) {
       _diff = widget.detail.reviewDiff;
+      _gitStatus = widget.detail.gitStatus ?? _gitStatus;
       _message = widget.detail.reviewError;
       _messageIsError = (widget.detail.reviewError ?? '').isNotEmpty;
-      _scope = widget.detail.reviewDiff?.scope ?? 'UNCOMMITTED';
-      _changeSet = 'ALL';
-      _selectedFile = 0;
+      if (oldWidget.detail.task.id != widget.detail.task.id) {
+        _scope = widget.detail.reviewDiff?.scope ?? 'UNCOMMITTED';
+        _changeSet = 'ALL';
+        _selectedFile = 0;
+        _remoteController.text = _gitStatus?.remote ?? 'origin';
+        _branchController.text = _gitStatus?.branch ?? _defaultBranch();
+      }
     }
   }
 
   @override
   void dispose() {
     _commentController.dispose();
+    _remoteController.dispose();
+    _branchController.dispose();
     super.dispose();
+  }
+
+  String _defaultBranch() {
+    final base = widget.detail.task.baseBranch.trim();
+    return base.isEmpty ? 'main' : base;
+  }
+
+  String _targetRemote() {
+    final remote = _remoteController.text.trim();
+    return remote.isEmpty ? 'origin' : remote;
+  }
+
+  String _targetBranch() {
+    final branch = _branchController.text.trim();
+    return branch.isEmpty ? _defaultBranch() : branch;
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -3487,6 +3519,19 @@ class _ReviewTabState extends State<_ReviewTab> {
         () => widget.apiClient.startTaskReview(widget.detail.task.id!, _scope),
       );
 
+  Future<void> _syncGitStatus() async {
+    final status = await widget.apiClient.fetchTaskGitStatus(
+      widget.detail.task.id!,
+      remote: _targetRemote(),
+      branch: _targetBranch(),
+    );
+    if (mounted) {
+      setState(() => _gitStatus = status);
+    }
+  }
+
+  Future<void> _refreshGitStatus() => _run(_syncGitStatus);
+
   Future<void> _runGitCommand(
     String command, {
     String message = '',
@@ -3497,8 +3542,11 @@ class _ReviewTabState extends State<_ReviewTab> {
           taskId: widget.detail.task.id!,
           command: command,
           message: message,
+          remote: _targetRemote(),
+          branch: _targetBranch(),
           publishStrategy: publishStrategy,
         );
+        await _syncGitStatus();
         if (!mounted) {
           return;
         }
@@ -3516,7 +3564,7 @@ class _ReviewTabState extends State<_ReviewTab> {
 
   Future<void> _fetchGit() => _runGitCommand('FETCH');
 
-  Future<void> _pullRebase() => _runGitCommand('PULL');
+  Future<void> _rebaseTarget() => _runGitCommand('REBASE');
 
   Future<void> _mergeBase() => _runGitCommand('MERGE_BASE');
 
@@ -3561,12 +3609,14 @@ class _ReviewTabState extends State<_ReviewTab> {
   }
 
   Future<void> _publish(String strategy) async {
+    final remote = _targetRemote();
+    final branch = _targetBranch();
     final confirmed = await confirmAction(
       context,
       title: 'Publish to base',
       message: strategy == 'MERGE_COMMIT'
-          ? 'Publish the committed task branch to the base branch with a merge commit? The worker will reject dirty worktrees and push failures.'
-          : 'Publish the committed task branch to the base branch using a fast-forward push? The worker will reject dirty worktrees and non-fast-forward history.',
+          ? 'Publish the committed task branch to $remote/$branch with a merge commit? The worker will reject dirty worktrees and push failures.'
+          : 'Publish the committed task branch to $remote/$branch using a fast-forward push? The worker will reject dirty worktrees and non-fast-forward history.',
       confirmLabel: 'Publish',
     );
     if (!confirmed) {
@@ -3581,10 +3631,13 @@ class _ReviewTabState extends State<_ReviewTab> {
       return;
     }
     await _run(
-      () => widget.apiClient.stageTaskGitChanges(
-        widget.detail.task.id!,
-        [file.path],
-      ),
+      () async {
+        await widget.apiClient.stageTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+        );
+        await _syncGitStatus();
+      },
     );
   }
 
@@ -3594,11 +3647,14 @@ class _ReviewTabState extends State<_ReviewTab> {
       return;
     }
     await _run(
-      () => widget.apiClient.stageTaskGitChanges(
-        widget.detail.task.id!,
-        [file.path],
-        patch: patch,
-      ),
+      () async {
+        await widget.apiClient.stageTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+          patch: patch,
+        );
+        await _syncGitStatus();
+      },
     );
   }
 
@@ -3608,10 +3664,13 @@ class _ReviewTabState extends State<_ReviewTab> {
       return;
     }
     await _run(
-      () => widget.apiClient.unstageTaskGitChanges(
-        widget.detail.task.id!,
-        [file.path],
-      ),
+      () async {
+        await widget.apiClient.unstageTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+        );
+        await _syncGitStatus();
+      },
     );
   }
 
@@ -3621,11 +3680,14 @@ class _ReviewTabState extends State<_ReviewTab> {
       return;
     }
     await _run(
-      () => widget.apiClient.unstageTaskGitChanges(
-        widget.detail.task.id!,
-        [file.path],
-        patch: patch,
-      ),
+      () async {
+        await widget.apiClient.unstageTaskGitChanges(
+          widget.detail.task.id!,
+          [file.path],
+          patch: patch,
+        );
+        await _syncGitStatus();
+      },
     );
   }
 
@@ -3657,6 +3719,7 @@ class _ReviewTabState extends State<_ReviewTab> {
             _messageIsError = false;
           });
         }
+        await _syncGitStatus();
       },
     );
   }
@@ -3690,6 +3753,7 @@ class _ReviewTabState extends State<_ReviewTab> {
             _messageIsError = false;
           });
         }
+        await _syncGitStatus();
       },
     );
   }
@@ -3700,10 +3764,13 @@ class _ReviewTabState extends State<_ReviewTab> {
     }
     final backup = widget.detail.gitBackups.last;
     await _run(
-      () => widget.apiClient.restoreTaskGitBackup(
-        widget.detail.task.id!,
-        backup.id,
-      ),
+      () async {
+        await widget.apiClient.restoreTaskGitBackup(
+          widget.detail.task.id!,
+          backup.id,
+        );
+        await _syncGitStatus();
+      },
     );
   }
 
@@ -3753,6 +3820,31 @@ class _ReviewTabState extends State<_ReviewTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _GitWorkspacePanel(
+          remoteController: _remoteController,
+          branchController: _branchController,
+          status: _gitStatus,
+          busy: _busy,
+          hasFile: file != null,
+          hasBackups: backups.isNotEmpty,
+          latestBackupId: backups.isEmpty ? '' : backups.last.id,
+          canContinueWithFeedback: _canContinueWithFeedback(),
+          onFetch: _fetchGit,
+          onRefreshStatus: _refreshGitStatus,
+          onStartReview: _startReview,
+          onContinueWithFeedback: _continueWithFeedback,
+          onRebase: _rebaseTarget,
+          onMerge: _mergeBase,
+          onStage: _stage,
+          onUnstage: _unstage,
+          onCommit: _commitStaged,
+          onDiscard: _discard,
+          onRestore: _restoreLatest,
+          onPush: _pushBranch,
+          onPublishFastForward: () => _publish('FAST_FORWARD'),
+          onPublishMergeCommit: () => _publish('MERGE_COMMIT'),
+        ),
+        const SizedBox(height: 6),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -3779,99 +3871,6 @@ class _ReviewTabState extends State<_ReviewTab> {
                   ? null
                   : (values) => _loadChangeSet(values.first),
             ),
-            FilledButton.icon(
-              key: const ValueKey('review-action-ai-review'),
-              onPressed: _busy ? null : _startReview,
-              icon: const Icon(Icons.rate_review),
-              label: const Text('AI Review'),
-            ),
-            OutlinedButton.icon(
-              key: const ValueKey('review-action-fetch'),
-              onPressed: _busy ? null : _fetchGit,
-              icon: const Icon(Icons.sync),
-              label: const Text('Fetch'),
-            ),
-            OutlinedButton.icon(
-              key: const ValueKey('review-action-pull'),
-              onPressed: _busy ? null : _pullRebase,
-              icon: const Icon(Icons.vertical_align_bottom),
-              label: const Text('Pull/Rebase'),
-            ),
-            OutlinedButton.icon(
-              key: const ValueKey('review-action-merge-base'),
-              onPressed: _busy ? null : _mergeBase,
-              icon: const Icon(Icons.call_merge),
-              label: const Text('Merge base'),
-            ),
-            FilledButton.tonalIcon(
-              key: const ValueKey('review-action-commit'),
-              onPressed: _busy ? null : _commitStaged,
-              icon: const Icon(Icons.commit),
-              label: const Text('Commit staged'),
-            ),
-            OutlinedButton.icon(
-              key: const ValueKey('review-action-push-branch'),
-              onPressed: _busy ? null : _pushBranch,
-              icon: const Icon(Icons.upload),
-              label: const Text('Push branch'),
-            ),
-            MenuAnchor(
-              menuChildren: [
-                MenuItemButton(
-                  onPressed: _busy ? null : () => _publish('FAST_FORWARD'),
-                  child: const Text('Publish fast-forward'),
-                ),
-                MenuItemButton(
-                  onPressed: _busy ? null : () => _publish('MERGE_COMMIT'),
-                  child: const Text('Publish merge commit'),
-                ),
-              ],
-              builder: (context, controller, child) => FilledButton.tonalIcon(
-                key: const ValueKey('review-action-publish'),
-                onPressed: _busy
-                    ? null
-                    : () {
-                        if (controller.isOpen) {
-                          controller.close();
-                        } else {
-                          controller.open();
-                        }
-                      },
-                icon: const Icon(Icons.publish),
-                label: const Text('Publish'),
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy || file == null ? null : _stage,
-              icon: const Icon(Icons.add_task),
-              label: const Text('Stage'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy || file == null ? null : _unstage,
-              icon: const Icon(Icons.remove_done),
-              label: const Text('Unstage'),
-            ),
-            OutlinedButton.icon(
-              key: const ValueKey('review-action-discard'),
-              onPressed: _busy || file == null ? null : _discard,
-              icon: const Icon(Icons.undo),
-              label: const Text('Discard'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy || backups.isEmpty ? null : _restoreLatest,
-              icon: const Icon(Icons.restore),
-              label: Text(
-                backups.isEmpty ? 'Restore' : 'Restore ${backups.last.id}',
-              ),
-            ),
-            FilledButton.tonalIcon(
-              key: const ValueKey('review-action-feedback'),
-              onPressed: _busy || !_canContinueWithFeedback()
-                  ? null
-                  : _continueWithFeedback,
-              icon: const Icon(Icons.send),
-              label: const Text('Handle feedback'),
-            ),
           ],
         ),
         if (_busy) const LinearProgressIndicator(minHeight: 2),
@@ -3887,7 +3886,7 @@ class _ReviewTabState extends State<_ReviewTab> {
               ),
             ),
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3927,6 +3926,296 @@ class _ReviewTabState extends State<_ReviewTab> {
       (widget.detail.task.agentSessionId ?? '').isNotEmpty &&
       (_findings.any((finding) => finding.status == 'OPEN') ||
           widget.detail.reviewComments.any((comment) => !comment.resolved));
+}
+
+class _GitWorkspacePanel extends StatelessWidget {
+  const _GitWorkspacePanel({
+    required this.remoteController,
+    required this.branchController,
+    required this.status,
+    required this.busy,
+    required this.hasFile,
+    required this.hasBackups,
+    required this.latestBackupId,
+    required this.canContinueWithFeedback,
+    required this.onFetch,
+    required this.onRefreshStatus,
+    required this.onStartReview,
+    required this.onContinueWithFeedback,
+    required this.onRebase,
+    required this.onMerge,
+    required this.onStage,
+    required this.onUnstage,
+    required this.onCommit,
+    required this.onDiscard,
+    required this.onRestore,
+    required this.onPush,
+    required this.onPublishFastForward,
+    required this.onPublishMergeCommit,
+  });
+
+  final TextEditingController remoteController;
+  final TextEditingController branchController;
+  final TaskGitStatusData? status;
+  final bool busy;
+  final bool hasFile;
+  final bool hasBackups;
+  final String latestBackupId;
+  final bool canContinueWithFeedback;
+  final VoidCallback onFetch;
+  final VoidCallback onRefreshStatus;
+  final VoidCallback onStartReview;
+  final VoidCallback onContinueWithFeedback;
+  final VoidCallback onRebase;
+  final VoidCallback onMerge;
+  final VoidCallback onStage;
+  final VoidCallback onUnstage;
+  final VoidCallback onCommit;
+  final VoidCallback onDiscard;
+  final VoidCallback onRestore;
+  final VoidCallback onPush;
+  final VoidCallback onPublishFastForward;
+  final VoidCallback onPublishMergeCommit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(8),
+        color: theme.colorScheme.surface,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Git workspace',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(
+                  width: 150,
+                  child: TextField(
+                    key: const ValueKey('review-git-remote'),
+                    controller: remoteController,
+                    enabled: !busy,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Remote',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 170,
+                  child: TextField(
+                    key: const ValueKey('review-git-branch'),
+                    controller: branchController,
+                    enabled: !busy,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Target branch',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: busy ? null : onRefreshStatus,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh status'),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey('review-action-ai-review'),
+                  onPressed: busy ? null : onStartReview,
+                  icon: const Icon(Icons.rate_review),
+                  label: const Text('AI Review'),
+                ),
+                FilledButton.tonalIcon(
+                  key: const ValueKey('review-action-feedback'),
+                  onPressed: busy || !canContinueWithFeedback
+                      ? null
+                      : onContinueWithFeedback,
+                  icon: const Icon(Icons.send),
+                  label: const Text('Handle feedback'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _statusSummary(),
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _GitActionGroup(
+                    title: 'Sync',
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('review-action-fetch'),
+                        onPressed: busy ? null : onFetch,
+                        icon: const Icon(Icons.sync),
+                        label: const Text('Fetch'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('review-action-rebase'),
+                        onPressed: busy ? null : onRebase,
+                        icon: const Icon(Icons.vertical_align_bottom),
+                        label: const Text('Rebase onto target'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('review-action-merge-base'),
+                        onPressed: busy ? null : onMerge,
+                        icon: const Icon(Icons.call_merge),
+                        label: const Text('Merge target into task branch'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 18),
+                  _GitActionGroup(
+                    title: 'Changes',
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: busy || !hasFile ? null : onStage,
+                        icon: const Icon(Icons.add_task),
+                        label: const Text('Stage'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: busy || !hasFile ? null : onUnstage,
+                        icon: const Icon(Icons.remove_done),
+                        label: const Text('Unstage'),
+                      ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('review-action-commit'),
+                        onPressed: busy ? null : onCommit,
+                        icon: const Icon(Icons.commit),
+                        label: const Text('Commit staged'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('review-action-discard'),
+                        onPressed: busy || !hasFile ? null : onDiscard,
+                        icon: const Icon(Icons.undo),
+                        label: const Text('Discard'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: busy || !hasBackups ? null : onRestore,
+                        icon: const Icon(Icons.restore),
+                        label: Text(
+                          hasBackups ? 'Restore $latestBackupId' : 'Restore',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 18),
+                  _GitActionGroup(
+                    title: 'Publish',
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('review-action-push-branch'),
+                        onPressed: busy ? null : onPush,
+                        icon: const Icon(Icons.upload),
+                        label: const Text('Push branch'),
+                      ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey(
+                          'review-action-publish-fast-forward',
+                        ),
+                        onPressed: busy ? null : onPublishFastForward,
+                        icon: const Icon(Icons.publish),
+                        label: const Text('Publish fast-forward'),
+                      ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey(
+                          'review-action-publish-merge-commit',
+                        ),
+                        onPressed: busy ? null : onPublishMergeCommit,
+                        icon: const Icon(Icons.merge_type),
+                        label: const Text('Publish merge commit'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _statusSummary() {
+    final status = this.status;
+    if (status == null) {
+      return 'Status not loaded';
+    }
+    final target = (status.targetRef ?? '').isEmpty
+        ? 'Target ref not fetched'
+        : 'target ${_shortRef(status.targetRef)}';
+    final dirty = <String>[
+      if (status.hasStagedChanges) 'staged changes',
+      if (status.hasUnstagedChanges) 'unstaged changes',
+      if (status.hasUntrackedFiles) 'untracked files',
+    ];
+    return [
+      'branch ${status.currentBranch}',
+      'HEAD ${_shortRef(status.headRef)}',
+      target,
+      'ahead ${status.ahead}',
+      'behind ${status.behind}',
+      dirty.isEmpty ? 'clean worktree' : dirty.join(', '),
+    ].join('  |  ');
+  }
+}
+
+class _GitActionGroup extends StatelessWidget {
+  const _GitActionGroup({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(
+            title,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        ...children,
+      ],
+    );
+  }
+}
+
+String _shortRef(String? ref) {
+  final value = (ref ?? '').trim();
+  if (value.length <= 8) {
+    return value.isEmpty ? '-' : value;
+  }
+  return value.substring(0, 8);
 }
 
 class _ReviewFileList extends StatelessWidget {

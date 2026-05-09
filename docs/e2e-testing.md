@@ -27,13 +27,13 @@
 | 层级 | 入口 | 用途 | 默认运行时机 |
 | --- | --- | --- | --- |
 | L1 Go in-process E2E | `make e2e` | 使用 `httptest` 在进程内验证 Manager GraphQL、Worker WebSocket、领域事件和日志落库 | 本地变更、CI、发布前 |
-| L2 Playwright UI E2E | `npm run e2e` | 连接运行中的 UI/Manager，验证 Flutter Web UI、GraphQL 种子数据、模拟 Worker 生命周期、看板状态分组和 Review Git 发布流程 | UI/API 变更、CI、发布前 |
+| L2 Playwright UI E2E | `npm run e2e` | 连接运行中的 UI/Manager，验证 Flutter Web UI、GraphQL 种子数据、模拟 Worker 生命周期、看板状态分组和 Review Git workspace 状态、同步与发布流程 | UI/API 变更、CI、发布前 |
 | L3 Real Agent Release Gate | `npm run e2e:real-agents` | 启动真实 Manager/Worker，并使用 Codex/Claude CLI 跑通固定任务 | 发布必跑 |
 
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
+- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/archived 任务，验证活跃 Board 视图排除归档任务、Archived 视图展示并删除归档任务，并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -232,7 +232,7 @@ npm run e2e:real-agents
 | Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name、host 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
 | UI | Task 详情输入 Worker 网络地址并通过 Manager 同源代理显示网页预览 | L2 | [已实现] |
 | UI | Task 详情 Terminal 面板先通过 `/terminal/tasks/{taskID}` 预检 worktree，再连接 `/terminal/tasks/{taskID}/ws` 并在默认 worktree 执行 `pwd` 与命令输出 | L1/L2 | [已实现] |
-| UI | Task 详情 Review 面板通过 Worker Review 服务提交 staged 改动并 fast-forward publish 到 base branch | L2 | [已实现] |
+| UI | Task 详情 Review 面板通过 Worker Review 服务展示 Git workspace status，使用 remote/branch 输入执行 Fetch/Rebase，并提交 staged 改动后 fast-forward publish 到 base branch | L2 | [已实现] |
 | Worker | 禁用 Worker 后不参与自动分配，启用后恢复可用 | L1/L2 | [待补齐] |
 | Worker | 删除空闲 Worker 后列表移除并产生领域事件 | L1/L2 | [待补齐] |
 | Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |
