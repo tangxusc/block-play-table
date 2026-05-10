@@ -3973,98 +3973,97 @@ class _GitWorkspacePanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _GitActionGroup(
-                    title: 'Sync',
-                    children: [
-                      OutlinedButton.icon(
-                        key: const ValueKey('review-action-fetch'),
-                        onPressed: busy ? null : onFetch,
-                        icon: const Icon(Icons.sync),
-                        label: const Text('Fetch'),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _GitActionGroup(
+                  title: 'Sync',
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('review-action-fetch'),
+                      onPressed: busy ? null : onFetch,
+                      icon: const Icon(Icons.sync),
+                      label: const Text('Fetch'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('review-action-rebase'),
+                      onPressed: busy ? null : onRebase,
+                      icon: const Icon(Icons.vertical_align_bottom),
+                      label: const Text('Rebase onto target'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('review-action-merge-base'),
+                      onPressed: busy ? null : onMerge,
+                      icon: const Icon(Icons.call_merge),
+                      label: const Text('Merge target into task branch'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _GitActionGroup(
+                  title: 'Changes',
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: busy || !hasFile ? null : onStage,
+                      icon: const Icon(Icons.add_task),
+                      label: const Text('Stage'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: busy || !hasFile ? null : onUnstage,
+                      icon: const Icon(Icons.remove_done),
+                      label: const Text('Unstage'),
+                    ),
+                    FilledButton.tonalIcon(
+                      key: const ValueKey('review-action-commit'),
+                      onPressed: busy ? null : onCommit,
+                      icon: const Icon(Icons.commit),
+                      label: const Text('Commit staged'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('review-action-discard'),
+                      onPressed: busy || !hasFile ? null : onDiscard,
+                      icon: const Icon(Icons.undo),
+                      label: const Text('Discard'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: busy || !hasBackups ? null : onRestore,
+                      icon: const Icon(Icons.restore),
+                      label: Text(
+                        hasBackups ? 'Restore $latestBackupId' : 'Restore',
                       ),
-                      OutlinedButton.icon(
-                        key: const ValueKey('review-action-rebase'),
-                        onPressed: busy ? null : onRebase,
-                        icon: const Icon(Icons.vertical_align_bottom),
-                        label: const Text('Rebase onto target'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _GitActionGroup(
+                  title: 'Publish',
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('review-action-push-branch'),
+                      onPressed: busy ? null : onPush,
+                      icon: const Icon(Icons.upload),
+                      label: const Text('Push branch'),
+                    ),
+                    FilledButton.tonalIcon(
+                      key: const ValueKey(
+                        'review-action-publish-fast-forward',
                       ),
-                      OutlinedButton.icon(
-                        key: const ValueKey('review-action-merge-base'),
-                        onPressed: busy ? null : onMerge,
-                        icon: const Icon(Icons.call_merge),
-                        label: const Text('Merge target into task branch'),
+                      onPressed: busy ? null : onPublishFastForward,
+                      icon: const Icon(Icons.publish),
+                      label: const Text('Publish fast-forward'),
+                    ),
+                    FilledButton.tonalIcon(
+                      key: const ValueKey(
+                        'review-action-publish-merge-commit',
                       ),
-                    ],
-                  ),
-                  const SizedBox(width: 18),
-                  _GitActionGroup(
-                    title: 'Changes',
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: busy || !hasFile ? null : onStage,
-                        icon: const Icon(Icons.add_task),
-                        label: const Text('Stage'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: busy || !hasFile ? null : onUnstage,
-                        icon: const Icon(Icons.remove_done),
-                        label: const Text('Unstage'),
-                      ),
-                      FilledButton.tonalIcon(
-                        key: const ValueKey('review-action-commit'),
-                        onPressed: busy ? null : onCommit,
-                        icon: const Icon(Icons.commit),
-                        label: const Text('Commit staged'),
-                      ),
-                      OutlinedButton.icon(
-                        key: const ValueKey('review-action-discard'),
-                        onPressed: busy || !hasFile ? null : onDiscard,
-                        icon: const Icon(Icons.undo),
-                        label: const Text('Discard'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: busy || !hasBackups ? null : onRestore,
-                        icon: const Icon(Icons.restore),
-                        label: Text(
-                          hasBackups ? 'Restore $latestBackupId' : 'Restore',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 18),
-                  _GitActionGroup(
-                    title: 'Publish',
-                    children: [
-                      OutlinedButton.icon(
-                        key: const ValueKey('review-action-push-branch'),
-                        onPressed: busy ? null : onPush,
-                        icon: const Icon(Icons.upload),
-                        label: const Text('Push branch'),
-                      ),
-                      FilledButton.tonalIcon(
-                        key: const ValueKey(
-                          'review-action-publish-fast-forward',
-                        ),
-                        onPressed: busy ? null : onPublishFastForward,
-                        icon: const Icon(Icons.publish),
-                        label: const Text('Publish fast-forward'),
-                      ),
-                      FilledButton.tonalIcon(
-                        key: const ValueKey(
-                          'review-action-publish-merge-commit',
-                        ),
-                        onPressed: busy ? null : onPublishMergeCommit,
-                        icon: const Icon(Icons.merge_type),
-                        label: const Text('Publish merge commit'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                      onPressed: busy ? null : onPublishMergeCommit,
+                      icon: const Icon(Icons.merge_type),
+                      label: const Text('Publish merge commit'),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ],
         ),

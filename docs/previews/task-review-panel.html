@@ -137,15 +137,23 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .git-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
     .git-group {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
       align-items: center;
-      padding-right: 12px;
-      border-right: 1px solid var(--line);
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
     }
-    .git-group:last-child { border-right: 0; }
+    .git-group:first-child {
+      padding-top: 0;
+      border-top: 0;
+    }
     .git-group strong {
       min-width: 58px;
       font-size: 13px;

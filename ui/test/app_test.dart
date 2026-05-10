@@ -489,6 +489,14 @@ void main() {
     expect(find.byTooltip('Resolve finding'), findsNothing);
     expect(find.byTooltip('Dismiss finding'), findsNothing);
 
+    final syncTopLeft = tester.getTopLeft(find.text('Sync'));
+    final changesTopLeft = tester.getTopLeft(find.text('Changes'));
+    final publishTopLeft = tester.getTopLeft(find.text('Publish'));
+    expect(syncTopLeft.dx, closeTo(changesTopLeft.dx, 1));
+    expect(changesTopLeft.dx, closeTo(publishTopLeft.dx, 1));
+    expect(syncTopLeft.dy < changesTopLeft.dy, isTrue);
+    expect(changesTopLeft.dy < publishTopLeft.dy, isTrue);
+
     Future<void> tapReviewAction(String key) async {
       final finder = find.byKey(ValueKey(key));
       await tester.ensureVisible(finder);
