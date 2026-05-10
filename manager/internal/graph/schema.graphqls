@@ -166,27 +166,6 @@ enum TaskGitPublishStrategy {
   MERGE_COMMIT
 }
 
-enum TaskReviewRunStatus {
-  QUEUED
-  RUNNING
-  COMPLETED
-  FAILED
-}
-
-enum TaskReviewSeverity {
-  INFO
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
-}
-
-enum TaskReviewFindingStatus {
-  OPEN
-  RESOLVED
-  DISMISSED
-}
-
 type Task {
   id: ID!
   title: String!
@@ -293,48 +272,6 @@ type TaskGitDiffFile {
   deletions: Int!
   patch: String!
   truncated: Boolean!
-}
-
-type TaskReviewRun {
-  id: ID!
-  taskId: ID!
-  scope: TaskGitDiffScope!
-  status: TaskReviewRunStatus!
-  agentType: AgentType
-  summary: String!
-  rawResult: String!
-  error: String!
-  findings: [TaskReviewFinding!]!
-  startedAt: Time
-  completedAt: Time
-  createdAt: Time!
-  updatedAt: Time!
-}
-
-type TaskReviewFinding {
-  id: ID!
-  runId: ID!
-  taskId: ID!
-  path: String!
-  line: Int!
-  severity: TaskReviewSeverity!
-  status: TaskReviewFindingStatus!
-  title: String!
-  body: String!
-  suggestion: String!
-  createdAt: Time!
-  updatedAt: Time!
-}
-
-type TaskReviewComment {
-  id: ID!
-  taskId: ID!
-  path: String!
-  line: Int!
-  body: String!
-  resolved: Boolean!
-  createdAt: Time!
-  updatedAt: Time!
 }
 
 type TaskGitBackup {
@@ -603,18 +540,6 @@ input ContinueTaskInput {
   message: String!
 }
 
-input StartTaskReviewInput {
-  taskId: ID!
-  scope: TaskGitDiffScope!
-}
-
-input AddTaskReviewCommentInput {
-  taskId: ID!
-  path: String!
-  line: Int!
-  body: String!
-}
-
 input TaskGitChangeInput {
   taskId: ID!
   paths: [String!]
@@ -629,13 +554,6 @@ input TaskGitCommandInput {
   remote: String
   branch: String
   publishStrategy: TaskGitPublishStrategy
-}
-
-input ContinueTaskWithReviewFeedbackInput {
-  taskId: ID!
-  findingIds: [ID!]
-  commentIds: [ID!]
-  message: String
 }
 
 input RespondTaskInteractionInput {
@@ -741,9 +659,6 @@ type Query {
   taskInteractions(taskId: ID!, status: TaskInteractionStatus): [TaskInteraction!]!
   taskGitDiff(taskId: ID!, scope: TaskGitDiffScope!, staged: Boolean): TaskGitDiff!
   taskGitStatus(taskId: ID!, remote: String, branch: String): TaskGitStatus!
-  taskReviewRuns(taskId: ID!): [TaskReviewRun!]!
-  taskReviewFindings(taskId: ID!, status: TaskReviewFindingStatus): [TaskReviewFinding!]!
-  taskReviewComments(taskId: ID!): [TaskReviewComment!]!
   taskGitBackups(taskId: ID!): [TaskGitBackup!]!
 }
 
@@ -758,16 +673,11 @@ type Mutation {
   archiveTask(taskId: ID, id: ID): Task!
   deleteTask(taskId: ID, id: ID): Boolean!
   retryTask(taskId: ID, id: ID): Task!
-  startTaskReview(input: StartTaskReviewInput!): TaskReviewRun!
-  addTaskReviewComment(input: AddTaskReviewCommentInput!): TaskReviewComment!
   stageTaskGitChanges(input: TaskGitChangeInput!): TaskGitChangeResult!
   unstageTaskGitChanges(input: TaskGitChangeInput!): TaskGitChangeResult!
   discardTaskGitChanges(input: TaskGitChangeInput!): TaskGitChangeResult!
   restoreTaskGitBackup(input: TaskGitChangeInput!): TaskGitChangeResult!
   runTaskGitCommand(input: TaskGitCommandInput!): TaskGitCommandResult!
-  resolveTaskReviewFinding(id: ID!): TaskReviewFinding!
-  dismissTaskReviewFinding(id: ID!): TaskReviewFinding!
-  continueTaskWithReviewFeedback(input: ContinueTaskWithReviewFeedbackInput!): Task!
 
   createWorker(input: CreateWorkerInput!): Worker!
   registerWorker(input: RegisterWorkerInput!): Worker!

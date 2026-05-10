@@ -57,6 +57,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "009_task_interactions", SQL: migrations.TaskInteractionsSQL},
 		{Version: "010_unique_worker_name", SQL: migrations.UniqueWorkerNameSQL},
 		{Version: "011_task_review", SQL: migrations.TaskReviewSQL},
+		{Version: "012_drop_task_review", SQL: migrations.DropTaskReviewSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -141,19 +142,14 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if !hasWorkerNameUniqueIndex {
 		t.Fatal("workers.name unique index should exist after versioned migrations")
 	}
-	hasTaskReviewRuns, err := sqliteTableHasColumn(ctx, sqlStore, "task_review_runs", "scope")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasTaskReviewRuns {
-		t.Fatal("task_review_runs.scope should exist after versioned migrations")
-	}
-	hasTaskReviewIndex, err := sqliteTableIndexExists(ctx, sqlStore, "task_review_runs", "idx_task_review_runs_task_created")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasTaskReviewIndex {
-		t.Fatal("task_review_runs task index should exist after versioned migrations")
+	for _, table := range []string{"task_review_runs", "task_review_findings", "task_review_comments"} {
+		hasTable, err := sqliteTableHasColumn(ctx, sqlStore, table, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasTable {
+			t.Fatalf("%s should be absent after versioned migrations", table)
+		}
 	}
 
 	defaultSettings, err := sqlStore.Settings(ctx)
@@ -350,6 +346,27 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	}
 }
 
+func TestSQLStoreInitialSchemaOmitsTaskReviewTables(t *testing.T) {
+	ctx := context.Background()
+	sqlStore, err := OpenSQLStore(ctx, SQLDriverSQLite, filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLStore returned error: %v", err)
+	}
+	defer sqlStore.Close()
+	if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
+		t.Fatalf("Migrate returned error: %v", err)
+	}
+	for _, table := range []string{"task_review_runs", "task_review_findings", "task_review_comments"} {
+		hasTable, err := sqliteTableHasColumn(ctx, sqlStore, table, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasTable {
+			t.Fatalf("%s should not be created by initial schema", table)
+		}
+	}
+}
+
 func TestUniqueWorkerNameMigrationRenamesExistingDuplicates(t *testing.T) {
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "manager.db")
@@ -451,36 +468,6 @@ func TestSQLStoreDeleteTaskRemovesTaskAndDetailRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reviewRun := domain.TaskReviewRun{
-		ID:        "run-delete",
-		TaskID:    task.ID,
-		Scope:     domain.TaskGitDiffScopeUncommitted,
-		Status:    domain.TaskReviewRunCompleted,
-		Summary:   "done",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := sqlStore.SaveTaskReviewRun(ctx, reviewRun); err != nil {
-		t.Fatal(err)
-	}
-	if err := sqlStore.SaveTaskReviewFinding(ctx, domain.TaskReviewFinding{
-		ID:        "finding-delete",
-		RunID:     reviewRun.ID,
-		TaskID:    task.ID,
-		Path:      "README.md",
-		Line:      4,
-		Severity:  domain.TaskReviewSeverityHigh,
-		Status:    domain.TaskReviewFindingOpen,
-		Title:     "Bug",
-		Body:      "Details",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := sqlStore.SaveTaskReviewComment(ctx, domain.TaskReviewComment{ID: "comment-delete", TaskID: task.ID, Path: "README.md", Line: 4, Body: "fix", CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
 	if err := sqlStore.SaveTaskGitBackup(ctx, domain.TaskGitBackup{ID: "backup-delete", TaskID: task.ID, Paths: []string{"README.md"}, PatchPath: "/tmp/backup.patch", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -505,24 +492,6 @@ func TestSQLStoreDeleteTaskRemovesTaskAndDetailRows(t *testing.T) {
 	}
 	if _, err := sqlStore.TaskInteraction(ctx, "interaction-delete"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted TaskInteraction err = %v, want not found", err)
-	}
-	if runs, err := sqlStore.TaskReviewRuns(ctx, task.ID); err != nil || len(runs) != 0 {
-		t.Fatalf("TaskReviewRuns after delete = %+v, %v", runs, err)
-	}
-	if _, err := sqlStore.TaskReviewRun(ctx, reviewRun.ID); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("deleted TaskReviewRun err = %v, want not found", err)
-	}
-	if findings, err := sqlStore.TaskReviewFindings(ctx, task.ID, ""); err != nil || len(findings) != 0 {
-		t.Fatalf("TaskReviewFindings after delete = %+v, %v", findings, err)
-	}
-	if _, err := sqlStore.TaskReviewFinding(ctx, "finding-delete"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("deleted TaskReviewFinding err = %v, want not found", err)
-	}
-	if comments, err := sqlStore.TaskReviewComments(ctx, task.ID); err != nil || len(comments) != 0 {
-		t.Fatalf("TaskReviewComments after delete = %+v, %v", comments, err)
-	}
-	if _, err := sqlStore.TaskReviewComment(ctx, "comment-delete"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("deleted TaskReviewComment err = %v, want not found", err)
 	}
 	if backups, err := sqlStore.TaskGitBackups(ctx, task.ID); err != nil || len(backups) != 0 {
 		t.Fatalf("TaskGitBackups after delete = %+v, %v", backups, err)
@@ -621,52 +590,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	if ok, err := sqlStore.MarkMessageProcessed(ctx, messageID); err != nil || !ok {
 		t.Fatalf("first MarkMessageProcessed = %v, %v", ok, err)
 	}
-	startedAt := now.Add(time.Minute)
-	completedAt := now.Add(2 * time.Minute)
-	reviewRun := domain.TaskReviewRun{
-		ID:          "review-run-" + suffix,
-		TaskID:      taskID,
-		Scope:       domain.TaskGitDiffScopeBranch,
-		Status:      domain.TaskReviewRunCompleted,
-		AgentType:   domain.AgentCodex,
-		Summary:     "reviewed",
-		RawResult:   `{"findings":[]}`,
-		StartedAt:   &startedAt,
-		CompletedAt: &completedAt,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := sqlStore.SaveTaskReviewRun(ctx, reviewRun); err != nil {
-		t.Fatalf("SaveTaskReviewRun returned error: %v", err)
-	}
-	if err := sqlStore.SaveTaskReviewFinding(ctx, domain.TaskReviewFinding{
-		ID:         "review-finding-" + suffix,
-		RunID:      reviewRun.ID,
-		TaskID:     taskID,
-		Path:       "README.md",
-		Line:       12,
-		Severity:   domain.TaskReviewSeverityHigh,
-		Status:     domain.TaskReviewFindingOpen,
-		Title:      "Incorrect result",
-		Body:       "The result regresses behavior.",
-		Suggestion: "Use the existing helper.",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}); err != nil {
-		t.Fatalf("SaveTaskReviewFinding returned error: %v", err)
-	}
-	if err := sqlStore.SaveTaskReviewComment(ctx, domain.TaskReviewComment{
-		ID:        "review-comment-" + suffix,
-		TaskID:    taskID,
-		Path:      "README.md",
-		Line:      14,
-		Body:      "Please tighten this.",
-		Resolved:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("SaveTaskReviewComment returned error: %v", err)
-	}
 	if err := sqlStore.SaveTaskGitBackup(ctx, domain.TaskGitBackup{
 		ID:        "git-backup-" + suffix,
 		TaskID:    taskID,
@@ -734,31 +657,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	if conversations, err := reopened.TaskConversations(ctx, taskID); err != nil || len(conversations) != 1 || conversations[0].Metadata["tool"] != "codex" {
 		t.Fatalf("TaskConversations = %+v, %v", conversations, err)
-	}
-	loadedReviewRun, err := reopened.TaskReviewRun(ctx, reviewRun.ID)
-	if err != nil {
-		t.Fatalf("TaskReviewRun returned error: %v", err)
-	}
-	if loadedReviewRun.Scope != domain.TaskGitDiffScopeBranch || loadedReviewRun.AgentType != domain.AgentCodex || loadedReviewRun.StartedAt == nil || loadedReviewRun.CompletedAt == nil {
-		t.Fatalf("TaskReviewRun = %+v", loadedReviewRun)
-	}
-	reviewRuns, err := reopened.TaskReviewRuns(ctx, taskID)
-	if err != nil || len(reviewRuns) != 1 || reviewRuns[0].Summary != "reviewed" {
-		t.Fatalf("TaskReviewRuns = %+v, %v", reviewRuns, err)
-	}
-	reviewFindings, err := reopened.TaskReviewFindings(ctx, taskID, domain.TaskReviewFindingOpen)
-	if err != nil || len(reviewFindings) != 1 || reviewFindings[0].Suggestion != "Use the existing helper." {
-		t.Fatalf("TaskReviewFindings = %+v, %v", reviewFindings, err)
-	}
-	if _, err := reopened.TaskReviewFinding(ctx, reviewFindings[0].ID); err != nil {
-		t.Fatalf("TaskReviewFinding returned error: %v", err)
-	}
-	reviewComments, err := reopened.TaskReviewComments(ctx, taskID)
-	if err != nil || len(reviewComments) != 1 || !reviewComments[0].Resolved {
-		t.Fatalf("TaskReviewComments = %+v, %v", reviewComments, err)
-	}
-	if _, err := reopened.TaskReviewComment(ctx, reviewComments[0].ID); err != nil {
-		t.Fatalf("TaskReviewComment returned error: %v", err)
 	}
 	backups, err := reopened.TaskGitBackups(ctx, taskID)
 	if err != nil || len(backups) != 1 || len(backups[0].Paths) != 2 || backups[0].Paths[1] != "cmd/main.go" {

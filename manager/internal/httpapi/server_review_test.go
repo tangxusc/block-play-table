@@ -10,10 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/pkg/domain"
-	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
@@ -98,36 +96,6 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 				"hasUntrackedFiles":  true,
 				"generatedAt":        time.Date(2026, 5, 5, 10, 0, 4, 0, time.UTC),
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/review/tasks/task-review/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"run": map[string]any{
-					"id":          "run-worker",
-					"taskId":      "task-review",
-					"scope":       "UNCOMMITTED",
-					"status":      "COMPLETED",
-					"agentType":   "codex",
-					"summary":     "1 finding",
-					"rawResult":   `{"findings":[{"title":"Bug"}]}`,
-					"startedAt":   time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC),
-					"completedAt": time.Date(2026, 5, 5, 10, 0, 1, 0, time.UTC),
-					"createdAt":   time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC),
-					"updatedAt":   time.Date(2026, 5, 5, 10, 0, 1, 0, time.UTC),
-				},
-				"findings": []map[string]any{{
-					"id":         "finding-worker",
-					"runId":      "run-worker",
-					"taskId":     "task-review",
-					"path":       "README.md",
-					"line":       3,
-					"severity":   "HIGH",
-					"status":     "OPEN",
-					"title":      "Bug",
-					"body":       "The changed branch skips validation.",
-					"suggestion": "Use the existing validator.",
-					"createdAt":  time.Date(2026, 5, 5, 10, 0, 1, 0, time.UTC),
-					"updatedAt":  time.Date(2026, 5, 5, 10, 0, 1, 0, time.UTC),
-				}},
-			})
 		case r.Method == http.MethodPost && r.URL.Path == "/review/tasks/task-review/discard":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,
@@ -193,25 +161,29 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 		t.Fatalf("taskGitStatus = %#v", status)
 	}
 
-	runResult := postGraphQL(t, server.URL, `mutation StartReview($taskId: ID!) {
-		startTaskReview(input: { taskId: $taskId, scope: UNCOMMITTED }) {
-			id status summary findings { id title severity status }
+	for name, query := range map[string]string{
+		"start review": `mutation {
+			startTaskReview(input: { taskId: "task-review", scope: UNCOMMITTED }) { id }
+		}`,
+		"add comment": `mutation {
+			addTaskReviewComment(input: { taskId: "task-review", path: "README.md", line: 4, body: "Please tighten this." }) { id }
+		}`,
+		"review lists": `query {
+			taskReviewRuns(taskId: "task-review") { id }
+			taskReviewFindings(taskId: "task-review", status: OPEN) { id }
+			taskReviewComments(taskId: "task-review") { id }
+		}`,
+		"finding status": `mutation {
+			resolveTaskReviewFinding(id: "finding-worker") { id }
+			dismissTaskReviewFinding(id: "finding-worker") { id }
+		}`,
+		"feedback continue": `mutation {
+			continueTaskWithReviewFeedback(input: { taskId: "task-review" }) { id }
+		}`,
+	} {
+		if err := postGraphQLError(server.URL, query, nil); err == nil {
+			t.Fatalf("%s GraphQL operation should be rejected after review feedback removal", name)
 		}
-	}`, map[string]any{"taskId": task.ID})
-	run := runResult["data"].(map[string]any)["startTaskReview"].(map[string]any)
-	if run["id"] != "run-worker" || run["findings"].([]any)[0].(map[string]any)["id"] != "finding-worker" {
-		t.Fatalf("startTaskReview = %#v", run)
-	}
-
-	commentResult := postGraphQL(t, server.URL, `mutation AddComment($taskId: ID!) {
-		addTaskReviewComment(input: { taskId: $taskId, path: "README.md", line: 4, body: "Please tighten this." }) {
-			id body resolved
-		}
-	}`, map[string]any{"taskId": task.ID})
-	comment := commentResult["data"].(map[string]any)["addTaskReviewComment"].(map[string]any)
-	commentID := comment["id"].(string)
-	if comment["body"] != "Please tighten this." || comment["resolved"].(bool) {
-		t.Fatalf("addTaskReviewComment = %#v", comment)
 	}
 
 	discardResult := postGraphQL(t, server.URL, `mutation Discard($taskId: ID!) {
@@ -235,53 +207,11 @@ func TestGraphQLTaskReviewDiffActionsAndFeedbackLoop(t *testing.T) {
 	}
 
 	lists := postGraphQL(t, server.URL, `query ReviewLists($taskId: ID!) {
-		taskReviewRuns(taskId: $taskId) { id status }
-		taskReviewFindings(taskId: $taskId, status: OPEN) { id title }
-		taskReviewComments(taskId: $taskId) { id body }
 		taskGitBackups(taskId: $taskId) { id paths }
 	}`, map[string]any{"taskId": task.ID})
 	listsData := lists["data"].(map[string]any)
-	if len(listsData["taskReviewRuns"].([]any)) != 1 || len(listsData["taskGitBackups"].([]any)) != 1 {
+	if len(listsData["taskGitBackups"].([]any)) != 1 {
 		t.Fatalf("review lists = %#v", listsData)
-	}
-
-	updatedFinding := postGraphQL(t, server.URL, `mutation ResolveFinding {
-		resolveTaskReviewFinding(id: "finding-worker") { id status }
-	}`, nil)["data"].(map[string]any)["resolveTaskReviewFinding"].(map[string]any)
-	if updatedFinding["status"] != "RESOLVED" {
-		t.Fatalf("resolveTaskReviewFinding = %#v", updatedFinding)
-	}
-
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-review", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := service.ApplyWorkerTaskCompleted(context.Background(), "completed-review", task.ID, "done", "session-review"); err != nil {
-		t.Fatal(err)
-	}
-	continued := postGraphQL(t, server.URL, `mutation ContinueFeedback($input: ContinueTaskWithReviewFeedbackInput!) {
-		continueTaskWithReviewFeedback(input: $input) { id status agentSessionId }
-	}`, map[string]any{"input": map[string]any{"taskId": task.ID, "findingIds": []any{"finding-worker"}, "commentIds": []any{commentID}, "message": "Please address these review items."}})
-	if continued["data"].(map[string]any)["continueTaskWithReviewFeedback"].(map[string]any)["status"] != string(domain.TaskStarting) {
-		t.Fatalf("continueTaskWithReviewFeedback = %#v", continued)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var envelope rawEnvelope
-	if err := conn.ReadJSON(&envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Type != protocol.MessageTaskContinue {
-		t.Fatalf("feedback continue envelope = %+v", envelope)
-	}
-	var payload protocol.TaskContinuePayload
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(payload.Message, "Bug") || !strings.Contains(payload.Message, "Please tighten this.") || payload.AgentSessionID != "session-review" {
-		t.Fatalf("feedback continue payload = %+v", payload)
 	}
 }
 

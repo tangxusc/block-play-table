@@ -70,8 +70,3 @@ type TaskGitStatusResponse struct {
 	HasUntrackedFiles  bool      `json:"hasUntrackedFiles"`
 	GeneratedAt        time.Time `json:"generatedAt"`
 }
-
-type TaskReviewRunResponse struct {
-	Run      domain.TaskReviewRun       `json:"run"`
-	Findings []domain.TaskReviewFinding `json:"findings"`
-}

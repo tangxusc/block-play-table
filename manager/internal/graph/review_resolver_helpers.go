@@ -6,9 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/graph/model"
-	"github.com/tangxusc/block-play-table/pkg/domain"
 )
 
 func (r *Resolver) taskGitDiff(ctx context.Context, taskID string, scope model.TaskGitDiffScope, staged *bool) (*model.TaskGitDiff, error) {
@@ -47,25 +45,6 @@ func (r *Resolver) taskGitStatus(ctx context.Context, taskID string, remote *str
 		return nil, err
 	}
 	return toModelTaskGitStatus(&response), nil
-}
-
-func (r *Resolver) startTaskReview(ctx context.Context, input model.StartTaskReviewInput) (*model.TaskReviewRun, error) {
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
-	}
-	var response TaskReviewRunResponse
-	if err := r.WorkerSender.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/runs", map[string]string{"scope": string(input.Scope)}, &response); err != nil {
-		return nil, err
-	}
-	run, err := r.Service.SaveTaskReviewRun(ctx, response.Run, response.Findings)
-	if err != nil {
-		return nil, err
-	}
-	findings, err := r.Service.Store().TaskReviewFindings(ctx, input.TaskID, "")
-	if err != nil {
-		return nil, err
-	}
-	return toModelTaskReviewRun(run, filterFindingsByRun(findings, run.ID)), nil
 }
 
 func (r *Resolver) gitChange(ctx context.Context, action string, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
@@ -109,41 +88,4 @@ func (r *Resolver) runTaskGitCommand(ctx context.Context, input model.TaskGitCom
 		return nil, err
 	}
 	return toModelTaskGitCommandResult(&response), nil
-}
-
-func (r *Resolver) continueWithReviewFeedback(ctx context.Context, input model.ContinueTaskWithReviewFeedbackInput) (*model.Task, error) {
-	task, payload, err := r.Service.ContinueTaskWithReviewFeedback(ctx, app.ContinueTaskWithReviewFeedbackInput{
-		TaskID:     input.TaskID,
-		FindingIDs: append([]string(nil), input.FindingIds...),
-		CommentIDs: append([]string(nil), input.CommentIds...),
-		Message:    valueOrEmpty(input.Message),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if r.WorkerSender != nil {
-		if err := r.WorkerSender.SendTaskContinue(task.WorkerID, task.ID, payload); err != nil {
-			_, _ = r.Service.ApplyWorkerTaskFailed(ctx, "review-feedback-delivery-failed-"+task.ID, task.ID, "task continue delivery failed: "+err.Error())
-			return nil, err
-		}
-	}
-	return toModelTask(task), nil
-}
-
-func reviewFindingsByRun(findings []domain.TaskReviewFinding) map[string][]domain.TaskReviewFinding {
-	out := map[string][]domain.TaskReviewFinding{}
-	for _, finding := range findings {
-		out[finding.RunID] = append(out[finding.RunID], finding)
-	}
-	return out
-}
-
-func filterFindingsByRun(findings []domain.TaskReviewFinding, runID string) []domain.TaskReviewFinding {
-	out := make([]domain.TaskReviewFinding, 0)
-	for _, finding := range findings {
-		if finding.RunID == runID {
-			out = append(out, finding)
-		}
-	}
-	return out
 }

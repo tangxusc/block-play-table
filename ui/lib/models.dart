@@ -370,8 +370,6 @@ class TaskDetailData {
     required this.interactions,
     required this.events,
     this.reviewDiff,
-    this.reviewRuns = const [],
-    this.reviewComments = const [],
     this.gitBackups = const [],
     this.gitStatus,
     this.reviewError,
@@ -383,8 +381,6 @@ class TaskDetailData {
   final List<TaskInteractionItem> interactions;
   final List<DomainEventItem> events;
   final TaskGitDiffData? reviewDiff;
-  final List<TaskReviewRunData> reviewRuns;
-  final List<TaskReviewCommentData> reviewComments;
   final List<TaskGitBackupData> gitBackups;
   final TaskGitStatusData? gitStatus;
   final String? reviewError;
@@ -456,132 +452,6 @@ class TaskGitDiffFileData {
   final int deletions;
   final String patch;
   final bool truncated;
-}
-
-class TaskReviewRunData {
-  const TaskReviewRunData({
-    required this.id,
-    required this.taskId,
-    required this.scope,
-    required this.status,
-    this.agentType,
-    this.summary = '',
-    this.rawResult = '',
-    this.error = '',
-    this.findings = const [],
-    this.createdAt = '',
-    this.updatedAt = '',
-  });
-
-  factory TaskReviewRunData.fromJson(Map<String, dynamic> json) =>
-      TaskReviewRunData(
-        id: json['id'] as String? ?? '',
-        taskId: json['taskId'] as String? ?? '',
-        scope: json['scope'] as String? ?? 'UNCOMMITTED',
-        status: json['status'] as String? ?? 'QUEUED',
-        agentType: json['agentType'] as String?,
-        summary: json['summary'] as String? ?? '',
-        rawResult: json['rawResult'] as String? ?? '',
-        error: json['error'] as String? ?? '',
-        findings: (json['findings'] as List<dynamic>? ?? [])
-            .map((item) =>
-                TaskReviewFindingData.fromJson(item as Map<String, dynamic>))
-            .toList(),
-        createdAt: json['createdAt'] as String? ?? '',
-        updatedAt: json['updatedAt'] as String? ?? '',
-      );
-
-  final String id;
-  final String taskId;
-  final String scope;
-  final String status;
-  final String? agentType;
-  final String summary;
-  final String rawResult;
-  final String error;
-  final List<TaskReviewFindingData> findings;
-  final String createdAt;
-  final String updatedAt;
-}
-
-class TaskReviewFindingData {
-  const TaskReviewFindingData({
-    required this.id,
-    required this.runId,
-    required this.taskId,
-    required this.path,
-    required this.line,
-    required this.severity,
-    required this.status,
-    required this.title,
-    required this.body,
-    this.suggestion = '',
-    this.createdAt = '',
-    this.updatedAt = '',
-  });
-
-  factory TaskReviewFindingData.fromJson(Map<String, dynamic> json) =>
-      TaskReviewFindingData(
-        id: json['id'] as String? ?? '',
-        runId: json['runId'] as String? ?? '',
-        taskId: json['taskId'] as String? ?? '',
-        path: json['path'] as String? ?? '',
-        line: json['line'] as int? ?? 0,
-        severity: json['severity'] as String? ?? 'MEDIUM',
-        status: json['status'] as String? ?? 'OPEN',
-        title: json['title'] as String? ?? '',
-        body: json['body'] as String? ?? '',
-        suggestion: json['suggestion'] as String? ?? '',
-        createdAt: json['createdAt'] as String? ?? '',
-        updatedAt: json['updatedAt'] as String? ?? '',
-      );
-
-  final String id;
-  final String runId;
-  final String taskId;
-  final String path;
-  final int line;
-  final String severity;
-  final String status;
-  final String title;
-  final String body;
-  final String suggestion;
-  final String createdAt;
-  final String updatedAt;
-}
-
-class TaskReviewCommentData {
-  const TaskReviewCommentData({
-    required this.id,
-    required this.taskId,
-    required this.path,
-    required this.line,
-    required this.body,
-    this.resolved = false,
-    this.createdAt = '',
-    this.updatedAt = '',
-  });
-
-  factory TaskReviewCommentData.fromJson(Map<String, dynamic> json) =>
-      TaskReviewCommentData(
-        id: json['id'] as String? ?? '',
-        taskId: json['taskId'] as String? ?? '',
-        path: json['path'] as String? ?? '',
-        line: json['line'] as int? ?? 0,
-        body: json['body'] as String? ?? '',
-        resolved: json['resolved'] as bool? ?? false,
-        createdAt: json['createdAt'] as String? ?? '',
-        updatedAt: json['updatedAt'] as String? ?? '',
-      );
-
-  final String id;
-  final String taskId;
-  final String path;
-  final int line;
-  final String body;
-  final bool resolved;
-  final String createdAt;
-  final String updatedAt;
 }
 
 class TaskGitBackupData {

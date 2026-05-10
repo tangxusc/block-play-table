@@ -99,39 +99,19 @@ func TestServerDiffStageDiscardRestoreAndLastTurn(t *testing.T) {
 	}
 }
 
-func TestServerStartsReviewRunWithStructuredFindings(t *testing.T) {
+func TestServerRejectsReviewRunEndpoint(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "task-worktree")
 	initGitRepo(t, repo)
 	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
 	server.RegisterTask(TaskContext{TaskID: "task-1", WorktreePath: repo, BaseBranch: "main", DefaultBranch: "main", AgentType: "codex"})
-	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\nchanged\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	raw, err := json.Marshal(map[string]any{"scope": "UNCOMMITTED"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/review/tasks/task-1/runs", bytes.NewReader(raw))
+	req := httptest.NewRequest(http.MethodPost, "/review/tasks/task-1/runs", strings.NewReader(`{"scope":"UNCOMMITTED"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("runs response = %d %q", rec.Code, rec.Body.String())
-	}
-	var response ReviewRunResponse
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Run.ID == "" || response.Run.Status != ReviewRunCompleted || response.Run.Scope != ScopeUncommitted || response.Run.AgentType != "codex" {
-		t.Fatalf("review run = %+v", response.Run)
-	}
-	if len(response.Findings) != 1 || response.Findings[0].Path != "tracked.txt" || response.Findings[0].Status != FindingOpen {
-		t.Fatalf("review findings = %+v", response.Findings)
-	}
-	if !strings.Contains(response.Run.RawResult, "tracked.txt") || response.Run.StartedAt == nil || response.Run.CompletedAt == nil {
-		t.Fatalf("review run raw/times = %+v", response.Run)
+	if rec.Code != http.StatusMethodNotAllowed || !strings.Contains(rec.Body.String(), "method not allowed") {
+		t.Fatalf("runs response = %d %q, want method not allowed", rec.Code, rec.Body.String())
 	}
 }
 
@@ -373,7 +353,7 @@ func TestServerRejectsMalformedReviewRequestsAndFailedRun(t *testing.T) {
 		{name: "unsupported scope", method: http.MethodGet, path: "/review/tasks/task-1/diff?scope=BAD&cwd=" + repo, status: http.StatusBadRequest, want: "unsupported diff scope"},
 		{name: "missing last turn", method: http.MethodGet, path: "/review/tasks/task-1/diff?scope=LAST_TURN&cwd=" + repo, status: http.StatusConflict, want: "last-turn diff is not available"},
 		{name: "bad action json", method: http.MethodPost, path: "/review/tasks/task-1/stage", body: `{`, status: http.StatusBadRequest, want: "unexpected EOF"},
-		{name: "bad run json", method: http.MethodPost, path: "/review/tasks/task-1/runs", body: `{`, status: http.StatusBadRequest, want: "unexpected EOF"},
+		{name: "removed run endpoint", method: http.MethodPost, path: "/review/tasks/task-1/runs", body: `{`, status: http.StatusMethodNotAllowed, want: "method not allowed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -385,23 +365,6 @@ func TestServerRejectsMalformedReviewRequestsAndFailedRun(t *testing.T) {
 		})
 	}
 
-	raw, err := json.Marshal(ReviewRunRequest{Scope: ScopeLastTurn})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/review/tasks/task-1/runs?cwd="+repo, bytes.NewReader(raw))
-	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("failed run response = %d %q", rec.Code, rec.Body.String())
-	}
-	var response ReviewRunResponse
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Run.Status != ReviewRunFailed || !strings.Contains(response.Run.Error, "last-turn diff is not available") || len(response.Findings) != 0 {
-		t.Fatalf("failed review run = %+v findings %+v", response.Run, response.Findings)
-	}
 }
 
 func TestServerRejectsWorktreeOutsideWorkerDir(t *testing.T) {

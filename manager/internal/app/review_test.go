@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,65 +10,11 @@ import (
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
-func TestServiceReviewPersistenceDefaultsAndValidation(t *testing.T) {
+func TestServiceSaveTaskGitBackupDefaults(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time { return now }))
 	task := seedCompletedTaskWithSession(t, ctx, service)
-
-	for _, tc := range []struct {
-		name  string
-		input AddTaskReviewCommentInput
-	}{
-		{name: "missing task", input: AddTaskReviewCommentInput{Path: "README.md", Body: "fix"}},
-		{name: "missing path", input: AddTaskReviewCommentInput{TaskID: task.ID, Body: "fix"}},
-		{name: "missing body", input: AddTaskReviewCommentInput{TaskID: task.ID, Path: "README.md"}},
-		{name: "unknown task", input: AddTaskReviewCommentInput{TaskID: "missing", Path: "README.md", Body: "fix"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := service.AddTaskReviewComment(ctx, tc.input); err == nil {
-				t.Fatal("AddTaskReviewComment should reject invalid input")
-			}
-		})
-	}
-
-	comment, err := service.AddTaskReviewComment(ctx, AddTaskReviewCommentInput{
-		TaskID: task.ID,
-		Path:   "README.md",
-		Line:   12,
-		Body:   "Please tighten this branch.",
-	})
-	if err != nil {
-		t.Fatalf("AddTaskReviewComment returned error: %v", err)
-	}
-	if !strings.HasPrefix(comment.ID, "review_comment_") || comment.CreatedAt != now || comment.UpdatedAt != now {
-		t.Fatalf("comment defaults = %+v", comment)
-	}
-	comments, err := service.Store().TaskReviewComments(ctx, task.ID)
-	if err != nil || len(comments) != 1 || comments[0].ID != comment.ID {
-		t.Fatalf("stored comments = %+v, %v", comments, err)
-	}
-
-	run, err := service.SaveTaskReviewRun(ctx, domain.TaskReviewRun{TaskID: task.ID}, []domain.TaskReviewFinding{{
-		Path:  "README.md",
-		Line:  7,
-		Title: "Validation bug",
-		Body:  "The changed branch skips validation.",
-	}})
-	if err != nil {
-		t.Fatalf("SaveTaskReviewRun returned error: %v", err)
-	}
-	if !strings.HasPrefix(run.ID, "review_run_") || run.Status != domain.TaskReviewRunQueued || run.Scope != domain.TaskGitDiffScopeUncommitted || run.CreatedAt != now || run.UpdatedAt != now {
-		t.Fatalf("run defaults = %+v", run)
-	}
-	findings, err := service.Store().TaskReviewFindings(ctx, task.ID, "")
-	if err != nil || len(findings) != 1 {
-		t.Fatalf("stored findings = %+v, %v", findings, err)
-	}
-	finding := findings[0]
-	if !strings.HasPrefix(finding.ID, "review_finding_") || finding.RunID != run.ID || finding.Status != domain.TaskReviewFindingOpen || finding.Severity != domain.TaskReviewSeverityMedium || finding.CreatedAt != now || finding.UpdatedAt != now {
-		t.Fatalf("finding defaults = %+v", finding)
-	}
 
 	if err := service.SaveTaskGitBackup(ctx, domain.TaskGitBackup{TaskID: task.ID, Paths: []string{"README.md"}, PatchPath: "/tmp/backup.patch"}); err != nil {
 		t.Fatalf("SaveTaskGitBackup returned error: %v", err)
@@ -80,121 +25,6 @@ func TestServiceReviewPersistenceDefaultsAndValidation(t *testing.T) {
 	}
 	if !strings.HasPrefix(backups[0].ID, "git_backup_") || backups[0].CreatedAt != now {
 		t.Fatalf("backup defaults = %+v", backups[0])
-	}
-
-	if _, err := service.UpdateTaskReviewFindingStatus(ctx, finding.ID, domain.TaskReviewFindingStatus("BAD")); err == nil {
-		t.Fatal("UpdateTaskReviewFindingStatus should reject invalid status")
-	}
-	updated, err := service.UpdateTaskReviewFindingStatus(ctx, finding.ID, domain.TaskReviewFindingResolved)
-	if err != nil {
-		t.Fatalf("UpdateTaskReviewFindingStatus returned error: %v", err)
-	}
-	if updated.Status != domain.TaskReviewFindingResolved || updated.UpdatedAt != now {
-		t.Fatalf("updated finding = %+v", updated)
-	}
-}
-
-func TestServiceContinueTaskWithReviewFeedbackBuildsMessage(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
-	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time { return now }))
-	task := seedCompletedTaskWithSession(t, ctx, service)
-
-	if _, _, err := service.ContinueTaskWithReviewFeedback(ctx, ContinueTaskWithReviewFeedbackInput{TaskID: task.ID}); err == nil {
-		t.Fatal("ContinueTaskWithReviewFeedback should require message or selections")
-	}
-
-	run, err := service.SaveTaskReviewRun(ctx, domain.TaskReviewRun{TaskID: task.ID, Status: domain.TaskReviewRunCompleted}, []domain.TaskReviewFinding{{
-		ID:         "finding-review-feedback",
-		Path:       "README.md",
-		Line:       3,
-		Severity:   domain.TaskReviewSeverityHigh,
-		Status:     domain.TaskReviewFindingOpen,
-		Title:      "Validation bug",
-		Body:       "The changed branch skips validation.",
-		Suggestion: "Use the existing validator.",
-	}})
-	if err != nil {
-		t.Fatalf("SaveTaskReviewRun returned error: %v", err)
-	}
-	if run.ID == "" {
-		t.Fatal("SaveTaskReviewRun should assign an id")
-	}
-	comment, err := service.AddTaskReviewComment(ctx, AddTaskReviewCommentInput{
-		TaskID: task.ID,
-		Path:   "README.md",
-		Line:   4,
-		Body:   "Please tighten this.",
-	})
-	if err != nil {
-		t.Fatalf("AddTaskReviewComment returned error: %v", err)
-	}
-
-	continued, payload, err := service.ContinueTaskWithReviewFeedback(ctx, ContinueTaskWithReviewFeedbackInput{
-		TaskID:     task.ID,
-		FindingIDs: []string{"finding-review-feedback"},
-		CommentIDs: []string{comment.ID},
-		Message:    "  Please address these review items.  ",
-	})
-	if err != nil {
-		t.Fatalf("ContinueTaskWithReviewFeedback returned error: %v", err)
-	}
-	if continued.Status != domain.TaskStarting || payload.AgentSessionID != "session-1" || payload.WorktreePath != "/tmp/worktree" {
-		t.Fatalf("continue result = task %+v payload %+v", continued, payload)
-	}
-	for _, want := range []string{
-		"Please address these review items.",
-		"Selected review findings:",
-		"README.md:3 [HIGH] Validation bug - The changed branch skips validation. Suggestion: Use the existing validator.",
-		"Selected inline comments:",
-		"README.md:4 - Please tighten this.",
-	} {
-		if !strings.Contains(payload.Message, want) {
-			t.Fatalf("feedback message missing %q: %q", want, payload.Message)
-		}
-	}
-	conversations, err := service.Store().TaskConversations(ctx, task.ID)
-	if err != nil || len(conversations) == 0 || conversations[len(conversations)-1].Content != payload.Message {
-		t.Fatalf("stored conversations = %+v, %v", conversations, err)
-	}
-}
-
-func TestServiceReviewFeedbackRejectsMissingAndCrossTaskSelections(t *testing.T) {
-	ctx := context.Background()
-	service := NewService(store.NewMemoryStore())
-	task := seedCompletedTaskWithSession(t, ctx, service)
-	otherTask, err := service.CreateTask(ctx, CreateTaskInput{Title: "Other", ProjectID: task.ProjectID, AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherRun, err := service.SaveTaskReviewRun(ctx, domain.TaskReviewRun{ID: "run-other", TaskID: otherTask.ID}, []domain.TaskReviewFinding{{
-		ID:     "finding-other",
-		TaskID: otherTask.ID,
-		Path:   "other.go",
-		Title:  "Other finding",
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if otherRun.ID != "run-other" {
-		t.Fatalf("other run = %+v", otherRun)
-	}
-	otherComment, err := service.AddTaskReviewComment(ctx, AddTaskReviewCommentInput{TaskID: otherTask.ID, Path: "other.go", Body: "other comment"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := service.reviewFeedbackMessage(ctx, ContinueTaskWithReviewFeedbackInput{TaskID: task.ID, FindingIDs: []string{"missing-finding"}}); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("missing finding err = %v, want ErrNotFound", err)
-	}
-	if _, err := service.reviewFeedbackMessage(ctx, ContinueTaskWithReviewFeedbackInput{TaskID: task.ID, CommentIDs: []string{"missing-comment"}}); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("missing comment err = %v, want ErrNotFound", err)
-	}
-	if _, err := service.reviewFeedbackMessage(ctx, ContinueTaskWithReviewFeedbackInput{TaskID: task.ID, FindingIDs: []string{"finding-other"}}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("cross-task finding err = %v, want ErrConflict", err)
-	}
-	if _, err := service.reviewFeedbackMessage(ctx, ContinueTaskWithReviewFeedbackInput{TaskID: task.ID, CommentIDs: []string{otherComment.ID}}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("cross-task comment err = %v, want ErrConflict", err)
 	}
 }
 

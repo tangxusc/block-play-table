@@ -72,7 +72,7 @@
     button.danger { color: var(--red); }
     .body {
       display: grid;
-      grid-template-columns: 260px minmax(0, 1fr) 285px;
+      grid-template-columns: 260px minmax(0, 1fr);
       min-height: 654px;
     }
     aside {
@@ -176,7 +176,7 @@
     }
     .line {
       display: grid;
-      grid-template-columns: 74px minmax(0, 1fr) 230px;
+      grid-template-columns: 74px minmax(0, 1fr);
       gap: 10px;
       padding: 3px 10px;
       border-bottom: 1px solid rgba(215, 217, 210, 0.55);
@@ -185,46 +185,11 @@
     .line.del { background: rgba(181, 71, 71, 0.08); }
     .num { color: var(--muted); text-align: right; }
     .code { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-    .note {
-      align-self: start;
-      border: 1px solid #e0c27d;
-      border-radius: 6px;
-      background: #fff7e3;
-      color: #5b4215;
-      padding: 5px 7px;
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-      font-size: 12px;
-    }
-    .rail {
-      border-left: 1px solid var(--line);
-      background: #fbfbf8;
-      padding: 14px;
-    }
-    .finding, .comment, .backup {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      padding: 10px;
-      margin-bottom: 10px;
-    }
-    .finding strong { color: var(--amber); }
-    .comment strong { color: var(--blue); }
-    .backup strong { color: var(--green); }
     .muted { color: var(--muted); font-size: 12px; }
-    textarea {
-      width: 100%;
-      min-height: 76px;
-      resize: vertical;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      padding: 9px;
-      font: inherit;
-    }
     @media (max-width: 960px) {
       .body { grid-template-columns: 1fr; }
-      aside, .rail { border: 0; border-bottom: 1px solid var(--line); }
+      aside { border: 0; border-bottom: 1px solid var(--line); }
       .line { grid-template-columns: 64px minmax(0, 1fr); }
-      .note { grid-column: 2; }
     }
   </style>
 </head>
@@ -274,8 +239,6 @@
               <label class="field">Remote <span class="input">origin</span></label>
               <label class="field">Target branch <span class="input">main</span></label>
               <button>Refresh status</button>
-              <button class="primary">AI Review</button>
-              <button>Handle feedback</button>
             </div>
             <div class="git-status">branch task/review-142 · HEAD 8ac41f2a · target 4c91de77 · ahead 2 · behind 1 · staged changes, unstaged changes</div>
             <div class="git-groups">
@@ -319,33 +282,13 @@
               </span>
             </div>
             <div class="line"><span class="num">375 375</span><span class="code"> func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request, taskID string) {</span></div>
-            <div class="line add"><span class="num">    380</span><span class="code">+  var staged *bool</span><span class="note">HIGH: validate staged query parsing</span></div>
+            <div class="line add"><span class="num">    380</span><span class="code">+  var staged *bool</span></div>
             <div class="line add"><span class="num">    381</span><span class="code">+  if raw := strings.TrimSpace(r.URL.Query().Get("staged")); raw != "" {</span></div>
             <div class="line add"><span class="num">    382</span><span class="code">+    value, err := strconv.ParseBool(raw)</span></div>
             <div class="line del"><span class="num">385    </span><span class="code">-  diff, err := s.diff(r.Context(), task, scope)</span></div>
-            <div class="line add"><span class="num">    392</span><span class="code">+  diff, err := s.diff(r.Context(), task, scope, staged)</span><span class="note">Inline: keep BRANCH/LAST_TURN unaffected</span></div>
+            <div class="line add"><span class="num">    392</span><span class="code">+  diff, err := s.diff(r.Context(), task, scope, staged)</span></div>
           </div>
         </main>
-        <section class="rail">
-          <div class="finding">
-            <strong>Open finding</strong>
-            <div>worker/internal/review/server.go:380</div>
-            <p>Reject invalid staged query values before proxying Git operations.</p>
-            <button>Resolve</button>
-            <button>Dismiss</button>
-          </div>
-          <div class="comment">
-            <strong>Inline comment</strong>
-            <p>Keep this scoped to UNCOMMITTED and include untracked files under Unstaged.</p>
-          </div>
-          <textarea placeholder="Add inline comment"></textarea>
-          <div style="margin-top: 10px;"><button class="primary">Add comment</button></div>
-          <div class="backup" style="margin-top: 14px;">
-            <strong>Latest backup</strong>
-            <div class="muted">backup_1770000123456</div>
-            <button>Restore backup</button>
-          </div>
-        </section>
       </div>
     </section>
   </div>

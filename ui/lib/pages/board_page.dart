@@ -3356,14 +3356,8 @@ class _ReviewTabState extends State<_ReviewTab> {
   bool _busy = false;
   String? _message;
   bool _messageIsError = false;
-  final TextEditingController _commentController = TextEditingController();
   late final TextEditingController _remoteController;
   late final TextEditingController _branchController;
-
-  List<TaskReviewFindingData> get _findings => widget.detail.reviewRuns
-      .expand((run) => run.findings)
-      .where((finding) => finding.status != 'DISMISSED')
-      .toList();
 
   TaskGitDiffFileData? get _file {
     final files = _diff?.files ?? const <TaskGitDiffFileData>[];
@@ -3409,7 +3403,6 @@ class _ReviewTabState extends State<_ReviewTab> {
 
   @override
   void dispose() {
-    _commentController.dispose();
     _remoteController.dispose();
     _branchController.dispose();
     super.dispose();
@@ -3513,10 +3506,6 @@ class _ReviewTabState extends State<_ReviewTab> {
   Future<void> _loadChangeSet(String changeSet) async {
     await _loadDiff(changeSet: changeSet);
   }
-
-  Future<void> _startReview() => _run(
-        () => widget.apiClient.startTaskReview(widget.detail.task.id!, _scope),
-      );
 
   Future<void> _syncGitStatus() async {
     final status = await widget.apiClient.fetchTaskGitStatus(
@@ -3773,44 +3762,6 @@ class _ReviewTabState extends State<_ReviewTab> {
     );
   }
 
-  Future<void> _addComment() async {
-    final file = _file;
-    final body = _commentController.text.trim();
-    if (file == null || body.isEmpty) {
-      return;
-    }
-    await _run(
-      () => widget.apiClient.addTaskReviewComment(
-        taskId: widget.detail.task.id!,
-        path: file.path,
-        line: _firstChangedLine(file.patch),
-        body: body,
-      ),
-    );
-    _commentController.clear();
-  }
-
-  Future<void> _resolveFinding(String id) =>
-      _run(() => widget.apiClient.resolveTaskReviewFinding(id));
-
-  Future<void> _dismissFinding(String id) =>
-      _run(() => widget.apiClient.dismissTaskReviewFinding(id));
-
-  Future<void> _continueWithFeedback() => _run(
-        () => widget.apiClient.continueTaskWithReviewFeedback(
-          taskId: widget.detail.task.id!,
-          findingIds: _findings
-              .where((finding) => finding.status == 'OPEN')
-              .map((finding) => finding.id)
-              .toList(),
-          commentIds: widget.detail.reviewComments
-              .where((comment) => !comment.resolved)
-              .map((comment) => comment.id)
-              .toList(),
-          message: 'Please address the selected review feedback.',
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
     final files = _diff?.files ?? const <TaskGitDiffFileData>[];
@@ -3827,11 +3778,8 @@ class _ReviewTabState extends State<_ReviewTab> {
           hasFile: file != null,
           hasBackups: backups.isNotEmpty,
           latestBackupId: backups.isEmpty ? '' : backups.last.id,
-          canContinueWithFeedback: _canContinueWithFeedback(),
           onFetch: _fetchGit,
           onRefreshStatus: _refreshGitStatus,
-          onStartReview: _startReview,
-          onContinueWithFeedback: _continueWithFeedback,
           onRebase: _rebaseTarget,
           onMerge: _mergeBase,
           onStage: _stage,
@@ -3902,12 +3850,6 @@ class _ReviewTabState extends State<_ReviewTab> {
               Expanded(
                 child: _ReviewDiffPane(
                   file: file,
-                  findings: _findings,
-                  comments: widget.detail.reviewComments,
-                  controller: _commentController,
-                  onAddComment: _busy ? null : _addComment,
-                  onResolveFinding: _busy ? null : _resolveFinding,
-                  onDismissFinding: _busy ? null : _dismissFinding,
                   onStageHunk: _busy ? null : _stageHunk,
                   onUnstageHunk: _busy ? null : _unstageHunk,
                   onDiscardHunk: _busy ? null : _discardHunk,
@@ -3919,12 +3861,6 @@ class _ReviewTabState extends State<_ReviewTab> {
       ],
     );
   }
-
-  bool _canContinueWithFeedback() =>
-      widget.detail.task.status == 'COMPLETED' &&
-      (widget.detail.task.agentSessionId ?? '').isNotEmpty &&
-      (_findings.any((finding) => finding.status == 'OPEN') ||
-          widget.detail.reviewComments.any((comment) => !comment.resolved));
 }
 
 class _GitWorkspacePanel extends StatelessWidget {
@@ -3936,11 +3872,8 @@ class _GitWorkspacePanel extends StatelessWidget {
     required this.hasFile,
     required this.hasBackups,
     required this.latestBackupId,
-    required this.canContinueWithFeedback,
     required this.onFetch,
     required this.onRefreshStatus,
-    required this.onStartReview,
-    required this.onContinueWithFeedback,
     required this.onRebase,
     required this.onMerge,
     required this.onStage,
@@ -3960,11 +3893,8 @@ class _GitWorkspacePanel extends StatelessWidget {
   final bool hasFile;
   final bool hasBackups;
   final String latestBackupId;
-  final bool canContinueWithFeedback;
   final VoidCallback onFetch;
   final VoidCallback onRefreshStatus;
-  final VoidCallback onStartReview;
-  final VoidCallback onContinueWithFeedback;
   final VoidCallback onRebase;
   final VoidCallback onMerge;
   final VoidCallback onStage;
@@ -4031,20 +3961,6 @@ class _GitWorkspacePanel extends StatelessWidget {
                   onPressed: busy ? null : onRefreshStatus,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Refresh status'),
-                ),
-                FilledButton.icon(
-                  key: const ValueKey('review-action-ai-review'),
-                  onPressed: busy ? null : onStartReview,
-                  icon: const Icon(Icons.rate_review),
-                  label: const Text('AI Review'),
-                ),
-                FilledButton.tonalIcon(
-                  key: const ValueKey('review-action-feedback'),
-                  onPressed: busy || !canContinueWithFeedback
-                      ? null
-                      : onContinueWithFeedback,
-                  icon: const Icon(Icons.send),
-                  label: const Text('Handle feedback'),
                 ),
               ],
             ),
@@ -4260,35 +4176,18 @@ class _ReviewFileList extends StatelessWidget {
 class _ReviewDiffPane extends StatelessWidget {
   const _ReviewDiffPane({
     required this.file,
-    required this.findings,
-    required this.comments,
-    required this.controller,
-    required this.onAddComment,
-    required this.onResolveFinding,
-    required this.onDismissFinding,
     required this.onStageHunk,
     required this.onUnstageHunk,
     required this.onDiscardHunk,
   });
 
   final TaskGitDiffFileData? file;
-  final List<TaskReviewFindingData> findings;
-  final List<TaskReviewCommentData> comments;
-  final TextEditingController controller;
-  final VoidCallback? onAddComment;
-  final ValueChanged<String>? onResolveFinding;
-  final ValueChanged<String>? onDismissFinding;
   final Future<void> Function(String patch)? onStageHunk;
   final Future<void> Function(String patch)? onUnstageHunk;
   final Future<void> Function(String patch)? onDiscardHunk;
 
   @override
   Widget build(BuildContext context) {
-    final selectedPath = file?.path ?? '';
-    final selectedFindings =
-        findings.where((finding) => finding.path == selectedPath).toList();
-    final selectedComments =
-        comments.where((comment) => comment.path == selectedPath).toList();
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -4317,41 +4216,10 @@ class _ReviewDiffPane extends StatelessWidget {
                   Expanded(
                     child: _ReviewHunkList(
                       file: file!,
-                      findings: selectedFindings,
-                      comments: selectedComments,
                       onStageHunk: onStageHunk,
                       onUnstageHunk: onUnstageHunk,
                       onDiscardHunk: onDiscardHunk,
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  _ReviewAnnotations(
-                    findings: selectedFindings,
-                    comments: selectedComments,
-                    onResolveFinding: onResolveFinding,
-                    onDismissFinding: onDismissFinding,
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: controller,
-                          minLines: 1,
-                          maxLines: 2,
-                          decoration: const InputDecoration(
-                            labelText: 'Inline comment',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        tooltip: 'Add inline comment',
-                        onPressed: onAddComment,
-                        icon: const Icon(Icons.add_comment_outlined),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -4363,16 +4231,12 @@ class _ReviewDiffPane extends StatelessWidget {
 class _ReviewHunkList extends StatelessWidget {
   const _ReviewHunkList({
     required this.file,
-    required this.findings,
-    required this.comments,
     required this.onStageHunk,
     required this.onUnstageHunk,
     required this.onDiscardHunk,
   });
 
   final TaskGitDiffFileData file;
-  final List<TaskReviewFindingData> findings;
-  final List<TaskReviewCommentData> comments;
   final Future<void> Function(String patch)? onStageHunk;
   final Future<void> Function(String patch)? onUnstageHunk;
   final Future<void> Function(String patch)? onDiscardHunk;
@@ -4398,8 +4262,6 @@ class _ReviewHunkList extends StatelessWidget {
         }
         return _ReviewHunkView(
           hunk: hunks[index],
-          findings: findings,
-          comments: comments,
           onStageHunk: onStageHunk,
           onUnstageHunk: onUnstageHunk,
           onDiscardHunk: onDiscardHunk,
@@ -4412,16 +4274,12 @@ class _ReviewHunkList extends StatelessWidget {
 class _ReviewHunkView extends StatelessWidget {
   const _ReviewHunkView({
     required this.hunk,
-    required this.findings,
-    required this.comments,
     required this.onStageHunk,
     required this.onUnstageHunk,
     required this.onDiscardHunk,
   });
 
   final _DiffHunk hunk;
-  final List<TaskReviewFindingData> findings;
-  final List<TaskReviewCommentData> comments;
   final Future<void> Function(String patch)? onStageHunk;
   final Future<void> Function(String patch)? onUnstageHunk;
   final Future<void> Function(String patch)? onDiscardHunk;
@@ -4429,8 +4287,6 @@ class _ReviewHunkView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final findingsByLine = _findingsByLine(findings);
-    final commentsByLine = _commentsByLine(comments);
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: theme.dividerColor),
@@ -4480,10 +4336,6 @@ class _ReviewHunkView extends StatelessWidget {
           for (final line in hunk.lines)
             _ReviewDiffLineView(
               line: line,
-              findings: findingsByLine[line.newLine] ??
-                  const <TaskReviewFindingData>[],
-              comments: commentsByLine[line.newLine] ??
-                  const <TaskReviewCommentData>[],
             ),
         ],
       ),
@@ -4494,13 +4346,9 @@ class _ReviewHunkView extends StatelessWidget {
 class _ReviewDiffLineView extends StatelessWidget {
   const _ReviewDiffLineView({
     required this.line,
-    required this.findings,
-    required this.comments,
   });
 
   final _DiffLine line;
-  final List<TaskReviewFindingData> findings;
-  final List<TaskReviewCommentData> comments;
 
   @override
   Widget build(BuildContext context) {
@@ -4511,138 +4359,36 @@ class _ReviewDiffLineView extends StatelessWidget {
       _DiffLineKind.header => theme.colorScheme.surfaceContainerHighest,
       _ => null,
     };
-    final hasAnnotations = findings.isNotEmpty || comments.isNotEmpty;
     return Container(
       color: color,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 72,
-                child: Text(
-                  '${line.oldLine?.toString() ?? ''}'.padLeft(4) +
-                      ' ' +
-                      '${line.newLine?.toString() ?? ''}'.padLeft(4),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                    color: theme.hintColor,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: SelectableText(
-                  line.text,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 13,
-                    height: 1.35,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (hasAnnotations)
-            Padding(
-              padding: const EdgeInsets.only(left: 72, top: 4, bottom: 4),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  for (final finding in findings)
-                    Chip(
-                      avatar: const Icon(
-                        Icons.report_problem_outlined,
-                        size: 16,
-                      ),
-                      label: Text(
-                        '${finding.severity}: ${finding.title}',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  for (final comment in comments)
-                    Chip(
-                      avatar: const Icon(
-                        Icons.mode_comment_outlined,
-                        size: 16,
-                      ),
-                      label: Text(
-                        comment.body,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
+          SizedBox(
+            width: 72,
+            child: Text(
+              '${line.oldLine?.toString() ?? ''}'.padLeft(4) +
+                  ' ' +
+                  '${line.newLine?.toString() ?? ''}'.padLeft(4),
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                color: theme.hintColor,
               ),
             ),
+          ),
+          Expanded(
+            child: SelectableText(
+              line.text,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
         ],
       ),
-    );
-  }
-}
-
-class _ReviewAnnotations extends StatelessWidget {
-  const _ReviewAnnotations({
-    required this.findings,
-    required this.comments,
-    required this.onResolveFinding,
-    required this.onDismissFinding,
-  });
-
-  final List<TaskReviewFindingData> findings;
-  final List<TaskReviewCommentData> comments;
-  final ValueChanged<String>? onResolveFinding;
-  final ValueChanged<String>? onDismissFinding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final finding in findings)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.report_problem_outlined),
-            title: Text(finding.title, overflow: TextOverflow.ellipsis),
-            subtitle: Text(
-              '${finding.severity} ${finding.status} line ${finding.line}: ${finding.body}',
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: SizedBox(
-              width: 96,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  IconButton(
-                    tooltip: 'Resolve finding',
-                    onPressed:
-                        finding.status == 'OPEN' && onResolveFinding != null
-                            ? () => onResolveFinding?.call(finding.id)
-                            : null,
-                    icon: const Icon(Icons.check_circle_outline),
-                  ),
-                  IconButton(
-                    tooltip: 'Dismiss finding',
-                    onPressed:
-                        finding.status == 'OPEN' && onDismissFinding != null
-                            ? () => onDismissFinding?.call(finding.id)
-                            : null,
-                    icon: const Icon(Icons.block),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        for (final comment in comments)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.mode_comment_outlined),
-            title: Text(comment.body, overflow: TextOverflow.ellipsis),
-            subtitle: Text('line ${comment.line}'),
-          ),
-      ],
     );
   }
 }
@@ -4795,38 +4541,6 @@ _HunkCursor _parseHunkCursor(String header) {
 }
 
 String _joinPatchLines(List<String> lines) => '${lines.join('\n')}\n';
-
-Map<int?, List<TaskReviewFindingData>> _findingsByLine(
-  List<TaskReviewFindingData> findings,
-) {
-  final grouped = <int?, List<TaskReviewFindingData>>{};
-  for (final finding in findings) {
-    grouped.putIfAbsent(finding.line, () => []).add(finding);
-  }
-  return grouped;
-}
-
-Map<int?, List<TaskReviewCommentData>> _commentsByLine(
-  List<TaskReviewCommentData> comments,
-) {
-  final grouped = <int?, List<TaskReviewCommentData>>{};
-  for (final comment in comments) {
-    grouped.putIfAbsent(comment.line, () => []).add(comment);
-  }
-  return grouped;
-}
-
-int _firstChangedLine(String patch) {
-  for (final line in const LineSplitter().convert(patch)) {
-    if (line.startsWith('@@')) {
-      final match = RegExp(r'\+(\d+)').firstMatch(line);
-      if (match != null) {
-        return int.tryParse(match.group(1) ?? '') ?? 0;
-      }
-    }
-  }
-  return 0;
-}
 
 class _WorkerWebTab extends StatefulWidget {
   const _WorkerWebTab({

@@ -34,15 +34,6 @@ type Store interface {
 	TaskInteraction(context.Context, string) (*domain.TaskInteraction, error)
 	TaskInteractions(context.Context, string, domain.TaskInteractionStatus) ([]domain.TaskInteraction, error)
 	CancelPendingTaskInteractions(context.Context, string, time.Time) error
-	SaveTaskReviewRun(context.Context, domain.TaskReviewRun) error
-	TaskReviewRun(context.Context, string) (*domain.TaskReviewRun, error)
-	TaskReviewRuns(context.Context, string) ([]domain.TaskReviewRun, error)
-	SaveTaskReviewFinding(context.Context, domain.TaskReviewFinding) error
-	TaskReviewFinding(context.Context, string) (*domain.TaskReviewFinding, error)
-	TaskReviewFindings(context.Context, string, domain.TaskReviewFindingStatus) ([]domain.TaskReviewFinding, error)
-	SaveTaskReviewComment(context.Context, domain.TaskReviewComment) error
-	TaskReviewComment(context.Context, string) (*domain.TaskReviewComment, error)
-	TaskReviewComments(context.Context, string) ([]domain.TaskReviewComment, error)
 	SaveTaskGitBackup(context.Context, domain.TaskGitBackup) error
 	TaskGitBackups(context.Context, string) ([]domain.TaskGitBackup, error)
 	SaveTaskGitTurnSnapshot(context.Context, domain.TaskGitTurnSnapshot) error
@@ -63,9 +54,6 @@ type MemoryStore struct {
 	logs              []domain.TaskLog
 	conversations     []domain.ConversationMessage
 	interactions      map[string]domain.TaskInteraction
-	reviewRuns        map[string]domain.TaskReviewRun
-	reviewFindings    map[string]domain.TaskReviewFinding
-	reviewComments    map[string]domain.TaskReviewComment
 	gitBackups        map[string]domain.TaskGitBackup
 	gitSnapshots      map[string]domain.TaskGitTurnSnapshot
 	events            []domain.DomainEvent
@@ -79,9 +67,6 @@ func NewMemoryStore() *MemoryStore {
 		workers:           map[string]*domain.Worker{},
 		projects:          map[string]*domain.Project{},
 		interactions:      map[string]domain.TaskInteraction{},
-		reviewRuns:        map[string]domain.TaskReviewRun{},
-		reviewFindings:    map[string]domain.TaskReviewFinding{},
-		reviewComments:    map[string]domain.TaskReviewComment{},
 		gitBackups:        map[string]domain.TaskGitBackup{},
 		gitSnapshots:      map[string]domain.TaskGitTurnSnapshot{},
 		settings:          domain.NewSettings(time.Now().UTC()),
@@ -137,21 +122,6 @@ func (s *MemoryStore) DeleteTask(ctx context.Context, id string) error {
 	for interactionID, interaction := range s.interactions {
 		if interaction.TaskID == id {
 			delete(s.interactions, interactionID)
-		}
-	}
-	for runID, run := range s.reviewRuns {
-		if run.TaskID == id {
-			delete(s.reviewRuns, runID)
-		}
-	}
-	for findingID, finding := range s.reviewFindings {
-		if finding.TaskID == id {
-			delete(s.reviewFindings, findingID)
-		}
-	}
-	for commentID, comment := range s.reviewComments {
-		if comment.TaskID == id {
-			delete(s.reviewComments, commentID)
 		}
 	}
 	for backupID, backup := range s.gitBackups {
@@ -342,103 +312,6 @@ func (s *MemoryStore) CancelPendingTaskInteractions(ctx context.Context, taskID 
 		}
 	}
 	return nil
-}
-
-func (s *MemoryStore) SaveTaskReviewRun(ctx context.Context, run domain.TaskReviewRun) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reviewRuns[run.ID] = run
-	return nil
-}
-
-func (s *MemoryStore) TaskReviewRun(ctx context.Context, id string) (*domain.TaskReviewRun, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	run, ok := s.reviewRuns[id]
-	if !ok {
-		return nil, fmt.Errorf("%w: task review run %s", domain.ErrNotFound, id)
-	}
-	copy := run
-	return &copy, nil
-}
-
-func (s *MemoryStore) TaskReviewRuns(ctx context.Context, taskID string) ([]domain.TaskReviewRun, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]domain.TaskReviewRun, 0)
-	for _, run := range s.reviewRuns {
-		if run.TaskID == taskID {
-			out = append(out, run)
-		}
-	}
-	slices.SortFunc(out, func(a, b domain.TaskReviewRun) int { return a.CreatedAt.Compare(b.CreatedAt) })
-	return out, nil
-}
-
-func (s *MemoryStore) SaveTaskReviewFinding(ctx context.Context, finding domain.TaskReviewFinding) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reviewFindings[finding.ID] = finding
-	return nil
-}
-
-func (s *MemoryStore) TaskReviewFinding(ctx context.Context, id string) (*domain.TaskReviewFinding, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	finding, ok := s.reviewFindings[id]
-	if !ok {
-		return nil, fmt.Errorf("%w: task review finding %s", domain.ErrNotFound, id)
-	}
-	copy := finding
-	return &copy, nil
-}
-
-func (s *MemoryStore) TaskReviewFindings(ctx context.Context, taskID string, status domain.TaskReviewFindingStatus) ([]domain.TaskReviewFinding, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]domain.TaskReviewFinding, 0)
-	for _, finding := range s.reviewFindings {
-		if finding.TaskID != taskID {
-			continue
-		}
-		if status != "" && finding.Status != status {
-			continue
-		}
-		out = append(out, finding)
-	}
-	slices.SortFunc(out, func(a, b domain.TaskReviewFinding) int { return a.CreatedAt.Compare(b.CreatedAt) })
-	return out, nil
-}
-
-func (s *MemoryStore) SaveTaskReviewComment(ctx context.Context, comment domain.TaskReviewComment) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reviewComments[comment.ID] = comment
-	return nil
-}
-
-func (s *MemoryStore) TaskReviewComment(ctx context.Context, id string) (*domain.TaskReviewComment, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	comment, ok := s.reviewComments[id]
-	if !ok {
-		return nil, fmt.Errorf("%w: task review comment %s", domain.ErrNotFound, id)
-	}
-	copy := comment
-	return &copy, nil
-}
-
-func (s *MemoryStore) TaskReviewComments(ctx context.Context, taskID string) ([]domain.TaskReviewComment, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]domain.TaskReviewComment, 0)
-	for _, comment := range s.reviewComments {
-		if comment.TaskID == taskID {
-			out = append(out, comment)
-		}
-	}
-	slices.SortFunc(out, func(a, b domain.TaskReviewComment) int { return a.CreatedAt.Compare(b.CreatedAt) })
-	return out, nil
 }
 
 func (s *MemoryStore) SaveTaskGitBackup(ctx context.Context, backup domain.TaskGitBackup) error {

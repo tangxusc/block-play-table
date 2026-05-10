@@ -156,57 +156,10 @@ func TestMemoryStoreTaskInteractionCRUD(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreTaskReviewCRUD(t *testing.T) {
+func TestMemoryStoreTaskGitBackupAndSnapshotCRUD(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
 	s := NewMemoryStore()
-
-	run := domain.TaskReviewRun{
-		ID:        "review-run-1",
-		TaskID:    "task-1",
-		Scope:     domain.TaskGitDiffScopeUncommitted,
-		Status:    domain.TaskReviewRunCompleted,
-		Summary:   "reviewed",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.SaveTaskReviewRun(ctx, run); err != nil {
-		t.Fatalf("SaveTaskReviewRun returned error: %v", err)
-	}
-	runs, err := s.TaskReviewRuns(ctx, "task-1")
-	if err != nil || len(runs) != 1 || runs[0].Summary != "reviewed" {
-		t.Fatalf("TaskReviewRuns = %+v, %v", runs, err)
-	}
-
-	finding := domain.TaskReviewFinding{
-		ID:        "finding-1",
-		RunID:     run.ID,
-		TaskID:    run.TaskID,
-		Path:      "README.md",
-		Line:      12,
-		Severity:  domain.TaskReviewSeverityHigh,
-		Status:    domain.TaskReviewFindingOpen,
-		Title:     "Bug",
-		Body:      "Details",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.SaveTaskReviewFinding(ctx, finding); err != nil {
-		t.Fatalf("SaveTaskReviewFinding returned error: %v", err)
-	}
-	findings, err := s.TaskReviewFindings(ctx, "task-1", domain.TaskReviewFindingOpen)
-	if err != nil || len(findings) != 1 || findings[0].Path != "README.md" {
-		t.Fatalf("TaskReviewFindings = %+v, %v", findings, err)
-	}
-
-	comment := domain.TaskReviewComment{ID: "comment-1", TaskID: "task-1", Path: "README.md", Line: 12, Body: "Please fix", CreatedAt: now, UpdatedAt: now}
-	if err := s.SaveTaskReviewComment(ctx, comment); err != nil {
-		t.Fatalf("SaveTaskReviewComment returned error: %v", err)
-	}
-	comments, err := s.TaskReviewComments(ctx, "task-1")
-	if err != nil || len(comments) != 1 || comments[0].Body != "Please fix" {
-		t.Fatalf("TaskReviewComments = %+v, %v", comments, err)
-	}
 
 	backup := domain.TaskGitBackup{ID: "backup-1", TaskID: "task-1", Paths: []string{"README.md"}, PatchPath: "/tmp/backup.patch", CreatedAt: now}
 	if err := s.SaveTaskGitBackup(ctx, backup); err != nil {

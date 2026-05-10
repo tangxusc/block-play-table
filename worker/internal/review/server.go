@@ -29,33 +29,6 @@ const (
 	ScopeLastTurn    DiffScope = "LAST_TURN"
 )
 
-type ReviewRunStatus string
-
-const (
-	ReviewRunQueued    ReviewRunStatus = "QUEUED"
-	ReviewRunRunning   ReviewRunStatus = "RUNNING"
-	ReviewRunCompleted ReviewRunStatus = "COMPLETED"
-	ReviewRunFailed    ReviewRunStatus = "FAILED"
-)
-
-type FindingSeverity string
-
-const (
-	FindingSeverityInfo     FindingSeverity = "INFO"
-	FindingSeverityLow      FindingSeverity = "LOW"
-	FindingSeverityMedium   FindingSeverity = "MEDIUM"
-	FindingSeverityHigh     FindingSeverity = "HIGH"
-	FindingSeverityCritical FindingSeverity = "CRITICAL"
-)
-
-type FindingStatus string
-
-const (
-	FindingOpen      FindingStatus = "OPEN"
-	FindingResolved  FindingStatus = "RESOLVED"
-	FindingDismissed FindingStatus = "DISMISSED"
-)
-
 type Config struct {
 	Enabled          bool
 	Host             string
@@ -188,45 +161,6 @@ type GitCommandResponse struct {
 	HeadRef string        `json:"headRef,omitempty"`
 	BaseRef string        `json:"baseRef,omitempty"`
 	Diff    *DiffResponse `json:"diff,omitempty"`
-}
-
-type ReviewRunRequest struct {
-	Scope DiffScope `json:"scope"`
-}
-
-type ReviewRunResponse struct {
-	Run      TaskReviewRun       `json:"run"`
-	Findings []TaskReviewFinding `json:"findings"`
-}
-
-type TaskReviewRun struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"taskId"`
-	Scope       DiffScope       `json:"scope"`
-	Status      ReviewRunStatus `json:"status"`
-	AgentType   string          `json:"agentType,omitempty"`
-	Summary     string          `json:"summary,omitempty"`
-	RawResult   string          `json:"rawResult,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	StartedAt   *time.Time      `json:"startedAt,omitempty"`
-	CompletedAt *time.Time      `json:"completedAt,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
-}
-
-type TaskReviewFinding struct {
-	ID         string          `json:"id"`
-	RunID      string          `json:"runId"`
-	TaskID     string          `json:"taskId"`
-	Path       string          `json:"path"`
-	Line       int             `json:"line"`
-	Severity   FindingSeverity `json:"severity"`
-	Status     FindingStatus   `json:"status"`
-	Title      string          `json:"title"`
-	Body       string          `json:"body"`
-	Suggestion string          `json:"suggestion,omitempty"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 type TaskGitBackup struct {
@@ -418,8 +352,6 @@ func (s *Server) handleTaskReview(w http.ResponseWriter, r *http.Request) {
 		s.handleDiff(w, r, taskID)
 	case r.Method == http.MethodGet && action == "git-status":
 		s.handleGitStatus(w, r, taskID)
-	case r.Method == http.MethodPost && action == "runs":
-		s.handleRun(w, r, taskID)
 	case r.Method == http.MethodPost && (action == "stage" || action == "unstage" || action == "discard" || action == "restore"):
 		s.handleAction(w, r, taskID, action)
 	case r.Method == http.MethodPost && action == "git-command":
@@ -527,28 +459,6 @@ func (s *Server) handleGitCommand(w http.ResponseWriter, r *http.Request, taskID
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) handleRun(w http.ResponseWriter, r *http.Request, taskID string) {
-	var input ReviewRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if input.Scope == "" {
-		input.Scope = ScopeUncommitted
-	}
-	task, err := s.resolveTask(taskID, r.URL.Query().Get("cwd"), r.URL.Query().Get("baseBranch"), r.URL.Query().Get("defaultBranch"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	response, err := s.reviewRun(r.Context(), task, input.Scope)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
-}
-
 func (s *Server) resolveTask(taskID, cwd, baseBranch, defaultBranch string) (TaskContext, error) {
 	s.mu.RLock()
 	task := s.tasks[taskID]
@@ -648,65 +558,6 @@ func (s *Server) diff(ctx context.Context, task TaskContext, scope DiffScope, st
 	default:
 		return response, fmt.Errorf("unsupported diff scope %q", scope)
 	}
-}
-
-func (s *Server) reviewRun(ctx context.Context, task TaskContext, scope DiffScope) (ReviewRunResponse, error) {
-	startedAt := time.Now().UTC()
-	diff, err := s.diff(ctx, task, scope, nil)
-	completedAt := time.Now().UTC()
-	run := TaskReviewRun{
-		ID:          fmt.Sprintf("review_run_%d", startedAt.UnixNano()),
-		TaskID:      task.TaskID,
-		Scope:       scope,
-		Status:      ReviewRunCompleted,
-		AgentType:   task.AgentType,
-		StartedAt:   &startedAt,
-		CompletedAt: &completedAt,
-		CreatedAt:   startedAt,
-		UpdatedAt:   completedAt,
-	}
-	if err != nil {
-		run.Status = ReviewRunFailed
-		run.Error = err.Error()
-		raw, _ := json.Marshal(map[string]any{"summary": "", "findings": []TaskReviewFinding{}, "error": run.Error})
-		run.RawResult = string(raw)
-		return ReviewRunResponse{Run: run}, nil
-	}
-	findings := reviewFindingsFromDiff(task.TaskID, run.ID, diff.Files, completedAt)
-	run.Summary = fmt.Sprintf("%d finding(s)", len(findings))
-	raw, err := json.Marshal(map[string]any{"summary": run.Summary, "findings": findings})
-	if err != nil {
-		run.Status = ReviewRunFailed
-		run.Error = err.Error()
-	} else {
-		run.RawResult = string(raw)
-	}
-	return ReviewRunResponse{Run: run, Findings: findings}, nil
-}
-
-func reviewFindingsFromDiff(taskID, runID string, files []DiffFile, now time.Time) []TaskReviewFinding {
-	findings := make([]TaskReviewFinding, 0, len(files))
-	for index, file := range files {
-		if strings.TrimSpace(file.Path) == "" {
-			continue
-		}
-		line := firstAddedLine(file.Patch)
-		findings = append(findings, TaskReviewFinding{
-			ID:         fmt.Sprintf("%s_finding_%d", runID, index+1),
-			RunID:      runID,
-			TaskID:     taskID,
-			Path:       file.Path,
-			Line:       line,
-			Severity:   FindingSeverityMedium,
-			Status:     FindingOpen,
-			Title:      "Review changed file",
-			Body:       "Review this changed file for correctness, regressions, and missing tests before merging.",
-			Suggestion: "Address any issue found here, or resolve the finding if the change is intentional.",
-			CreatedAt:  now,
-			UpdatedAt:  now,
-		})
-	}
-	return findings
 }
 
 func firstAddedLine(patch string) int {

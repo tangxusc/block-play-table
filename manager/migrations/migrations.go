@@ -35,6 +35,9 @@ var UniqueWorkerNameSQL string
 //go:embed 011_task_review.sql
 var TaskReviewSQL string
 
+//go:embed 012_drop_task_review.sql
+var DropTaskReviewSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -52,4 +55,5 @@ var All = []Migration{
 	{Version: "009_task_interactions", SQL: TaskInteractionsSQL},
 	{Version: "010_unique_worker_name", SQL: UniqueWorkerNameSQL},
 	{Version: "011_task_review", SQL: TaskReviewSQL},
+	{Version: "012_drop_task_review", SQL: DropTaskReviewSQL},
 }

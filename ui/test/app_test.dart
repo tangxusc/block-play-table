@@ -425,7 +425,7 @@ void main() {
     expect(find.text('Conversation'), findsOneWidget);
   });
 
-  testWidgets('task detail review tab renders diff findings and actions', (
+  testWidgets('task detail review tab renders git diff actions without review feedback controls', (
     tester,
   ) async {
     const surfaceSize = Size(1200, 800);
@@ -445,37 +445,6 @@ void main() {
           ),
         ],
       ),
-      reviewRuns: const [
-        TaskReviewRunData(
-          id: 'run-1',
-          taskId: 'task-1',
-          scope: 'UNCOMMITTED',
-          status: 'COMPLETED',
-          summary: '1 finding',
-          findings: [
-            TaskReviewFindingData(
-              id: 'finding-1',
-              runId: 'run-1',
-              taskId: 'task-1',
-              path: 'README.md',
-              line: 4,
-              severity: 'HIGH',
-              status: 'OPEN',
-              title: 'Bug',
-              body: 'Fix validation',
-            ),
-          ],
-        ),
-      ],
-      reviewComments: const [
-        TaskReviewCommentData(
-          id: 'comment-1',
-          taskId: 'task-1',
-          path: 'README.md',
-          line: 4,
-          body: 'Please tighten this.',
-        ),
-      ],
       gitStatus: const TaskGitStatusData(
         taskId: 'task-1',
         remote: 'origin',
@@ -506,8 +475,6 @@ void main() {
     expect(find.textContaining('ahead 2'), findsOneWidget);
     expect(find.textContaining('behind 1'), findsOneWidget);
     expect(find.text('README.md'), findsWidgets);
-    expect(find.text('Bug'), findsOneWidget);
-    expect(find.text('Please tighten this.'), findsOneWidget);
     expect(find.text('Fetch'), findsOneWidget);
     expect(find.text('Rebase onto target'), findsOneWidget);
     expect(find.text('Merge target into task branch'), findsOneWidget);
@@ -515,6 +482,12 @@ void main() {
     expect(find.text('Push branch'), findsOneWidget);
     expect(find.text('Publish fast-forward'), findsOneWidget);
     expect(find.text('Publish merge commit'), findsOneWidget);
+    expect(find.text('AI Review'), findsNothing);
+    expect(find.text('Handle feedback'), findsNothing);
+    expect(find.text('Inline comment'), findsNothing);
+    expect(find.byTooltip('Add inline comment'), findsNothing);
+    expect(find.byTooltip('Resolve finding'), findsNothing);
+    expect(find.byTooltip('Dismiss finding'), findsNothing);
 
     Future<void> tapReviewAction(String key) async {
       final finder = find.byKey(ValueKey(key));
@@ -523,10 +496,6 @@ void main() {
       await tester.tap(finder);
       await tester.pumpAndSettle();
     }
-
-    await tester.tap(find.byKey(const ValueKey('review-action-ai-review')));
-    await tester.pump();
-    expect(apiClient.reviewStartedTaskId, 'task-1');
 
     await tester.enterText(
       find.byKey(const ValueKey('review-git-remote')),
@@ -551,12 +520,6 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Discard'));
     await tester.pumpAndSettle();
     expect(apiClient.discardedTaskId, 'task-1');
-
-    await tester.tap(find.byKey(const ValueKey('review-action-feedback')));
-    await tester.pumpAndSettle();
-    expect(apiClient.continuedWithReviewTaskId, 'task-1');
-    expect(apiClient.continuedWithReviewFindingIds, ['finding-1']);
-    expect(apiClient.continuedWithReviewCommentIds, ['comment-1']);
 
     await tapReviewAction('review-action-commit');
     expect(find.text('Commit staged changes'), findsOneWidget);
@@ -1641,8 +1604,6 @@ class FakeApiClient extends ApiClient {
     List<DomainEventItem>? events,
     TaskItem? detailTask,
     TaskGitDiffData? reviewDiff,
-    List<TaskReviewRunData>? reviewRuns,
-    List<TaskReviewCommentData>? reviewComments,
     List<TaskGitBackupData>? gitBackups,
     TaskGitStatusData? gitStatus,
     String? terminalCheckError,
@@ -1654,8 +1615,6 @@ class FakeApiClient extends ApiClient {
         _domainEvents = events ?? const [],
         _detailTask = detailTask,
         _reviewDiff = reviewDiff,
-        _reviewRuns = reviewRuns ?? const [],
-        _reviewComments = reviewComments ?? const [],
         _gitBackups = gitBackups ?? const [],
         _gitStatus = gitStatus,
         _terminalCheckError = terminalCheckError,
@@ -1671,8 +1630,6 @@ class FakeApiClient extends ApiClient {
   final List<DomainEventItem> _domainEvents;
   final TaskItem? _detailTask;
   final TaskGitDiffData? _reviewDiff;
-  final List<TaskReviewRunData> _reviewRuns;
-  final List<TaskReviewCommentData> _reviewComments;
   final List<TaskGitBackupData> _gitBackups;
   final TaskGitStatusData? _gitStatus;
   final String? _terminalCheckError;
@@ -1690,11 +1647,7 @@ class FakeApiClient extends ApiClient {
   String? createdTaskEndDate;
   String? continuedTaskId;
   String? continuedMessage;
-  String? reviewStartedTaskId;
   String? discardedTaskId;
-  String? continuedWithReviewTaskId;
-  List<String>? continuedWithReviewFindingIds;
-  List<String>? continuedWithReviewCommentIds;
   final List<Map<String, String>> gitCommands = [];
   SettingsData? savedSettings;
   WorkerItem? savedWorker;
@@ -1902,8 +1855,6 @@ class FakeApiClient extends ApiClient {
             ]
           : const [],
       reviewDiff: _reviewDiff,
-      reviewRuns: _reviewRuns,
-      reviewComments: _reviewComments,
       gitBackups: _gitBackups,
       gitStatus: _gitStatus,
     );
@@ -1946,19 +1897,6 @@ class FakeApiClient extends ApiClient {
       hasUntrackedFiles: status.hasUntrackedFiles,
       generatedAt: status.generatedAt,
     );
-  }
-
-  @override
-  Future<TaskReviewRunData> startTaskReview(String taskId, String scope) async {
-    reviewStartedTaskId = taskId;
-    return _reviewRuns.isEmpty
-        ? TaskReviewRunData(
-            id: 'run-new',
-            taskId: taskId,
-            scope: scope,
-            status: 'COMPLETED',
-          )
-        : _reviewRuns.first;
   }
 
   @override
@@ -2017,33 +1955,6 @@ class FakeApiClient extends ApiClient {
       output: '$command completed',
       diff: _reviewDiff,
     );
-  }
-
-  @override
-  Future<TaskReviewCommentData> addTaskReviewComment({
-    required String taskId,
-    required String path,
-    required int line,
-    required String body,
-  }) async =>
-      TaskReviewCommentData(
-        id: 'comment-new',
-        taskId: taskId,
-        path: path,
-        line: line,
-        body: body,
-      );
-
-  @override
-  Future<void> continueTaskWithReviewFeedback({
-    required String taskId,
-    required List<String> findingIds,
-    required List<String> commentIds,
-    String message = '',
-  }) async {
-    continuedWithReviewTaskId = taskId;
-    continuedWithReviewFindingIds = findingIds;
-    continuedWithReviewCommentIds = commentIds;
   }
 
   @override

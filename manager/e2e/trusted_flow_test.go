@@ -255,16 +255,6 @@ func TestTrustedManagerWorkerReviewFRPFlow(t *testing.T) {
 		t.Fatalf("review diff files = %#v", files)
 	}
 
-	run := postGraphQL(t, server.URL, `mutation StartReview($input: StartTaskReviewInput!) {
-		startTaskReview(input: $input) {
-			id status findings { id path status }
-		}
-	}`, map[string]any{"input": map[string]any{"taskId": taskID, "scope": "UNCOMMITTED"}})
-	reviewRun := run["data"].(map[string]any)["startTaskReview"].(map[string]any)
-	if reviewRun["status"] != "COMPLETED" || len(reviewRun["findings"].([]any)) != 1 {
-		t.Fatalf("review run = %#v", reviewRun)
-	}
-
 	postGraphQL(t, server.URL, `mutation Stage($input: TaskGitChangeInput!) {
 		stageTaskGitChanges(input: $input) { ok }
 	}`, map[string]any{"input": map[string]any{"taskId": taskID, "paths": []string{"tracked.txt"}}})
@@ -337,34 +327,6 @@ func newReviewE2EStub(t *testing.T, repo string) (*httptest.Server, map[string]s
 					"additions": 1,
 					"deletions": 0,
 					"patch":     "@@ -1 +1,2 @@\n base\n+review change\n",
-				}},
-			})
-		case r.Method == http.MethodPost && action == "runs":
-			runID := "review-run-e2e"
-			writeReviewJSON(t, w, map[string]any{
-				"run": map[string]any{
-					"id":        runID,
-					"taskId":    taskID,
-					"scope":     "UNCOMMITTED",
-					"status":    "COMPLETED",
-					"agentType": "codex",
-					"summary":   "1 finding(s)",
-					"rawResult": `{"summary":"1 finding(s)","findings":[{"path":"tracked.txt"}]}`,
-					"createdAt": now,
-					"updatedAt": now,
-				},
-				"findings": []map[string]any{{
-					"id":        "review-finding-e2e",
-					"runId":     runID,
-					"taskId":    taskID,
-					"path":      "tracked.txt",
-					"line":      2,
-					"severity":  "MEDIUM",
-					"status":    "OPEN",
-					"title":     "Review changed file",
-					"body":      "Review this changed file before merging.",
-					"createdAt": now,
-					"updatedAt": now,
 				}},
 			})
 		case r.Method == http.MethodPost && action == "stage":
