@@ -97,6 +97,18 @@ class ApiClient {
     ).toString();
   }
 
+  String workerTerminalWebSocketUrlForWorker(String workerId) {
+    final normalizedWorker = workerId.trim();
+    if (normalizedWorker.isEmpty) {
+      throw const FormatException('Worker is required');
+    }
+    return Uri.parse(websocketEndpoint).replace(
+      pathSegments: ['terminal', 'workers', normalizedWorker, 'ws'],
+      query: null,
+      fragment: null,
+    ).toString();
+  }
+
   String workerTerminalCheckUrl(String taskId) {
     final normalizedTask = taskId.trim();
     if (normalizedTask.isEmpty) {
@@ -109,8 +121,33 @@ class ApiClient {
     ).toString();
   }
 
+  String workerTerminalCheckUrlForWorker(String workerId) {
+    final normalizedWorker = workerId.trim();
+    if (normalizedWorker.isEmpty) {
+      throw const FormatException('Worker is required');
+    }
+    return Uri.parse(endpoint).replace(
+      pathSegments: ['terminal', 'workers', normalizedWorker],
+      query: null,
+      fragment: null,
+    ).toString();
+  }
+
   Future<void> checkWorkerTerminal(String taskId) async {
     final response = await http.get(Uri.parse(workerTerminalCheckUrl(taskId)));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = response.body.trim();
+      throw StateError(
+        body.isEmpty
+            ? 'Worker terminal check failed (${response.statusCode})'
+            : body,
+      );
+    }
+  }
+
+  Future<void> checkWorkerTerminalForWorker(String workerId) async {
+    final response =
+        await http.get(Uri.parse(workerTerminalCheckUrlForWorker(workerId)));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = response.body.trim();
       throw StateError(

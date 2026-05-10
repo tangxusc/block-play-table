@@ -4,6 +4,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../realtime_refresh.dart';
 import '../widgets.dart';
+import '../widgets/worker_terminal_panel.dart';
 
 class WorkersPage extends StatefulWidget {
   const WorkersPage({super.key, required this.apiClient});
@@ -196,6 +197,12 @@ class _WorkersPageState extends State<WorkersPage> {
                                             : '${worker.currentTaskIds.length} running',
                                       ),
                                       IconButton(
+                                        tooltip: 'Open worker terminal',
+                                        onPressed: () =>
+                                            _openWorkerTerminal(worker),
+                                        icon: const Icon(Icons.terminal),
+                                      ),
+                                      IconButton(
                                         tooltip: 'Edit worker',
                                         onPressed: () =>
                                             _openWorkerDialog(worker),
@@ -272,6 +279,32 @@ class _WorkersPageState extends State<WorkersPage> {
     if (saved == true) {
       _reload(firstPage: worker == null);
     }
+  }
+
+  Future<void> _openWorkerTerminal(WorkerItem worker) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Worker terminal'),
+        content: SizedBox(
+          width: 920,
+          height: 620,
+          child: WorkerTerminalPanel(
+            terminalUrl:
+                widget.apiClient.workerTerminalWebSocketUrlForWorker(worker.id),
+            unavailableReason: _workerTerminalUnavailableReason(worker),
+            checkTerminal: () =>
+                widget.apiClient.checkWorkerTerminalForWorker(worker.id),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -581,6 +614,16 @@ String _agentLabel(String agent) => switch (agent) {
       'claude' => 'Claude',
       _ => agent,
     };
+
+String _workerTerminalUnavailableReason(WorkerItem worker) {
+  if (worker.status != 'ONLINE') {
+    return 'Worker is not online';
+  }
+  if (worker.capabilities['terminal_enabled'] != 'true') {
+    return 'Worker terminal is disabled';
+  }
+  return '';
+}
 
 class _WorkerEnvEditor extends StatelessWidget {
   const _WorkerEnvEditor({

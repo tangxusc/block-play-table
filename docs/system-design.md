@@ -1307,6 +1307,8 @@ Worker -> Manager /worker/frp
 
 Worker 默认启动本地 terminal 服务并通过 `capabilities` 上报 `terminal_enabled=true`、`terminal_host=127.0.0.1` 和动态 `terminal_port`。UI Task 详情的 Terminal 面板先请求 `GET /terminal/tasks/{taskID}` 做可用性预检；Manager 校验 Task 已有 `workerId` 和 `worktreePath`、Task 未归档、Worker 在线且 terminal capability 可用后，通过 FRP 调用 Worker 的 `/terminal/check?cwd=<task.worktreePath>`，确认目录仍存在且位于 Worker `WorkDir` 内。预检通过后 UI 连接 `GET /terminal/tasks/{taskID}/ws`，Manager 再通过 FRP 把 WebSocket 转到 Worker 的 `/terminal/ws?cwd=<task.worktreePath>`。Worker 只允许 cwd 位于自身 `WorkDir` 下，Unix 使用 PTY 启动 `$SHELL` 或 `sh`；Windows 返回不支持。终端会话不持久化，WebSocket 断开即结束 shell。
 
+Workers 列表也提供 Worker terminal。UI 先请求 `GET /terminal/workers/{workerID}`，Manager 校验 Worker 在线、terminal capability 可用、FRP 隧道已连接后，通过 FRP 调用 Worker 的 `/terminal/check?cwd=<worker.WorkDir>`，确认 Worker 工作目录仍然可用；预检通过后 UI 连接 `GET /terminal/workers/{workerID}/ws`，Manager 再通过 FRP 把 WebSocket 转到 Worker 的 `/terminal/ws?cwd=<worker.WorkDir>`。这个终端始终以 Worker `WorkDir` 作为 cwd，不会切回 Worker 根目录之外的路径。
+
 Worker 默认启动本地 Review HTTP 服务并通过 `capabilities` 上报 `review_enabled=true`、`review_host=127.0.0.1` 和动态 `review_port`。Manager 不直接读取 Worker 文件系统；Task Review 的 GraphQL resolver 会校验 Task 已有 `workerId` 和 `worktreePath`、Task 未归档、Worker 在线且 Review capability 可用后，通过同一条 FRP/yamux 隧道调用 Worker 的 `/review/tasks/{taskID}/diff`、`/stage`、`/unstage`、`/discard`、`/restore`、`/git-command` 和 `/runs`。Worker 在本地 worktree 执行 Git diff 和 Git 变更操作，支持 `UNCOMMITTED`、`BRANCH`、`LAST_TURN` 三种范围；其中 `LAST_TURN` 来自 Executor 在 Execute/Continue 前后用临时 index 记录的 Git tree id。Manager 只持久化 turn snapshot、review run、finding、inline comment 和 backup 元数据，完整 diff 每次从 Worker 实时读取。`discard` 在修改 worktree 前必须写入 backup patch，`restore` 通过 backup patch 恢复。`git-command` 只接受白名单命令：fetch、pull/rebase、rebase、merge base、commit staged、push task branch 和 publish；publish 默认 fast-forward 到 Task base branch，可显式选择 merge commit，不支持 force push，并在 worktree 非 clean 时拒绝执行。
 
 ### 9.2 基础消息结构
@@ -1400,7 +1402,7 @@ Manager 下发给 Worker 的实时交互消息：
 
 ### 9.5 FRP 代理约束
 
-FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**` 和 `/terminal/tasks/{taskID}/ws` 按 name 精确匹配在线隧道。`worker_host` 允许 Worker 可解析的主机名或 IP，`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机或 Worker 网络中监听的 HTTP 服务。Task terminal 进一步提供 Worker shell 访问，部署时必须按 trusted-mode 处理。
+FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**`、`/terminal/tasks/{taskID}/ws` 和 `/terminal/workers/{workerID}/ws` 都按 name 精确匹配在线隧道。`worker_host` 允许 Worker 可解析的主机名或 IP，`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机或 Worker 网络中监听的 HTTP 服务。Task terminal 和 Worker terminal 进一步提供 Worker shell 访问，部署时必须按 trusted-mode 处理。
 `TASK_INTERACTION_RESOLVED` 会回带 `responded/decision/message/payload`，用于让 Manager 在恢复任务前幂等落库用户响应，避免 Agent 极快完成时终态清理把已响应交互误取消。
 
 ## 10. 数据架构

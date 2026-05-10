@@ -68,6 +68,8 @@ Manager endpoints:
 - `POST /graphql`
 - `GET /worker/ws`
 - `GET /worker/frp`
+- `GET /terminal/workers/{workerID}`
+- `GET /terminal/workers/{workerID}/ws`
 - `GET /terminal/tasks/{taskID}`
 - `GET /terminal/tasks/{taskID}/ws`
 - `/proxy/**`
@@ -78,6 +80,8 @@ Manager endpoints:
 Browser clients that cannot set custom headers can use `/proxy/web/<worker name>/<host>/<port>/**`. The task detail UI uses that route for its Web preview panel.
 
 Task detail also provides a Worker terminal panel. The UI first calls `GET /terminal/tasks/{taskID}` to validate that the assigned Worker is online, the FRP tunnel is connected, and the recorded `worktreePath` still exists under the Worker `WorkDir`; then it connects to `/terminal/tasks/{taskID}/ws`. Manager proxies the WebSocket through the Worker FRP tunnel to the Worker's local terminal service. The shell starts in the task worktree only; tasks without `worktreePath`, archived tasks, or missing local worktree directories do not fall back to the Worker root directory. Worker terminal support is enabled by default and can be disabled with `WORKER_TERMINAL_ENABLED=false`; `WORKER_TERMINAL_HOST` defaults to `127.0.0.1`, and `WORKER_TERMINAL_SHELL` can override the shell binary on Unix Workers.
+
+The Workers list also exposes a terminal button for each Worker. It opens a dialog terminal that starts in the Worker `WorkDir`, first calling `GET /terminal/workers/{workerID}` and then connecting to `/terminal/workers/{workerID}/ws` through the same FRP tunnel and local terminal service.
 
 Task detail also includes a Review tab. Worker starts a local `127.0.0.1` Review HTTP service and advertises `review_enabled=true`, `review_host`, and `review_port` capabilities. Manager exposes typed GraphQL review queries/mutations and proxies each diff or Git change request to that Worker-local Review service through the existing FRP/yamux tunnel. Manager persists review runs, findings, inline comments, turn snapshots, and backup metadata; full diff content is fetched live from the Worker. `discard` always creates a backup patch before modifying the worktree, and `restore` applies that backup patch back through the Worker. The Review tab exposes a guarded `Git workspace` panel with editable remote and target branch inputs, current branch/HEAD/target ref, ahead/behind, and dirty-worktree status. Git actions are grouped into `Sync` (`Fetch`, `Rebase onto target`, `Merge target into task branch`), `Changes` (`Stage`, `Unstage`, `Commit staged`, `Discard`, `Restore`), and `Publish` (`Push branch`, `Publish fast-forward`, `Publish merge commit`). Publish never force-pushes and requires a clean worktree.
 

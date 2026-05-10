@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/worker/ws", s.gateway.Handle)
 	mux.HandleFunc("/worker/frp", s.gateway.HandleFRP)
+	mux.HandleFunc("/terminal/workers/", s.gateway.HandleWorkerTerminal)
 	mux.HandleFunc("/terminal/tasks/", s.gateway.HandleTaskTerminal)
 	mux.HandleFunc("/proxy", s.gateway.HandleProxy)
 	mux.HandleFunc("/proxy/", s.gateway.HandleProxy)
@@ -363,6 +364,51 @@ func (g *WorkerGateway) HandleTaskTerminal(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+func (g *WorkerGateway) HandleWorkerTerminal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if workerID, ok := workerTerminalIDFromCheckPath(r.URL.Path); ok {
+		g.handleWorkerTerminalCheck(w, r, workerID)
+		return
+	}
+	workerID, ok := workerTerminalIDFromPath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	target, status, message := g.resolveWorkerTerminal(r.Context(), workerID)
+	if status != 0 {
+		http.Error(w, message, status)
+		return
+	}
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket hijacking is not supported", http.StatusInternalServerError)
+		return
+	}
+	client, rw, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	query := url.Values{}
+	query.Set("cwd", target.worker.WorkDir)
+	for _, key := range []string{"rows", "cols"} {
+		if value := strings.TrimSpace(r.URL.Query().Get(key)); value != "" {
+			query.Set(key, value)
+		}
+	}
+	targetPath := "/terminal/ws?" + query.Encode()
+	if err := frp.ProxyUpgrade(r.Context(), target.tunnel.session, r, frp.ProxyTarget{
+		Host: target.host,
+		Port: target.port,
+		Path: targetPath,
+	}, client, rw.Reader); err != nil && g.logger != nil {
+		g.logger.Warn("worker terminal proxy failed", "workerId", target.worker.ID, "error", err)
+	}
+}
+
 func (g *WorkerGateway) handleTaskTerminalCheck(w http.ResponseWriter, r *http.Request, taskID string) {
 	target, status, message := g.resolveTaskTerminal(r.Context(), taskID)
 	if status != 0 {
@@ -391,8 +437,43 @@ func (g *WorkerGateway) handleTaskTerminalCheck(w http.ResponseWriter, r *http.R
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (g *WorkerGateway) handleWorkerTerminalCheck(w http.ResponseWriter, r *http.Request, workerID string) {
+	target, status, message := g.resolveWorkerTerminal(r.Context(), workerID)
+	if status != 0 {
+		http.Error(w, message, status)
+		return
+	}
+	query := url.Values{}
+	query.Set("cwd", target.worker.WorkDir)
+	resp, err := frp.ProxyHTTP(r.Context(), target.tunnel.session, r, frp.ProxyTarget{
+		Host: target.host,
+		Port: target.port,
+		Path: "/terminal/check?" + query.Encode(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	frp.RemoveHopByHopHeaders(resp.Header)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 type taskTerminalTarget struct {
 	task   *domain.Task
+	worker *domain.Worker
+	host   string
+	port   int
+	tunnel *workerProxyTunnel
+}
+
+type workerTerminalTarget struct {
 	worker *domain.Worker
 	host   string
 	port   int
@@ -437,6 +518,28 @@ func (g *WorkerGateway) resolveTaskTerminal(ctx context.Context, taskID string) 
 	return taskTerminalTarget{task: task, worker: worker, host: host, port: port, tunnel: tunnel}, 0, ""
 }
 
+func (g *WorkerGateway) resolveWorkerTerminal(ctx context.Context, workerID string) (workerTerminalTarget, int, string) {
+	worker, err := g.service.Worker(ctx, workerID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return workerTerminalTarget{}, http.StatusNotFound, "worker not found"
+		}
+		return workerTerminalTarget{}, http.StatusInternalServerError, err.Error()
+	}
+	if worker.Status != domain.WorkerOnline {
+		return workerTerminalTarget{}, http.StatusConflict, "worker is not online"
+	}
+	host, port, err := terminalTarget(worker.Capabilities)
+	if err != nil {
+		return workerTerminalTarget{}, http.StatusConflict, err.Error()
+	}
+	tunnel := g.proxyTunnel(worker.Name)
+	if tunnel == nil || tunnel.session == nil || tunnel.session.IsClosed() {
+		return workerTerminalTarget{}, http.StatusServiceUnavailable, "worker proxy tunnel is not connected"
+	}
+	return workerTerminalTarget{worker: worker, host: host, port: port, tunnel: tunnel}, 0, ""
+}
+
 type proxyRequestTarget struct {
 	workerName string
 	host       string
@@ -475,6 +578,39 @@ func terminalTaskIDFromCheckPath(path string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(taskID), true
+}
+
+func workerTerminalIDFromPath(path string) (string, bool) {
+	const prefix = "/terminal/workers/"
+	const suffix = "/ws"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	raw := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if strings.TrimSpace(raw) == "" || strings.Contains(raw, "/") {
+		return "", false
+	}
+	workerID, err := url.PathUnescape(raw)
+	if err != nil || strings.TrimSpace(workerID) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(workerID), true
+}
+
+func workerTerminalIDFromCheckPath(path string) (string, bool) {
+	const prefix = "/terminal/workers/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	raw := strings.TrimPrefix(path, prefix)
+	if strings.TrimSpace(raw) == "" || strings.Contains(raw, "/") {
+		return "", false
+	}
+	workerID, err := url.PathUnescape(raw)
+	if err != nil || strings.TrimSpace(workerID) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(workerID), true
 }
 
 func terminalTarget(capabilities map[string]string) (string, int, error) {

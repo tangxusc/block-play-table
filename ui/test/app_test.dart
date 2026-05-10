@@ -1123,6 +1123,40 @@ void main() {
     expect(find.text('Runtime environment'), findsOneWidget);
   });
 
+  testWidgets('workers page exposes a worker terminal button', (tester) async {
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Workers').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open worker terminal'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Worker terminal'), findsOneWidget);
+    expect(find.byTooltip('Connect worker terminal'), findsOneWidget);
+  });
+
+  testWidgets('worker terminal dialog shows unavailable state for offline workers', (
+    tester,
+  ) async {
+    final apiClient = FakeApiClient(
+      workers: [_defaultWorker.copyWith(status: 'OFFLINE')],
+    );
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Workers').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open worker terminal'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Terminal unavailable'), findsOneWidget);
+    expect(find.text('Worker is not online'), findsOneWidget);
+    expect(find.byTooltip('Connect worker terminal'), findsNothing);
+  });
+
   testWidgets('board refreshes when GraphQL subscription emits an event', (
     tester,
   ) async {
@@ -1612,6 +1646,7 @@ class FakeApiClient extends ApiClient {
     List<TaskGitBackupData>? gitBackups,
     TaskGitStatusData? gitStatus,
     String? terminalCheckError,
+    String? workerTerminalCheckError,
   })  : _settings = settings ?? const SettingsData(),
         _tasks = tasks ?? [_task],
         _projects = projects ?? [_project],
@@ -1624,6 +1659,7 @@ class FakeApiClient extends ApiClient {
         _gitBackups = gitBackups ?? const [],
         _gitStatus = gitStatus,
         _terminalCheckError = terminalCheckError,
+        _workerTerminalCheckError = workerTerminalCheckError,
         super('http://manager/graphql');
 
   final StreamController<DomainEventItem> _events =
@@ -1640,9 +1676,11 @@ class FakeApiClient extends ApiClient {
   final List<TaskGitBackupData> _gitBackups;
   final TaskGitStatusData? _gitStatus;
   final String? _terminalCheckError;
+  final String? _workerTerminalCheckError;
   int boardFetches = 0;
   int detailFetches = 0;
   int terminalCheckCount = 0;
+  int workerTerminalCheckCount = 0;
   bool _completedDetail = false;
   String? createdTaskTitle;
   String? createdTaskWorkerId;
@@ -2012,6 +2050,15 @@ class FakeApiClient extends ApiClient {
   Future<void> checkWorkerTerminal(String taskId) async {
     terminalCheckCount++;
     final error = _terminalCheckError;
+    if (error != null) {
+      throw StateError(error);
+    }
+  }
+
+  @override
+  Future<void> checkWorkerTerminalForWorker(String workerId) async {
+    workerTerminalCheckCount++;
+    final error = _workerTerminalCheckError;
     if (error != null) {
       throw StateError(error);
     }

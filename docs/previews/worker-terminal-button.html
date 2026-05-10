@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worker Terminal Button Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f3;
+      --surface: #ffffff;
+      --line: #d8dad2;
+      --text: #1f2528;
+      --muted: #667073;
+      --blue: #215a9a;
+      --green: #1f7a4d;
+      --dark: #111318;
+      --console: #0f1216;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 28px auto;
+      padding: 0 20px 28px;
+    }
+    .title {
+      margin: 0 0 14px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfbf8;
+    }
+    .panel-head strong { font-size: 15px; }
+    .panel-head span { color: var(--muted); font-size: 12px; }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+    }
+    .row + .row { border-top: 1px solid var(--line); }
+    .icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #eef4fb;
+      color: var(--blue);
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .meta {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .meta strong {
+      display: block;
+      font-size: 15px;
+    }
+    .meta small {
+      display: block;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(31, 122, 77, 0.26);
+      color: var(--green);
+      background: rgba(31, 122, 77, 0.1);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .button.primary {
+      border-color: var(--blue);
+      color: var(--blue);
+      background: #e8f1fb;
+    }
+    .dialog {
+      display: flex;
+      flex-direction: column;
+      min-height: 620px;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfbf8;
+    }
+    .pill {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(31, 122, 77, 0.25);
+      background: rgba(31, 122, 77, 0.08);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .url {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      flex: 1 1 auto;
+    }
+    .terminal {
+      flex: 1 1 auto;
+      background: var(--console);
+      color: #d7dde3;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .alert {
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      background: #fff;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .alert small { color: var(--muted); }
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: 1fr; }
+      .dialog { min-height: 500px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <h1 class="title">Worker 列表终端按钮预览</h1>
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <strong>Workers</strong>
+          <span>每行增加终端按钮</span>
+        </div>
+        <div class="row">
+          <div class="icon">W</div>
+          <div class="meta">
+            <strong>Local worker</strong>
+            <small>/worker-data  ·  codex, claude  ·  ALL_PROJECTS</small>
+          </div>
+          <span class="status">ONLINE</span>
+          <button class="button" type="button">⏻</button>
+          <button class="button primary" type="button">⌘  Open worker terminal</button>
+          <button class="button" type="button">✎</button>
+        </div>
+        <div class="row">
+          <div class="icon">W</div>
+          <div class="meta">
+            <strong>Offline worker</strong>
+            <small>/worker-data/offline  ·  codex  ·  SPECIFIC_PROJECTS</small>
+          </div>
+          <span class="status" style="border-color: rgba(181, 71, 71, 0.24); background: rgba(181, 71, 71, 0.08); color: #b54747;">OFFLINE</span>
+          <button class="button" type="button">⌘  Open worker terminal</button>
+          <button class="button" type="button">✎</button>
+        </div>
+      </section>
+      <section class="panel dialog">
+        <div class="panel-head">
+          <strong>Worker terminal</strong>
+          <span>starts in worker workdir</span>
+        </div>
+        <div class="terminal-bar">
+          <span class="pill">Connected</span>
+          <div class="url">ws://localhost:8080/terminal/workers/worker-001/ws</div>
+          <button class="button primary" type="button">⏻  Connect worker terminal</button>
+        </div>
+        <div class="terminal">/worker-data
+$ pwd
+/worker-data
+$ echo BPT_WORKER_TERMINAL_E2E
+BPT_WORKER_TERMINAL_E2E</div>
+        <div class="alert">
+          <small>Preflight checks worker online state, terminal capability, FRP tunnel, and worker workdir.</small>
+          <button class="button" type="button">Close</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

@@ -133,6 +133,7 @@ async function waitForTerminalWorker(request) {
     id: string;
     name: string;
     status: string;
+    workDir: string;
     supportedAgents: string[];
     capabilities: Array<{ key: string; value: string }>;
   } | null = null;
@@ -142,7 +143,7 @@ async function waitForTerminalWorker(request) {
         request,
         `query Workers {
           workers {
-            id name status supportedAgents capabilities { key value }
+            id name status workDir supportedAgents capabilities { key value }
           }
         }`,
       );
@@ -152,6 +153,7 @@ async function waitForTerminalWorker(request) {
             id: string;
             name: string;
             status: string;
+            workDir: string;
             supportedAgents: string[];
             capabilities: Array<{ key: string; value: string }>;
           }) => {
@@ -328,6 +330,93 @@ async function runTerminalCommand(
   });
   expect(output).toContain(marker);
   return output;
+}
+
+async function runWorkerTerminalCommand(
+  workerId: string,
+  marker: string,
+  expectedPath: string,
+) {
+  const terminalURL = managerGraphQL
+    .replace(/^http/, "ws")
+    .replace(/\/graphql$/, `/terminal/workers/${workerId}/ws`);
+  const ws = new WebSocket(terminalURL);
+  let output = "";
+  let exitSent = false;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error(`timed out waiting for terminal output: ${output}`));
+    }, 15000);
+    ws.addEventListener("open", () => {
+      ws.send(
+        JSON.stringify({
+          type: "input",
+          data: `pwd\n`,
+        }),
+      );
+    });
+    ws.addEventListener("message", (message) => {
+      const event = JSON.parse(String(message.data));
+      if (event.type === "output") {
+        output += event.data;
+        if (!exitSent && output.includes(expectedPath)) {
+          exitSent = true;
+          ws.send(
+            JSON.stringify({
+              type: "input",
+              data: `echo ${marker}\nexit\n`,
+            }),
+          );
+        }
+      }
+      if (event.type === "error") {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(`terminal error: ${event.data}`));
+      }
+      if (event.type === "exit") {
+        clearTimeout(timeout);
+        ws.close();
+        resolve();
+      }
+    });
+    ws.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timeout);
+        reject(new Error("terminal websocket failed"));
+      },
+      { once: true },
+    );
+  });
+  expect(output).toContain(marker);
+  return output;
+}
+
+async function openWorkerTerminal(page, workerName: string) {
+  await page.getByText("Workers").click();
+  await page.mouse.move(700, 520);
+  const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
+  for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
+    for (let scrollAttempt = 0; scrollAttempt < 20; scrollAttempt++) {
+      if (await workerGroup.isVisible().catch(() => false)) {
+        await workerGroup.getByRole("button", { name: "Open worker terminal" }).click();
+        return;
+      }
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(150);
+    }
+    const nextPage = page.getByRole("button", { name: "Next page" });
+    if (!(await nextPage.isEnabled().catch(() => false))) {
+      break;
+    }
+    await nextPage.click();
+    await page.waitForTimeout(300);
+    await page.mouse.wheel(0, -5000);
+  }
+  await expect(workerGroup).toBeVisible();
+  await workerGroup.getByRole("button", { name: "Open worker terminal" }).click();
 }
 
 function connectWorkerEvents(
@@ -1307,6 +1396,46 @@ test("task detail terminal runs commands in task worktree", async ({
       ),
     )
     .toBeTruthy();
+});
+
+test("worker list terminal button opens a worker shell in the worker workdir", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openFlutterApp(page);
+
+  const suffix = Date.now();
+  const marker = `BPT_WORKER_TERMINAL_E2E_${suffix}`;
+  const worker = await waitForTerminalWorker(request);
+  const workerTerminalSocketURLs: string[] = [];
+  page.on("websocket", (socket) => {
+    workerTerminalSocketURLs.push(socket.url());
+  });
+
+  await openWorkerTerminal(page, worker.name);
+  const terminalDialog = page.getByRole("alertdialog");
+  await expect(
+    terminalDialog.getByText("Worker terminal", { exact: true }),
+  ).toBeVisible();
+  await terminalDialog
+    .getByRole("button", { name: "Connect worker terminal" })
+    .click();
+  await expect(terminalDialog.getByText("Connected")).toBeVisible();
+  await expect
+    .poll(() =>
+      workerTerminalSocketURLs.some((url) =>
+        url.includes(`/terminal/workers/${worker.id}/ws`),
+      ),
+    )
+    .toBeTruthy();
+
+  const output = await runWorkerTerminalCommand(
+    worker.id,
+    marker,
+    worker.workDir,
+  );
+  expect(output).toContain(worker.workDir);
 });
 
 test("task detail review git workflow commits and publishes staged changes", async ({
