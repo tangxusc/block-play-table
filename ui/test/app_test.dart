@@ -425,9 +425,7 @@ void main() {
     expect(find.text('Conversation'), findsOneWidget);
   });
 
-  testWidgets('task detail review tab renders git diff actions without review feedback controls', (
-    tester,
-  ) async {
+  testWidgets('review tab renders git diff actions', (tester) async {
     const surfaceSize = Size(1200, 800);
     _setSurfaceSize(tester, surfaceSize);
     final apiClient = FakeApiClient(
@@ -744,13 +742,45 @@ void main() {
     await tester.tap(find.text('Archived detail'));
     await tester.pumpAndSettle();
 
+    final titleActions = find.byKey(
+      const ValueKey('task-detail-title-actions'),
+    );
+    final floatingRail = find.byKey(
+      const ValueKey('task-detail-floating-command-rail'),
+    );
+
     expect(find.byType(AlertDialog), findsOneWidget);
+    expect(titleActions, findsOneWidget);
     expect(
-      find.byKey(const ValueKey('task-detail-action-delete')),
+      find.descendant(
+        of: titleActions,
+        matching: find.byKey(const ValueKey('task-detail-action-delete')),
+      ),
       findsOneWidget,
     );
     expect(
+      find.descendant(
+        of: titleActions,
+        matching: find.byTooltip('Delete'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: titleActions,
+        matching: find.text('Delete'),
+      ),
+      findsNothing,
+    );
+    expect(
       find.byKey(const ValueKey('task-detail-action-archive')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: floatingRail,
+        matching: find.byKey(const ValueKey('task-detail-action-delete')),
+      ),
       findsNothing,
     );
   });
@@ -1109,9 +1139,7 @@ void main() {
     expect(find.byTooltip('Connect worker terminal'), findsOneWidget);
   });
 
-  testWidgets('worker terminal dialog shows unavailable state for offline workers', (
-    tester,
-  ) async {
+  testWidgets('worker terminal dialog shows offline state', (tester) async {
     final apiClient = FakeApiClient(
       workers: [_defaultWorker.copyWith(status: 'OFFLINE')],
     );
@@ -1238,7 +1266,11 @@ void main() {
     final floatingRail = find.byKey(
       const ValueKey('task-detail-floating-command-rail'),
     );
+    final titleActions = find.byKey(
+      const ValueKey('task-detail-title-actions'),
+    );
     expect(floatingRail, findsOneWidget);
+    expect(titleActions, findsOneWidget);
     expect(
       find.byKey(const ValueKey('task-detail-section-conversation')),
       findsOneWidget,
@@ -1284,6 +1316,13 @@ void main() {
       ValueKey('task-detail-section-terminal'),
       ValueKey('task-detail-section-logs'),
       ValueKey('task-detail-section-domain-events'),
+    ]) {
+      expect(
+        find.descendant(of: floatingRail, matching: find.byKey(key)),
+        findsOneWidget,
+      );
+    }
+    for (final key in const [
       ValueKey('task-detail-action-close'),
       ValueKey('task-detail-action-assign'),
       ValueKey('task-detail-action-start'),
@@ -1292,8 +1331,39 @@ void main() {
       ValueKey('task-detail-action-archive'),
     ]) {
       expect(
-        find.descendant(of: floatingRail, matching: find.byKey(key)),
+        find.descendant(of: titleActions, matching: find.byKey(key)),
         findsOneWidget,
+      );
+      expect(
+        find.descendant(of: floatingRail, matching: find.byKey(key)),
+        findsNothing,
+      );
+    }
+    for (final label in const [
+      'Copy task ID',
+      'Close',
+      'Assign',
+      'Start',
+      'Interrupt',
+      'Retry',
+      'Archive',
+    ]) {
+      expect(
+        find.descendant(of: titleActions, matching: find.byTooltip(label)),
+        findsOneWidget,
+      );
+    }
+    for (final label in const [
+      'Close',
+      'Assign',
+      'Start',
+      'Interrupt',
+      'Retry',
+      'Archive',
+    ]) {
+      expect(
+        find.descendant(of: titleActions, matching: find.text(label)),
+        findsNothing,
       );
     }
     expect(find.byType(TabBar), findsNothing);

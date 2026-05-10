@@ -2562,9 +2562,8 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
       icon: Icons.close,
       onPressed: () => Navigator.of(context).pop(false),
     );
-    final actions = archived
+    final taskActions = archived
         ? [
-            closeAction,
             _TaskDetailAction(
               key: const ValueKey('task-detail-action-delete'),
               label: 'Delete',
@@ -2585,7 +2584,6 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
             ),
           ]
         : [
-            closeAction,
             _TaskDetailAction(
               key: const ValueKey('task-detail-action-assign'),
               label: 'Assign',
@@ -2638,20 +2636,16 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
               },
             ),
           ];
+    final actions = [
+      ...taskActions,
+      closeAction,
+    ];
     return AlertDialog(
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(currentTask.title, overflow: TextOverflow.ellipsis),
-          ),
-          IconButton(
-            tooltip: 'Copy task ID',
-            onPressed: taskId == null || taskId.isEmpty
-                ? null
-                : () => _copyTaskId(taskId),
-            icon: const Icon(Icons.copy_outlined),
-          ),
-        ],
+      title: _TaskDetailTitleBar(
+        title: currentTask.title,
+        taskId: taskId,
+        actions: actions,
+        onCopyTaskId: _copyTaskId,
       ),
       content: SizedBox(
         width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
@@ -2679,7 +2673,6 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
                   detail: detail!,
                   projects: widget.boardData.projects,
                   workers: widget.boardData.workers,
-                  actions: actions,
                   onContinue: _continueTask,
                   onRefresh: _reload,
                   onRespondInteraction: _respondInteraction,
@@ -2931,13 +2924,106 @@ class _TaskDetailAction {
   final _TaskDetailActionEmphasis emphasis;
 }
 
+class _TaskDetailTitleBar extends StatelessWidget {
+  const _TaskDetailTitleBar({
+    required this.title,
+    required this.taskId,
+    required this.actions,
+    required this.onCopyTaskId,
+  });
+
+  final String title;
+  final String? taskId;
+  final List<_TaskDetailAction> actions;
+  final Future<void> Function(String taskId) onCopyTaskId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: Text(title, overflow: TextOverflow.ellipsis)),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: _TaskDetailTitleActions(
+              taskId: taskId,
+              actions: actions,
+              onCopyTaskId: onCopyTaskId,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TaskDetailTitleActions extends StatelessWidget {
+  const _TaskDetailTitleActions({
+    required this.taskId,
+    required this.actions,
+    required this.onCopyTaskId,
+  });
+
+  final String? taskId;
+  final List<_TaskDetailAction> actions;
+  final Future<void> Function(String taskId) onCopyTaskId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      key: const ValueKey('task-detail-title-actions'),
+      alignment: WrapAlignment.end,
+      runAlignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 4,
+      runSpacing: 4,
+      children: [
+        IconButton(
+          key: const ValueKey('task-detail-action-copy-id'),
+          tooltip: 'Copy task ID',
+          onPressed: taskId == null || taskId!.isEmpty
+              ? null
+              : () => onCopyTaskId(taskId!),
+          icon: const Icon(Icons.copy_outlined),
+        ),
+        for (final action in actions) _TaskDetailIconActionButton(action),
+      ],
+    );
+  }
+}
+
+class _TaskDetailIconActionButton extends StatelessWidget {
+  const _TaskDetailIconActionButton(this.action);
+
+  final _TaskDetailAction action;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(action.icon);
+    if (action.emphasis == _TaskDetailActionEmphasis.filled) {
+      return IconButton.filled(
+        key: action.key,
+        tooltip: action.label,
+        onPressed: action.onPressed,
+        icon: icon,
+      );
+    }
+    return IconButton(
+      key: action.key,
+      tooltip: action.label,
+      onPressed: action.onPressed,
+      icon: icon,
+    );
+  }
+}
+
 class _TaskDetailBody extends StatefulWidget {
   const _TaskDetailBody({
     required this.apiClient,
     required this.detail,
     required this.projects,
     required this.workers,
-    required this.actions,
     required this.onContinue,
     required this.onRefresh,
     required this.onRespondInteraction,
@@ -2947,7 +3033,6 @@ class _TaskDetailBody extends StatefulWidget {
   final TaskDetailData detail;
   final List<ProjectItem> projects;
   final List<WorkerItem> workers;
-  final List<_TaskDetailAction> actions;
   final Future<void> Function(String message) onContinue;
   final VoidCallback onRefresh;
   final _TaskInteractionResponder onRespondInteraction;
@@ -2966,7 +3051,7 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 680;
-        final railWidth = compact ? 124.0 : 168.0;
+        final railWidth = compact ? 64.0 : 168.0;
         return Stack(
           children: [
             Padding(
@@ -3006,7 +3091,6 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
               child: _FloatingCommandRail(
                 compact: compact,
                 selected: _selectedSection,
-                actions: widget.actions,
                 onSelected: (section) =>
                     setState(() => _selectedSection = section),
               ),
@@ -3060,50 +3144,23 @@ class _FloatingCommandRail extends StatelessWidget {
   const _FloatingCommandRail({
     required this.compact,
     required this.selected,
-    required this.actions,
     required this.onSelected,
   });
 
   final bool compact;
   final _TaskDetailSection selected;
-  final List<_TaskDetailAction> actions;
   final ValueChanged<_TaskDetailSection> onSelected;
 
   @override
   Widget build(BuildContext context) {
     return _FloatingRailFrame(
       key: const ValueKey('task-detail-floating-command-rail'),
-      width: compact ? 124 : 168,
-      child: compact
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _ActionRailColumn(actions: actions, compact: compact),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: _SectionRailColumn(
-                    selected: selected,
-                    compact: compact,
-                    onSelected: onSelected,
-                  ),
-                ),
-              ],
-            )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _SectionRailColumn(
-                  selected: selected,
-                  compact: compact,
-                  onSelected: onSelected,
-                ),
-                Divider(height: 16, color: Theme.of(context).dividerColor),
-                _ActionRailColumn(actions: actions, compact: compact),
-              ],
-            ),
+      width: compact ? 64 : 168,
+      child: _SectionRailColumn(
+        selected: selected,
+        compact: compact,
+        onSelected: onSelected,
+      ),
     );
   }
 }
@@ -3134,28 +3191,6 @@ class _SectionRailColumn extends StatelessWidget {
               compact: compact,
               onPressed: () => onSelected(section),
             ),
-          ),
-      ],
-    );
-  }
-}
-
-class _ActionRailColumn extends StatelessWidget {
-  const _ActionRailColumn({required this.actions, required this.compact});
-
-  final List<_TaskDetailAction> actions;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final action in actions)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _ActionRailButton(action: action, compact: compact),
           ),
       ],
     );
@@ -3209,49 +3244,6 @@ class _SectionRailButton extends StatelessWidget {
       onPressed: onPressed,
       icon: icon,
       label: text,
-    );
-  }
-}
-
-class _ActionRailButton extends StatelessWidget {
-  const _ActionRailButton({required this.action, required this.compact});
-
-  final _TaskDetailAction action;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final icon = Icon(action.icon);
-    if (compact) {
-      if (action.emphasis == _TaskDetailActionEmphasis.filled) {
-        return IconButton.filled(
-          key: action.key,
-          tooltip: action.label,
-          onPressed: action.onPressed,
-          icon: icon,
-        );
-      }
-      return IconButton(
-        key: action.key,
-        tooltip: action.label,
-        onPressed: action.onPressed,
-        icon: icon,
-      );
-    }
-    final label = Text(action.label, overflow: TextOverflow.ellipsis);
-    if (action.emphasis == _TaskDetailActionEmphasis.filled) {
-      return FilledButton.icon(
-        key: action.key,
-        onPressed: action.onPressed,
-        icon: icon,
-        label: label,
-      );
-    }
-    return OutlinedButton.icon(
-      key: action.key,
-      onPressed: action.onPressed,
-      icon: icon,
-      label: label,
     );
   }
 }
