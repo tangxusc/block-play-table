@@ -203,7 +203,9 @@ func (e *Executor) Execute(ctx context.Context, payload protocol.TaskStartPayloa
 		case AgentEventStderr:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: redact(event.Content)})
 		case AgentEventConversation:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
+			content := redact(event.Content)
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "assistant", Content: content, AgentSessionID: event.AgentSessionID})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: content, AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
 		case AgentEventWaitingInput:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: redact(event.Content)})
 		case AgentEventCompleted:
@@ -296,7 +298,9 @@ func (e *Executor) Continue(ctx context.Context, payload protocol.TaskContinuePa
 		case AgentEventStderr:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "stderr", Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
 		case AgentEventConversation:
-			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
+			content := redact(event.Content)
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: payload.Task.ID, Stream: "assistant", Content: content, AgentSessionID: event.AgentSessionID})
+			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskConversation, TaskID: payload.Task.ID, Content: content, AgentSessionID: event.AgentSessionID, Metadata: event.Metadata})
 		case AgentEventWaitingInput:
 			_ = e.report(ctx, protocol.WorkerEvent{Type: protocol.MessageTaskWaitingInput, TaskID: payload.Task.ID, Content: redact(event.Content), AgentSessionID: event.AgentSessionID})
 		case AgentEventCompleted:

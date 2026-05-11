@@ -89,7 +89,8 @@ jobs:
           - component: ui
             dockerfile: ui/Dockerfile
             build-args: |
-              MANAGER_GRAPHQL_URL=http://localhost:8080/graphql
+              VITE_MANAGER_GRAPHQL_URL=http://localhost:8080/graphql
+              VITE_MANAGER_GRAPHQL_WS_URL=ws://localhost:8080/subscriptions
 
     steps:
       - name: Check out repository

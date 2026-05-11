@@ -508,6 +508,23 @@ func (r *queryResolver) TaskLogs(ctx context.Context, taskID string) ([]*model.T
 	if err != nil {
 		return nil, err
 	}
+	if len(logs) == 0 {
+		messages, err := r.Service.Store().TaskConversations(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]*model.TaskLog, 0, len(messages))
+		for _, message := range messages {
+			out = append(out, &model.TaskLog{
+				ID:        message.ID,
+				TaskID:    message.TaskID,
+				Stream:    message.Role,
+				Content:   message.Content,
+				CreatedAt: message.CreatedAt,
+			})
+		}
+		return out, nil
+	}
 	out := make([]*model.TaskLog, 0, len(logs))
 	for _, log := range logs {
 		out = append(out, toModelTaskLog(log))
