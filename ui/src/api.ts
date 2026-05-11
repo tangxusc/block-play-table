@@ -19,6 +19,23 @@ import type {
 
 type CreateProjectInput = Pick<ProjectItem, "name" | "gitUrl" | "defaultBranch" | "worktreeNamePrefix">;
 
+const managerTokenStorageKey = "block-play-table.manager-token";
+
+export function loadManagerToken(): string {
+  if (typeof window === "undefined") return "";
+  return window.sessionStorage.getItem(managerTokenStorageKey) || "";
+}
+
+export function saveManagerToken(token: string): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(managerTokenStorageKey, token);
+}
+
+export function clearManagerToken(): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(managerTokenStorageKey);
+}
+
 const taskFields = `
   id title description status projectId agentType baseBranch
   agentConfig {
@@ -59,13 +76,32 @@ export class ApiClient {
       this.endpoint.replace(/^http/, "ws").replace(/\/graphql$/, "/subscriptions");
   }
 
+  async fetchAuthStatus(): Promise<{ required: boolean }> {
+    const response = await fetch(urlFromEndpoint(this.endpoint, ["auth", "status"]));
+    if (!response.ok) {
+      throw new Error(`Auth status HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async verifyManagerToken(token: string): Promise<void> {
+    const response = await fetch(urlFromEndpoint(this.endpoint, ["auth", "verify"]), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!response.ok) {
+      throw new Error("Invalid manager token");
+    }
+  }
+
   async graphQL<T>(
     query: string,
     variables: Record<string, unknown> = {},
   ): Promise<T> {
     const response = await fetch(this.endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...managerTokenHeaders() },
       body: JSON.stringify({ query, variables }),
     });
     if (!response.ok) {
@@ -88,7 +124,7 @@ export class ApiClient {
     let retryTimer: number | undefined;
     const connect = () => {
       if (closed) return;
-      socket = new WebSocket(this.websocketEndpoint, "graphql-transport-ws");
+      socket = new WebSocket(urlWithManagerToken(this.websocketEndpoint), "graphql-transport-ws");
       const id = `sub-${Math.random().toString(36).slice(2)}`;
       socket.addEventListener("open", () => {
         socket?.send(JSON.stringify({ type: "connection_init", payload: {} }));
@@ -495,19 +531,19 @@ export class ApiClient {
   }
 
   workerTerminalCheckUrlForTask(taskId: string): string {
-    return urlFromEndpoint(this.endpoint, ["terminal", "tasks", taskId]);
+    return urlWithManagerToken(urlFromEndpoint(this.endpoint, ["terminal", "tasks", taskId]));
   }
 
   workerTerminalWebSocketUrlForTask(taskId: string): string {
-    return urlFromEndpoint(this.websocketEndpoint, ["terminal", "tasks", taskId, "ws"]);
+    return urlWithManagerToken(urlFromEndpoint(this.websocketEndpoint, ["terminal", "tasks", taskId, "ws"]));
   }
 
   workerTerminalCheckUrlForWorker(workerId: string): string {
-    return urlFromEndpoint(this.endpoint, ["terminal", "workers", workerId]);
+    return urlWithManagerToken(urlFromEndpoint(this.endpoint, ["terminal", "workers", workerId]));
   }
 
   workerTerminalWebSocketUrlForWorker(workerId: string): string {
-    return urlFromEndpoint(this.websocketEndpoint, ["terminal", "workers", workerId, "ws"]);
+    return urlWithManagerToken(urlFromEndpoint(this.websocketEndpoint, ["terminal", "workers", workerId, "ws"]));
   }
 
   workerWebProxyUrl(workerName: string, address: string): string {
@@ -531,7 +567,7 @@ export class ApiClient {
     ].map(encodeURIComponent).join("/");
     url.search = target.search;
     url.hash = "";
-    return url.toString();
+    return urlWithManagerToken(url.toString());
   }
 
   private async taskGitChange(
@@ -595,6 +631,19 @@ function urlFromEndpoint(endpoint: string, segments: string[]): string {
   const url = new URL(endpoint);
   url.pathname = `/${segments.map(encodeURIComponent).join("/")}`;
   url.search = "";
+  return url.toString();
+}
+
+function managerTokenHeaders(): Record<string, string> {
+  const token = loadManagerToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+function urlWithManagerToken(rawURL: string): string {
+  const token = loadManagerToken();
+  if (!token) return rawURL;
+  const url = new URL(rawURL);
+  url.searchParams.set("token", token);
   return url.toString();
 }
 

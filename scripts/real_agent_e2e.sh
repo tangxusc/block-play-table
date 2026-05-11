@@ -7,6 +7,7 @@ MANAGER_ADDR="${MANAGER_ADDR:-127.0.0.1:18080}"
 MANAGER_URL="http://${MANAGER_ADDR}"
 WORKER_DIR="${WORKER_DIR:-${ROOT}/worker-data-real-e2e}"
 WORKER_ID="${WORKER_ID:-real-agent-worker}"
+WORKER_TOKEN="${WORKER_TOKEN:-real-agent-e2e-token}"
 
 command -v codex >/dev/null
 command -v claude >/dev/null
@@ -14,7 +15,7 @@ command -v python3 >/dev/null
 
 mkdir -p "${WORKER_DIR}"
 
-DB_DRIVER=memory MANAGER_HTTP_ADDR="${MANAGER_ADDR}" "${GO_BIN}" run ./manager/cmd/manager &
+DB_DRIVER=memory MANAGER_HTTP_ADDR="${MANAGER_ADDR}" WORKER_TOKEN="${WORKER_TOKEN}" "${GO_BIN}" run ./manager/cmd/manager &
 MANAGER_PID=$!
 trap 'kill ${MANAGER_PID} 2>/dev/null || true; kill ${WORKER_PID:-0} 2>/dev/null || true' EXIT
 
@@ -25,10 +26,10 @@ for _ in {1..40}; do
   sleep 0.25
 done
 
-MANAGER_WS_URL="ws://${MANAGER_ADDR}/worker/ws" WORKER_ID="${WORKER_ID}" WORKER_WORK_DIR="${WORKER_DIR}" WORKER_SUPPORTED_AGENTS="codex,claude" "${GO_BIN}" run ./worker/cmd/worker &
+MANAGER_WS_URL="ws://${MANAGER_ADDR}/worker/ws" WORKER_ID="${WORKER_ID}" WORKER_WORK_DIR="${WORKER_DIR}" WORKER_SUPPORTED_AGENTS="codex,claude" WORKER_TOKEN="${WORKER_TOKEN}" "${GO_BIN}" run ./worker/cmd/worker &
 WORKER_PID=$!
 
-MANAGER_URL="${MANAGER_URL}" WORKER_ID="${WORKER_ID}" WORKER_DIR="${WORKER_DIR}" python3 <<'PY'
+MANAGER_URL="${MANAGER_URL}" WORKER_ID="${WORKER_ID}" WORKER_DIR="${WORKER_DIR}" WORKER_TOKEN="${WORKER_TOKEN}" python3 <<'PY'
 import json
 import os
 import sys
@@ -39,6 +40,7 @@ import urllib.request
 manager_url = os.environ["MANAGER_URL"]
 graphql_url = manager_url + "/graphql"
 worker_id = os.environ["WORKER_ID"]
+worker_token = os.environ["WORKER_TOKEN"]
 codex_model = os.environ.get("REAL_AGENT_CODEX_MODEL", "").strip()
 claude_model = os.environ.get("REAL_AGENT_CLAUDE_MODEL", "").strip()
 
@@ -48,7 +50,7 @@ def graphql(query, variables=None):
     request = urllib.request.Request(
         graphql_url,
         data=body,
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", "authorization": f"Bearer {worker_token}"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:

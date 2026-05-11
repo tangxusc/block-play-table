@@ -8,6 +8,8 @@ const managerWorkerWs =
   managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
 const managerWorkerToken =
   process.env.BPT_MANAGER_WS_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
+const managerAccessToken =
+  process.env.BPT_MANAGER_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
 
 async function graphQL(
   request,
@@ -16,7 +18,10 @@ async function graphQL(
 ) {
   const response = await request.post(managerGraphQL, {
     data: { query, variables },
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${managerAccessToken}`,
+    },
   });
   expect(response.ok()).toBeTruthy();
   const body = await response.json();
@@ -44,6 +49,23 @@ async function fillTextField(page, input, value: string) {
 function taskLocator(page, title: string) {
   const name = new RegExp(title);
   return page.getByRole("group", { name });
+}
+
+async function openVueApp(page) {
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
+  const authState = await page
+    .waitForFunction(() => {
+      if (document.querySelector("#app[data-ready='true']")) return "ready";
+      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      return "";
+    }, null, { timeout: 120000 })
+    .then((handle) => handle.jsonValue());
+  const tokenInput = page.getByLabel("Manager token");
+  if (authState === "token") {
+    await tokenInput.fill(managerAccessToken);
+    await page.getByRole("button", { name: "Unlock manager" }).click();
+  }
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 30000 });
 }
 
 function connectWorkerUntilStarted(
@@ -331,8 +353,7 @@ test("board scrum groups task statuses into four visual columns", async ({
     })
     .toEqual({ pending: true, running: true, ready: true, done: true, complete: true });
 
-  await page.goto("/");
-  await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 30000 });
+  await openVueApp(page);
 
   const boardSearch = page.getByRole("textbox", { name: /Search/ });
   await expect(boardSearch).toBeVisible();

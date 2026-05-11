@@ -48,7 +48,7 @@ async function save() {
         <section class="detail-section">
           <h2>Trusted mode</h2>
           <p>
-            Authentication and authorization are intentionally disabled in this build.
+            Manager access uses the Worker token when WORKER_TOKEN is set.
             Deploy Manager, UI, and Workers only on a trusted network.
           </p>
           <a-form layout="vertical" style="max-width: 360px">

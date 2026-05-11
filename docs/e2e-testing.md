@@ -19,7 +19,7 @@
 边界：
 
 - E2E 不覆盖所有字段级校验，字段级分支主要由 Go 单元测试和 Vue component 测试覆盖。
-- E2E 不承担安全渗透测试。当前系统处于 trusted mode，GraphQL/UI 未启用运行时鉴权。
+- E2E 不承担安全渗透测试。当前系统处于 trusted mode；当 `WORKER_TOKEN` 非空时，GraphQL/UI 使用同一个固定 token 做访问门禁。
 - 真实 Agent E2E 依赖本机 CLI、凭据、网络和模型服务，作为发布必跑项，不作为每次本地文档或代码变更的默认验证。
 
 ## 测试分层与现有入口
@@ -80,9 +80,10 @@ make clean-local
 | --- | --- | --- |
 | `BPT_UI_URL` | `http://localhost:3000` | Playwright `baseURL`，指定 UI 地址 |
 | `BPT_MANAGER_GRAPHQL_URL` | `http://localhost:8080/graphql` | Playwright 测试访问 Manager GraphQL 的地址 |
+| `BPT_MANAGER_TOKEN` | `WORKER_TOKEN` 或 `dev-worker-token` | Playwright 访问 Manager GraphQL、UI 解锁、订阅、终端和代理时使用的固定 token |
 | `BPT_MANAGER_WS_URL` | 由 GraphQL URL 推导为 `/worker/ws` | Playwright 模拟 Worker 连接的 WebSocket 地址 |
 | `BPT_MANAGER_WS_TOKEN` | 空 | Playwright 模拟 Worker 连接时追加到 `token` 查询参数 |
-| `WORKER_TOKEN` | 本地 Makefile 默认 `dev-worker-token` | Manager 启用 Worker WebSocket token 校验，真实 Worker 使用同值连接 |
+| `WORKER_TOKEN` | 本地 Makefile 默认 `dev-worker-token` | Manager 启用用户侧 token 门禁和 Worker WebSocket token 校验，真实 Worker 使用同值连接 |
 | `MANAGER_WS_URLS` | 空 | 真实 Worker 可用逗号分隔 URL 同时连接多个 Manager，优先级高于 `MANAGER_WS_URL` |
 | `DB_DRIVER` | Manager 默认 `sqlite` | Manager 存储驱动，可选 `sqlite`、`postgres`、`memory` |
 | `DB_DSN` | SQLite 默认 `./data/manager.db` | Manager 数据源地址；PostgreSQL 模式必须显式提供 |
@@ -147,6 +148,7 @@ npm run e2e
 ```bash
 BPT_UI_URL=http://localhost:3000 \
 BPT_MANAGER_GRAPHQL_URL=http://localhost:8080/graphql \
+BPT_MANAGER_TOKEN=dev-worker-token \
 BPT_MANAGER_WS_URL=ws://localhost:8080/worker/ws \
 BPT_MANAGER_WS_TOKEN=dev-worker-token \
 npm run e2e
@@ -216,7 +218,7 @@ npm run e2e:real-agents
 | --- | --- | --- | --- |
 | Manager | `/healthz` 返回 200 | L1 | [待补齐] |
 | Manager | `/readyz` 在存储可用时返回 200、存储不可用时返回 503 | L1 | [待补齐] |
-| Manager | GraphQL trusted mode 不要求鉴权头 | L1 | [待补齐] |
+| Manager | `WORKER_TOKEN` 为空时 GraphQL 保持无鉴权兼容；非空时无 token 被拒绝，正确 token 可访问 | L1/L2 | [已实现] |
 | Project | 创建 Project 并使用默认分支/worktree 前缀 | L1/L2 | [已实现] |
 | Project | 更新 Project 名称、Git URL、默认分支、worktree 前缀 | L1/L2 | [待补齐] |
 | UI | Board、Projects、Workers、Events 后端分页与翻页控件 | L1/L2 | [已实现] |
@@ -224,7 +226,7 @@ npm run e2e:real-agents
 | Project | Worker 绑定 SPECIFIC_PROJECTS 时只接收绑定 Project 的任务 | L1/L2 | [已实现] |
 | Worker | 通过 GraphQL 注册 Worker | L2 | [已实现] |
 | Worker | 通过 Worker WebSocket `WORKER_REGISTER` 注册 Worker | L1 | [已实现] |
-| Worker | 设置 `WORKER_TOKEN` 后，无 token 连接被拒绝，正确 token 可连接 | L1/L2 | [待补齐] |
+| Worker | 设置 `WORKER_TOKEN` 后，无 token 连接被拒绝，正确 token 可连接 | L1/L2 | [已实现] |
 | Worker | Worker 上报心跳并更新 `lastHeartbeatAt` | L1 | [待补齐] |
 | Worker | Worker 断线后被标记为 `OFFLINE` | L1/L2 | [待补齐] |
 | Worker | Worker 重连后恢复 `ONLINE` 并可继续接收任务 | L1/L2 | [待补齐] |
@@ -351,7 +353,7 @@ npm run e2e:real-agents
 | 现象 | 优先检查 |
 | --- | --- |
 | UI 打不开或 `Vue-view` 不可见 | `BPT_UI_URL`、Vue dev server、浏览器控制台、浏览器控制台 |
-| GraphQL 请求失败 | `BPT_MANAGER_GRAPHQL_URL`、Manager `/healthz`、Manager 日志、GraphQL response errors |
+| GraphQL 请求失败 | `BPT_MANAGER_GRAPHQL_URL`、`BPT_MANAGER_TOKEN`/`WORKER_TOKEN`、Manager `/healthz`、Manager 日志、GraphQL response errors |
 | Worker WebSocket 连接失败 | `BPT_MANAGER_WS_URL`、`WORKER_TOKEN` 与 `BPT_MANAGER_WS_TOKEN` 是否一致、`/worker/ws` 查询参数 |
 | 任务停在 `ASSIGNED` | Worker 是否在线、是否支持目标 Agent、是否绑定目标 Project、是否空闲 |
 | 任务停在 `STARTING` | Worker 是否收到 `TASK_START`、是否上报 `TASK_ACCEPTED`/`TASK_STARTED` |

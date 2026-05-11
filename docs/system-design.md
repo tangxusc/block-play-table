@@ -1641,11 +1641,15 @@ flowchart TD
 
 | 路径 | 说明 |
 | --- | --- |
+| `/auth/status` | Manager token 门禁状态 |
+| `/auth/verify` | Manager token 校验 |
 | `/graphql` | GraphQL Query / Mutation |
 | `/subscriptions` | GraphQL Subscription |
 | `/worker/ws` | Worker WebSocket |
 | `/healthz` | 健康检查 |
 | `/readyz` | 就绪检查 |
+
+当 Manager 设置 `WORKER_TOKEN` 时，`/graphql`、`/subscriptions`、`/terminal/**` 和 `/proxy/**` 需要同一个固定 token；`/worker/ws` 和 `/worker/frp` 继续通过 `token` query 参数校验 Worker 连接。
 
 ### 11.4 Docker 多阶段构建策略
 
@@ -1786,10 +1790,18 @@ Manager 根据上报信息恢复状态。
 
 ### 13.1 认证
 
-推荐支持两种模式：
+当前 trusted mode 支持两种模式：
 
-1. 本地模式：允许关闭认证或使用本地 Token。
-2. 团队模式：启用用户登录和 Worker Token。
+1. 本地兼容模式：`WORKER_TOKEN` 为空时，Manager 用户侧入口和 Worker WebSocket 保持开放。
+2. 固定 Token 模式：`WORKER_TOKEN` 非空时，同一个 token 保护 Manager 用户侧入口和 Worker WebSocket/FRP 连接。
+
+Manager 用户侧入口支持三种 token 传递方式：
+
+```text
+Authorization: Bearer <token>
+X-Manager-Token: <token>
+?token=<token>
+```
 
 Worker 连接示例：
 

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ type Option func(*Server)
 
 func WithWorkerToken(token string) Option {
 	return func(s *Server) {
-		s.workerToken = token
+		s.workerToken = strings.TrimSpace(token)
 	}
 }
 
@@ -69,6 +70,8 @@ func (s *Server) Handler() http.Handler {
 	gqlHandler := s.graphqlHandler()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.ready)
+	mux.HandleFunc("/auth/status", s.authStatus)
+	mux.HandleFunc("/auth/verify", s.authVerify)
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, errorResponse("method not allowed"))
@@ -83,7 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/proxy", s.gateway.HandleProxy)
 	mux.HandleFunc("/proxy/", s.gateway.HandleProxy)
 	mux.Handle("/subscriptions", gqlHandler)
-	return withCORS(mux)
+	return withCORS(s.withManagerToken(mux))
 }
 
 func (s *Server) graphqlHandler() http.Handler {
@@ -116,6 +119,87 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse("method not allowed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"required": s.managerTokenRequired()})
+}
+
+func (s *Server) authVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse("method not allowed"))
+		return
+	}
+	var input struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid JSON body"))
+		return
+	}
+	if s.managerTokenRequired() && !constantTimeTokenEqual(input.Token, s.workerToken) {
+		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid manager token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) withManagerToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.managerTokenRequired() || !managerTokenProtectedPath(r.URL.Path) || s.requestHasManagerToken(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid manager token"))
+	})
+}
+
+func (s *Server) managerTokenRequired() bool {
+	return strings.TrimSpace(s.workerToken) != ""
+}
+
+func (s *Server) requestHasManagerToken(r *http.Request) bool {
+	return constantTimeTokenEqual(managerTokenFromRequest(r), s.workerToken)
+}
+
+func managerTokenProtectedPath(path string) bool {
+	return path == "/graphql" ||
+		path == "/subscriptions" ||
+		path == "/proxy" ||
+		strings.HasPrefix(path, "/proxy/") ||
+		strings.HasPrefix(path, "/terminal/tasks/") ||
+		strings.HasPrefix(path, "/terminal/workers/")
+}
+
+func managerTokenFromRequest(r *http.Request) string {
+	if value := strings.TrimSpace(r.Header.Get("X-Manager-Token")); value != "" {
+		return value
+	}
+	if value := bearerToken(r.Header.Get("Authorization")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
+}
+
+func bearerToken(header string) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(header), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func constantTimeTokenEqual(got, want string) bool {
+	got = strings.TrimSpace(got)
+	want = strings.TrimSpace(want)
+	if got == "" || want == "" || len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -129,7 +213,7 @@ func errorResponse(message string) map[string]any {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-User-Role, worker, worker_host, worker_port")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Manager-Token, X-API-Key, X-User-Role, worker, worker_host, worker_port")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -299,7 +383,8 @@ func (g *WorkerGateway) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "worker proxy tunnel is not connected", http.StatusServiceUnavailable)
 		return
 	}
-	resp, err := frp.ProxyHTTP(r.Context(), tunnel.session, r, frp.ProxyTarget{
+	proxyRequest := requestWithoutManagerTokenQuery(r, g.workerToken)
+	resp, err := frp.ProxyHTTP(r.Context(), tunnel.session, proxyRequest, frp.ProxyTarget{
 		Host: target.host,
 		Port: target.port,
 		Path: target.path,
@@ -317,6 +402,17 @@ func (g *WorkerGateway) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func requestWithoutManagerTokenQuery(r *http.Request, workerToken string) *http.Request {
+	if r == nil || !constantTimeTokenEqual(r.URL.Query().Get("token"), workerToken) {
+		return r
+	}
+	cloned := r.Clone(r.Context())
+	query := cloned.URL.Query()
+	query.Del("token")
+	cloned.URL.RawQuery = query.Encode()
+	return cloned
 }
 
 func (g *WorkerGateway) HandleTaskTerminal(w http.ResponseWriter, r *http.Request) {

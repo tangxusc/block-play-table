@@ -9,7 +9,7 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 ## Trusted Mode
 
-GraphQL and UI authorization are intentionally disabled in this iteration. Manager and UI must run on a trusted network. Worker WebSocket and FRP tunnel connections can be protected with `WORKER_TOKEN`; when it is set on Manager, Workers must send the same token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, the task terminal endpoint opens a real shell in the task worktree on the Worker, and the task Review API can read diffs and stage, unstage, discard, or restore changes inside the task worktree, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+Manager and UI must run on a trusted network. When `WORKER_TOKEN` is set on Manager, the same fixed token protects Manager user-facing endpoints (`/graphql`, `/subscriptions`, `/terminal/**`, and `/proxy/**`) and Worker WebSocket/FRP connections. Browser users enter the token once per tab session; Workers send it as the existing Worker token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, the task terminal endpoint opens a real shell in the task worktree on the Worker, and the task Review API can read diffs and stage, unstage, discard, or restore changes inside the task worktree, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -54,7 +54,7 @@ WORKER_WORK_DIR=./worker-data \
 go run ./worker/cmd/worker
 ```
 
-To require Worker authentication, set the same token for Manager and Worker:
+To require Manager access and Worker connection token checks, set the same token for Manager and Worker:
 
 ```bash
 WORKER_TOKEN=dev-worker-token DB_DRIVER=sqlite DB_DSN=./data/manager.db go run ./manager/cmd/manager
@@ -65,6 +65,8 @@ Manager endpoints:
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /auth/status`
+- `POST /auth/verify`
 - `POST /graphql`
 - `GET /worker/ws`
 - `GET /worker/frp`
@@ -74,6 +76,8 @@ Manager endpoints:
 - `GET /terminal/tasks/{taskID}/ws`
 - `/proxy/**`
 - `GET /subscriptions`
+
+When `WORKER_TOKEN` is set, user-facing Manager requests must include the token as `Authorization: Bearer <token>`, `X-Manager-Token: <token>`, or a `token` query parameter. `/healthz`, `/readyz`, CORS `OPTIONS`, and `/auth/status` stay open for readiness checks and bootstrapping.
 
 `/proxy/**` routes through the Worker FRP tunnel. Header-based requests must include `worker: <worker name>` and `worker_port: <worker port>` headers, and can optionally include `worker_host: <host>` to reach a host visible from the Worker network. If `worker_host` is omitted, Manager targets `127.0.0.1`. Manager strips the `/proxy` prefix and forwards the remaining path to `http://<worker_host>:<worker_port>` through that Worker; `worker`, `worker_host`, and `worker_port` are routing headers and are not forwarded to the target service. Worker names are unique.
 

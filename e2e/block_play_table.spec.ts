@@ -13,6 +13,10 @@ const managerWorkerToken =
   process.env.BPT_MANAGER_WS_TOKEN ||
   process.env.WORKER_TOKEN ||
   "dev-worker-token";
+const managerAccessToken =
+  process.env.BPT_MANAGER_TOKEN ||
+  process.env.WORKER_TOKEN ||
+  "dev-worker-token";
 
 async function graphQL(
   request,
@@ -21,7 +25,10 @@ async function graphQL(
 ) {
   const response = await request.post(managerGraphQL, {
     data: { query, variables },
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${managerAccessToken}`,
+    },
   });
   expect(response.ok()).toBeTruthy();
   const body = await response.json();
@@ -30,10 +37,28 @@ async function graphQL(
 }
 
 async function openVueApp(page) {
-  await page.goto("/", { waitUntil: "networkidle", timeout: 120000 });
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
+  const authState = await page
+    .waitForFunction(() => {
+      if (document.querySelector("#app[data-ready='true']")) return "ready";
+      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      return "";
+    }, null, { timeout: 120000 })
+    .then((handle) => handle.jsonValue());
+  const tokenInput = page.getByLabel("Manager token");
+  if (authState === "token") {
+    await tokenInput.fill(managerAccessToken);
+    await page.getByRole("button", { name: "Unlock manager" }).click();
+  }
   await expect(page.locator("#app[data-ready='true']")).toBeVisible({
     timeout: 120000,
   });
+}
+
+function withManagerAccessToken(rawURL: string) {
+  const url = new URL(rawURL);
+  url.searchParams.set("token", managerAccessToken);
+  return url.toString();
 }
 
 async function openTaskFromList(page, taskTitle: string) {
@@ -360,7 +385,7 @@ async function runTerminalCommand(
   const terminalURL = managerGraphQL
     .replace(/^http/, "ws")
     .replace(/\/graphql$/, `/terminal/tasks/${taskId}/ws`);
-  const ws = new WebSocket(terminalURL);
+  const ws = new WebSocket(withManagerAccessToken(terminalURL));
   let output = "";
   let exitSent = false;
   await new Promise<void>((resolve, reject) => {
@@ -422,7 +447,7 @@ async function runWorkerTerminalCommand(
   const terminalURL = managerGraphQL
     .replace(/^http/, "ws")
     .replace(/\/graphql$/, `/terminal/workers/${workerId}/ws`);
-  const ws = new WebSocket(terminalURL);
+  const ws = new WebSocket(withManagerAccessToken(terminalURL));
   let output = "";
   let exitSent = false;
   await new Promise<void>((resolve, reject) => {
