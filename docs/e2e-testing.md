@@ -1,6 +1,6 @@
 # 端到端测试文档
 
-本文档定义 Block Play Table 的端到端测试策略、运行入口、覆盖矩阵、发布准入和排障方法。端到端测试用于验证 Manager、Worker、Flutter Web UI、GraphQL、Worker WebSocket、持久化、领域事件和真实 Agent CLI 在可信模式下可以形成完整闭环。
+本文档定义 Block Play Table 的端到端测试策略、运行入口、覆盖矩阵、发布准入和排障方法。端到端测试用于验证 Manager、Worker、Vue Web UI、GraphQL、Worker WebSocket、持久化、领域事件和真实 Agent CLI 在可信模式下可以形成完整闭环。
 
 ## 测试目标与边界
 
@@ -13,12 +13,12 @@
 - 验证运行中 Agent 交互闭环：Worker 上报 `TASK_INTERACTION_REQUEST` 后任务进入 `WAITING_INPUT`，UI 批准/回答后 Manager 下发 `TASK_INTERACTION_RESPONSE`，Worker 上报 `TASK_INTERACTION_RESOLVED` 并恢复执行。
 - 验证 Claude `permission_denials` 通过同一交互闭环展示在 UI 中，并在用户批准后由 Worker 继续同一个 Claude session。
 - 验证任务分配时的 Agent CLI 运行配置会保存、展示，并随 `TASK_START` / `TASK_CONTINUE` 下发给 Worker。
-- 验证 Flutter Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
+- 验证 Vue Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
 - 验证真实 Codex/Claude CLI 在发布前可以通过 Worker 执行固定任务，并产出可追踪结果。
 
 边界：
 
-- E2E 不覆盖所有字段级校验，字段级分支主要由 Go 单元测试和 Flutter widget 测试覆盖。
+- E2E 不覆盖所有字段级校验，字段级分支主要由 Go 单元测试和 Vue component 测试覆盖。
 - E2E 不承担安全渗透测试。当前系统处于 trusted mode，GraphQL/UI 未启用运行时鉴权。
 - 真实 Agent E2E 依赖本机 CLI、凭据、网络和模型服务，作为发布必跑项，不作为每次本地文档或代码变更的默认验证。
 
@@ -27,13 +27,13 @@
 | 层级 | 入口 | 用途 | 默认运行时机 |
 | --- | --- | --- | --- |
 | L1 Go in-process E2E | `make e2e` | 使用 `httptest` 在进程内验证 Manager GraphQL、Worker WebSocket、领域事件和日志落库 | 本地变更、CI、发布前 |
-| L2 Playwright UI E2E | `npm run e2e` | 连接运行中的 UI/Manager，验证 Flutter Web UI、GraphQL 种子数据、模拟 Worker 生命周期、看板状态分组和 Review Git workspace 状态、同步与发布流程 | UI/API 变更、CI、发布前 |
+| L2 Playwright UI E2E | `npm run e2e` | 连接运行中的 UI/Manager，验证 Vue Web UI、GraphQL 种子数据、模拟 Worker 生命周期、看板状态分组和 Review Git workspace 状态、同步与发布流程 | UI/API 变更、CI、发布前 |
 | L3 Real Agent Release Gate | `npm run e2e:real-agents` | 启动真实 Manager/Worker，并使用 Codex/Claude CLI 跑通固定任务 | 发布必跑 |
 
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Flutter Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
+- `e2e/block_play_table.spec.ts`：L2，打开 Vue Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/archived 任务，验证活跃 Board 视图排除归档任务、Archived 视图展示并删除归档任务，并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -44,7 +44,7 @@
 - Go：用于 Manager、Worker 和 Go E2E。若本机 Go 环境有 `GOROOT` 冲突，使用 `GO_TEST_ENV='env -u GOROOT'`。
 - Node.js 与 npm：用于安装和运行 Playwright。
 - Playwright：通过 `npm install` 安装 `@playwright/test`。
-- Docker：用于本地启动 Manager、Worker、UI、PostgreSQL，或运行 Flutter 测试镜像。
+- Node.js/npm：用于启动 Vue UI、运行本地栈脚本和 Playwright。
 - Codex CLI：真实 Agent E2E 需要 `codex app-server --listen stdio://` 可用。
 - Claude CLI：真实 Agent E2E 需要 `claude -p` 可用。
 - Worker 工作目录：真实或容器 Worker 需要可写目录，例如 `./worker-data` 或 `worker-data-real-e2e`。
@@ -55,7 +55,7 @@
 make run-local
 ```
 
-该命令使用 `docker-compose.team.yml` 启动 PostgreSQL、Manager、Worker 和 UI。默认端口：
+该命令通过 npm 脚本在本地后台启动 Manager、Worker 和 Vue UI，默认使用 SQLite。默认端口：
 
 - UI：`http://localhost:3000`
 - Manager：`http://localhost:8080`
@@ -260,7 +260,7 @@ npm run e2e:real-agents
 | Task | Created/Completed/Failed/Interrupted 任务可归档并从活跃 Board 视图移入 Archived 视图 | L2 | [已实现] |
 | Task | 仅 Archived 任务可永久删除，删除后保留 `TaskDeleted` 审计事件 | L1/L2 | [已实现] |
 | Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
-| UI | Flutter Web 首屏可加载并显示 `flutter-view` | L2 | [已实现] |
+| UI | Vue Web 首屏可加载并显示 `Vue-view` | L2 | [已实现] |
 | UI | Kanban 将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED 分成三列，ARCHIVED 不进入活跃列 | L2 | [已实现] |
 | UI | Archived Board 视图按 List 模式展示归档任务并支持删除 | L2 | [已实现] |
 | UI | Board/Projects/Workers/Events 顶部搜索和排序在服务端过滤排序后分页，默认创建时间倒序 | L2 | [已实现] |
@@ -350,7 +350,7 @@ npm run e2e:real-agents
 
 | 现象 | 优先检查 |
 | --- | --- |
-| UI 打不开或 `flutter-view` 不可见 | `BPT_UI_URL`、UI 容器端口、Flutter web build、浏览器控制台 |
+| UI 打不开或 `Vue-view` 不可见 | `BPT_UI_URL`、Vue dev server、浏览器控制台、浏览器控制台 |
 | GraphQL 请求失败 | `BPT_MANAGER_GRAPHQL_URL`、Manager `/healthz`、Manager 日志、GraphQL response errors |
 | Worker WebSocket 连接失败 | `BPT_MANAGER_WS_URL`、`WORKER_TOKEN` 与 `BPT_MANAGER_WS_TOKEN` 是否一致、`/worker/ws` 查询参数 |
 | 任务停在 `ASSIGNED` | Worker 是否在线、是否支持目标 Agent、是否绑定目标 Project、是否空闲 |

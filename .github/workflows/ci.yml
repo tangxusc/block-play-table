@@ -65,8 +65,8 @@ jobs:
             coverage*.out
             coverage*.txt
 
-  docker-checks:
-    name: Docker and Flutter checks
+  ui-and-docker-checks:
+    name: UI and Docker checks
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -74,12 +74,28 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Run Flutter tests in Docker
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Typecheck Vue UI
         shell: bash
         run: |
           mkdir -p artifacts/logs
           set -o pipefail
-          make flutter-test 2>&1 | tee artifacts/logs/make-flutter-test.log
+          make ui-typecheck 2>&1 | tee artifacts/logs/make-ui-typecheck.log
+
+      - name: Build Vue UI
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          set -o pipefail
+          make ui-build 2>&1 | tee artifacts/logs/make-ui-build.log
 
       - name: Build Docker images
         shell: bash
@@ -92,7 +108,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: docker-check-artifacts
+          name: ui-docker-check-artifacts
           if-no-files-found: ignore
           path: artifacts/logs/
 
@@ -102,7 +118,7 @@ jobs:
     timeout-minutes: 90
     needs:
       - go-checks
-      - docker-checks
+      - ui-and-docker-checks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
@@ -121,7 +137,8 @@ jobs:
           - component: ui
             dockerfile: ui/Dockerfile
             build-args: |
-              MANAGER_GRAPHQL_URL=http://localhost:8080/graphql
+              VITE_MANAGER_GRAPHQL_URL=http://localhost:8080/graphql
+              VITE_MANAGER_GRAPHQL_WS_URL=ws://localhost:8080/subscriptions
 
     steps:
       - name: Check out repository

@@ -34,12 +34,11 @@ go.work.sum
 # Local runtime data
 data/
 worker-data/
+.local-run/
 
-# Flutter / Web
-ui/.dart_tool/
-ui/.flutter-plugins
-ui/.flutter-plugins-dependencies
+# Web
 ui/build/
+ui/dist/
 
 # Node / e2e
 node_modules/

@@ -24,27 +24,14 @@ async function graphQL(
   return body.data;
 }
 
-async function enableFlutterAccessibility(page) {
-  const button = page.getByRole("button", { name: "Enable accessibility" });
-  if (await button.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await button.evaluate((element: HTMLElement) => element.click());
-    await page.waitForTimeout(500);
-  }
-}
-
-async function fillFlutterTextField(page, input, value: string) {
+async function fillTextField(page, input, value: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     await input.click();
     await page.waitForTimeout(100);
-    await page.keyboard.press(
-      process.platform === "darwin" ? "Meta+A" : "Control+A",
-    );
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(100);
     if (value.length > 0) {
-      await input.fill(value).catch(async () => {
-        await page.keyboard.type(value);
-      });
+      await input.fill(value);
+    } else {
+      await input.fill("");
     }
     await page.waitForTimeout(300);
     const current = await input.inputValue().catch(() => value);
@@ -56,12 +43,14 @@ async function fillFlutterTextField(page, input, value: string) {
 
 function taskLocator(page, title: string) {
   const name = new RegExp(title);
-  return page
-    .getByRole("button", { name })
-    .or(page.getByRole("group", { name }));
+  return page.getByRole("group", { name });
 }
 
-function connectWorkerUntilStarted(workerId: string, taskId: string) {
+function connectWorkerUntilStarted(
+  workerId: string,
+  taskId: string,
+  options: { complete?: boolean } = {},
+) {
   const url = new URL(managerWorkerWs);
   url.searchParams.set("worker_id", workerId);
   if (managerWorkerToken) {
@@ -110,6 +99,12 @@ function connectWorkerUntilStarted(workerId: string, taskId: string) {
         taskId,
         content: "/tmp/e2e-running-worktree",
       });
+      if (options.complete) {
+        send(`completed-${taskId}`, "TASK_COMPLETED", {
+          taskId,
+          result: "board group completed",
+        });
+      }
       clearTimeout(timeout);
       resolve();
     });
@@ -130,14 +125,16 @@ function connectWorkerUntilStarted(workerId: string, taskId: string) {
   };
 }
 
-test("board kanban groups task statuses into three visual columns", async ({
+test("board scrum groups task statuses into four visual columns", async ({
   page,
   request,
 }, testInfo) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const suffix = Date.now();
   const projectName = `Board Groups Project ${suffix}`;
-  const workerId = `worker-board-groups-${suffix}`;
+  const assignedWorkerId = `worker-board-groups-assigned-${suffix}`;
+  const runningWorkerId = `worker-board-groups-running-${suffix}`;
+  const doneWorkerId = `worker-board-groups-done-${suffix}`;
   const workerName = `Board Groups Worker ${suffix}`;
 
   const createdProject = await graphQL(
@@ -160,10 +157,38 @@ test("board kanban groups task statuses into three visual columns", async ({
     "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
     {
       input: {
-        id: workerId,
-        name: workerName,
+        id: assignedWorkerId,
+        name: `${workerName} Assigned`,
         supportedAgents: ["codex"],
         workDir: "/tmp/e2e-board-groups-worker",
+        projectBindingMode: "SPECIFIC_PROJECTS",
+        boundProjectIds: [project.id],
+      },
+    },
+  );
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: runningWorkerId,
+        name: `${workerName} Running`,
+        supportedAgents: ["codex"],
+        workDir: "/tmp/e2e-board-groups-running-worker",
+        projectBindingMode: "SPECIFIC_PROJECTS",
+        boundProjectIds: [project.id],
+      },
+    },
+  );
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: doneWorkerId,
+        name: `${workerName} Done`,
+        supportedAgents: ["codex"],
+        workDir: "/tmp/e2e-board-groups-done-worker",
         projectBindingMode: "SPECIFIC_PROJECTS",
         boundProjectIds: [project.id],
       },
@@ -184,6 +209,21 @@ test("board kanban groups task statuses into three visual columns", async ({
   );
   expect(pendingTask.createTask.status).toBe("CREATED");
 
+  const assignedTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }",
+    {
+      input: {
+        title: `Board Groups Ready ${suffix}`,
+        projectId: project.id,
+        workerId: assignedWorkerId,
+        agentType: "codex",
+        baseBranch: "main",
+      },
+    },
+  );
+  expect(assignedTask.createTask.status).toBe("ASSIGNED");
+
   const runningTask = await graphQL(
     request,
     "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }",
@@ -191,7 +231,21 @@ test("board kanban groups task statuses into three visual columns", async ({
       input: {
         title: `Board Groups Running ${suffix}`,
         projectId: project.id,
-        workerId,
+        workerId: runningWorkerId,
+        agentType: "codex",
+        baseBranch: "main",
+      },
+    },
+  );
+
+  const doneTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title status } }",
+    {
+      input: {
+        title: `Board Groups Done ${suffix}`,
+        projectId: project.id,
+        workerId: doneWorkerId,
         agentType: "codex",
         baseBranch: "main",
       },
@@ -217,16 +271,28 @@ test("board kanban groups task statuses into three visual columns", async ({
   );
 
   const workerSocket = connectWorkerUntilStarted(
-    workerId,
+    runningWorkerId,
     runningTask.createTask.id,
   );
+  const doneWorkerSocket = connectWorkerUntilStarted(
+    doneWorkerId,
+    doneTask.createTask.id,
+    { complete: true },
+  );
   await workerSocket.ready;
+  await doneWorkerSocket.ready;
   await graphQL(
     request,
     "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status workerId } }",
     { taskId: runningTask.createTask.id },
   );
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status workerId } }",
+    { taskId: doneTask.createTask.id },
+  );
   await workerSocket.started;
+  await doneWorkerSocket.started;
 
   await expect
     .poll(async () => {
@@ -246,6 +312,16 @@ test("board kanban groups task statuses into three visual columns", async ({
             task.title === runningTask.createTask.title &&
             task.status === "RUNNING",
         ),
+        ready: tasks.some(
+          (task) =>
+            task.title === assignedTask.createTask.title &&
+            task.status === "ASSIGNED",
+        ),
+        done: tasks.some(
+          (task) =>
+            task.title === doneTask.createTask.title &&
+            task.status === "COMPLETED",
+        ),
         complete: tasks.some(
           (task) =>
             task.title === completedBucketTask.createTask.title &&
@@ -253,22 +329,30 @@ test("board kanban groups task statuses into three visual columns", async ({
         ),
       };
     })
-    .toEqual({ pending: true, running: true, complete: true });
+    .toEqual({ pending: true, running: true, ready: true, done: true, complete: true });
 
   await page.goto("/");
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 30000 });
-  await page.waitForTimeout(2000);
-  await enableFlutterAccessibility(page);
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 30000 });
 
   const boardSearch = page.getByRole("textbox", { name: /Search/ });
   await expect(boardSearch).toBeVisible();
-  await fillFlutterTextField(page, boardSearch, pendingTask.createTask.title);
+  await expect(page.locator(".board-column")).toHaveCount(4);
+  for (const column of ["Backlog", "Ready", "In Progress", "Done"]) {
+    await expect(page.locator(".board-column-header", { hasText: column })).toBeVisible();
+  }
+  await fillTextField(page, boardSearch, pendingTask.createTask.title);
   await expect(taskLocator(page, pendingTask.createTask.title)).toBeVisible();
 
-  await fillFlutterTextField(page, boardSearch, runningTask.createTask.title);
+  await fillTextField(page, boardSearch, assignedTask.createTask.title);
+  await expect(taskLocator(page, assignedTask.createTask.title)).toBeVisible();
+
+  await fillTextField(page, boardSearch, runningTask.createTask.title);
   await expect(taskLocator(page, runningTask.createTask.title)).toBeVisible();
 
-  await fillFlutterTextField(
+  await fillTextField(page, boardSearch, doneTask.createTask.title);
+  await expect(taskLocator(page, doneTask.createTask.title)).toBeVisible();
+
+  await fillTextField(
     page,
     boardSearch,
     completedBucketTask.createTask.title,
@@ -277,9 +361,9 @@ test("board kanban groups task statuses into three visual columns", async ({
 
   await page.getByRole("button", { name: "List" }).click();
   const listSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(page, listSearch, pendingTask.createTask.title);
+  await fillTextField(page, listSearch, pendingTask.createTask.title);
   await expect(taskLocator(page, pendingTask.createTask.title)).toBeVisible();
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     listSearch,
     completedBucketTask.createTask.title,
@@ -288,7 +372,7 @@ test("board kanban groups task statuses into three visual columns", async ({
 
   await page.getByRole("button", { name: "Calendar" }).click();
   const calendarSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     calendarSearch,
     completedBucketTask.createTask.title,
@@ -298,7 +382,7 @@ test("board kanban groups task statuses into three visual columns", async ({
   await page.getByRole("button", { name: "Archived" }).click();
   const archivedSearch = page.getByRole("textbox", { name: /Search/ });
   await expect(archivedSearch).toBeVisible();
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     archivedSearch,
     completedBucketTask.createTask.title,
@@ -326,4 +410,5 @@ test("board kanban groups task statuses into three visual columns", async ({
   });
 
   workerSocket.close();
+  doneWorkerSocket.close();
 });

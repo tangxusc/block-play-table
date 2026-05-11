@@ -4,8 +4,8 @@ Block Play Table is a trusted-mode task orchestration prototype for AI agent wor
 
 - Go Manager service with gqlgen GraphQL API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
 - Go Worker service that registers with Manager, sends heartbeat messages, creates task worktrees, runs task pre/post commands, and adapts Codex/Claude non-interactive CLIs.
-- Flutter Web UI for tasks, Kanban/list/calendar/archived board views, projects, workers, and settings.
-- Dockerfiles, Docker Compose, SQL schema, Go e2e tests, and coverage gates.
+- Vue 3 + Ant Design Vue UI for tasks, Kanban/list/calendar/archived board views, projects, workers, and settings.
+- Dockerfiles, SQL schema, Go e2e tests, browser e2e tests, and coverage gates.
 
 ## Trusted Mode
 
@@ -101,12 +101,13 @@ Supported fields are typed by Agent instead of free-form JSON:
 
 Default empty config keeps the existing CLI behavior for Claude, which runs `claude -p --output-format=stream-json --verbose ...` and maps configured values to `--model`, `--effort`, and `--permission-mode`. Codex tasks run through `codex app-server --listen stdio://`; configured values are passed into the app-server turn as model, reasoning, sandbox, approval, and bypass options so live command/file/permission approvals can use the task interaction channel.
 
-## Docker Compose
+## Local UI And Full Stack
 
-Local SQLite mode:
+Install Node dependencies, then start the local trusted-mode stack:
 
 ```bash
-docker compose up --build manager worker ui
+npm install
+make run-local
 ```
 
 Then open:
@@ -114,23 +115,18 @@ Then open:
 - UI: `http://localhost:3000`
 - Manager: `http://localhost:8080`
 
-Team PostgreSQL mode:
+`make run-local` delegates to `npm run run-local`. It starts Manager, Worker, and the Vue UI in the background, writes logs to `.local-run/`, and uses SQLite at `data/manager.db`. On Windows it prefers WSL for Manager/Worker so terminal e2e can use a real Unix pty, while the UI still runs through local npm.
+
+Stop or clean the local stack:
 
 ```bash
-cp .env.example .env
-# edit WORKER_TOKEN, POSTGRES_PASSWORD, and WORKER_SSH_DIR
-docker compose -f docker-compose.team.yml up --build
+make stop-local
+make clean-local
 ```
-
-For local `git@github.com:...` project URLs, the Worker image includes `openssh-client`.
-`make run-local` passes `WORKER_SSH_DIR=$(HOME)/.ssh` and Docker Desktop's
-`WORKER_SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock` into the Worker container.
-The GitHub SSH key must be usable non-interactively by either the mounted SSH
-directory or the forwarded ssh-agent.
 
 Manager storage is selected by:
 
-- `DB_DRIVER=sqlite` with `DB_DSN=/data/manager.db`
+- `DB_DRIVER=sqlite` with `DB_DSN=./data/manager.db`
 - `DB_DRIVER=postgres` with `DB_DSN=postgres://manager:password@postgres:5432/block_play_table?sslmode=disable`
 - `DB_DRIVER=memory` for temporary tests or demos only
 
@@ -144,28 +140,26 @@ Full end-to-end test strategy, coverage matrix, release gates, and troubleshooti
 make test
 make coverage
 make e2e
+npm run typecheck
+npm run build
 ```
 
 The Go coverage gate uses cross-package coverage over Manager internals, shared packages, and Worker internals and fails below 80%.
 
-Flutter is expected to run through Docker because Flutter is not installed locally:
-
-```bash
-make flutter-test
-```
-
-Playwright UI smoke tests are in `e2e/`:
+Playwright UI smoke tests are in `e2e/` and expect the local stack to be running:
 
 ```bash
 npm install
+make run-local
 npm run e2e
+make stop-local
 ```
 
 ## GitHub Actions
 
 The repository defines two workflows:
 
-- `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs `make test`, `make coverage`, `make build`, `make flutter-test`, and `make docker-build`. It intentionally does not run Playwright, `make run-local`, or `make stop-local`.
+- `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs `make test`, `make coverage`, `make build`, `make ui-typecheck`, `make ui-build`, and `make docker-build`. It intentionally does not run Playwright, `make run-local`, or `make stop-local`.
 - `Real Agent Release Gate` runs on manual dispatch and `v*` tags. It requires a self-hosted Linux runner labeled `real-agent` with Go, Node.js, npm, bash, curl, python3, Codex CLI, and Claude CLI installed and authenticated. The workflow runs `npm run e2e:real-agents`.
 
 When `CI` passes on `main`, it publishes Docker images to GHCR:

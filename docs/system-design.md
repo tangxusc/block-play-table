@@ -8,7 +8,7 @@ Block Play Table 是一个面向 AI Agent 任务编排、执行和观察的平�
 
 | 模块 | 技术 |
 | --- | --- |
-| 用户界面 | Flutter |
+| 用户界面 | Vue |
 | API | GraphQL |
 | GraphQL 服务端 | gqlgen |
 | Manager / Worker | Golang |
@@ -95,7 +95,7 @@ Worker 是具体任务执行节点。
 
 ### 3.1 用户界面模块
 
-用户界面使用 Flutter 实现，支持 Web、桌面端和 App。
+用户界面使用 Vue 实现，支持 Web、桌面端和 App。
 
 主要页面：
 
@@ -347,7 +347,7 @@ block-play-table-task_01HR9A-04251030
 ```mermaid
 sequenceDiagram
     participant U as 用户
-    participant UI as Flutter UI
+    participant UI as Vue UI
     participant M as Manager
     participant W as Worker
     participant A as Agent(Codex/Claude)
@@ -815,7 +815,7 @@ DomainEvent
 
 ```mermaid
 flowchart LR
-    UI[Flutter Web/Desktop/App] -->|GraphQL Query/Mutation/Subscription| M[Manager Go + gqlgen]
+    UI[Vue Web] -->|GraphQL Query/Mutation/Subscription| M[Manager Go + gqlgen]
     M -->|Repository| DB[(SQLite/PostgreSQL)]
     M <-->|WebSocket| W1[Worker 1]
     M <-->|WebSocket| W2[Worker 2]
@@ -827,9 +827,9 @@ flowchart LR
     W2 --> FS2[Project Git Worktree]
 ```
 
-### 7.2 Flutter 前端架构
+### 7.2 Vue 前端架构
 
-Flutter 前端只与 Manager 交互。
+Vue 前端只与 Manager 交互。
 
 通信方式：
 
@@ -1586,7 +1586,7 @@ PostgreSQL Implementation
 
 ```mermaid
 flowchart TD
-    UI[Flutter Desktop/Web] --> M[Manager]
+    UI[Vue Web] --> M[Manager]
     M --> DB[(SQLite)]
     M <-->|WebSocket| W[Local Worker]
     W --> A[Codex/Claude]
@@ -1635,7 +1635,7 @@ flowchart TD
 | Manager HTTP / GraphQL | `8080` | GraphQL API |
 | Manager WebSocket | `8080` | 可与 HTTP 共用端口 |
 | PostgreSQL | `5432` | 生产数据库 |
-| Flutter Web Dev | `3000` 或 `5173` | 开发环境 |
+| Vue/Vite Dev | `3000` 或 `5173` | 开发环境 |
 
 推荐路径：
 
@@ -1649,14 +1649,14 @@ flowchart TD
 
 ### 11.4 Docker 多阶段构建策略
 
-项目整体构建和编译统一使用 Docker 多阶段构建。开发机和 CI 不直接依赖本地 Go、Flutter 或 Node 工具链版本，构建产物由 Docker builder 阶段生成，运行镜像只保留必要二进制、静态资源和运行依赖。
+项目整体构建和编译统一使用 Docker 多阶段构建。开发机和 CI 不直接依赖本地 Go、Vue 或 Node 工具链版本，构建产物由 Docker builder 阶段生成，运行镜像只保留必要二进制、静态资源和运行依赖。
 
 构建目标：
 
 1. Manager：Go builder 阶段编译 Manager 二进制，runtime 阶段使用精简基础镜像运行。
 2. Worker：Go builder 阶段编译 Worker 二进制，runtime 阶段保留 Git、Shell、Agent CLI 和必要系统依赖。
-3. Flutter Web：Flutter builder 阶段执行 `flutter build web`，runtime 阶段由 Nginx 或 Manager 静态文件服务承载。
-4. 桌面端和移动端：也通过 Docker builder 固化 Flutter SDK 和依赖版本，产物输出到构建目录。
+3. Vue Web：Node builder 阶段执行 `npm run build`，runtime 阶段由 Nginx 或 Manager 静态文件服务承载。
+4. 桌面端和移动端不在当前实现范围内。
 
 Manager Dockerfile 结构建议：
 
@@ -1692,54 +1692,26 @@ COPY --from=builder /out/worker /worker
 ENTRYPOINT ["/worker"]
 ```
 
-Flutter Web Dockerfile 结构建议：
+Vue Web Dockerfile 结构建议：
 
 ```dockerfile
-FROM ghcr.io/cirruslabs/flutter:stable AS builder
+FROM node:22-alpine AS builder
 WORKDIR /src
-COPY ui/pubspec.* ./
-RUN flutter pub get
-COPY ui/ .
-RUN flutter build web --release
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY ui/ ./ui/
+RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
-COPY --from=builder /src/build/web /usr/share/nginx/html
+COPY --from=builder /src/ui/dist /usr/share/nginx/html
 ```
 
-### 11.5 Docker Compose 示例
+### 11.5 本地 npm 启动示例
 
-```yaml
-services:
-  manager:
-    image: block-play-table-manager
-    ports:
-      - "8080:8080"
-    environment:
-      DB_DRIVER: postgres
-      DB_DSN: postgres://manager:password@postgres:5432/block_play_table?sslmode=disable
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: manager
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: block_play_table
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  worker:
-    image: block-play-table-worker
-    environment:
-      MANAGER_WS_URL: ws://manager:8080/worker/ws
-      WORKER_ID: worker-001
-      WORKER_WORK_DIR: /worker-data
-    volumes:
-      - ./worker-data:/worker-data
-
-volumes:
-  postgres_data:
+```bash
+npm install
+make run-local
+make stop-local
 ```
 
 ## 12. 可靠性设计
@@ -1973,7 +1945,7 @@ worker:
 3. Worker 自动重连。
 4. 用户权限系统。
 5. Docker 多阶段构建。
-6. Docker Compose。
+6. 本地 npm 启停脚本。
 7. 生产配置。
 
 ## 16. 关键设计原则

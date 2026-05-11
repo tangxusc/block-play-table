@@ -29,19 +29,11 @@ async function graphQL(
   return body.data;
 }
 
-async function enableFlutterAccessibility(page) {
-  const button = page.getByRole("button", { name: "Enable accessibility" });
-  if (await button.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await button.evaluate((element: HTMLElement) => element.click());
-    await page.waitForTimeout(500);
-  }
-}
-
-async function openFlutterApp(page) {
+async function openVueApp(page) {
   await page.goto("/", { waitUntil: "networkidle", timeout: 120000 });
-  await expect(page.locator("flutter-view")).toBeVisible({ timeout: 120000 });
-  await page.waitForTimeout(1500);
-  await enableFlutterAccessibility(page);
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({
+    timeout: 120000,
+  });
 }
 
 async function openTaskFromList(page, taskTitle: string) {
@@ -69,6 +61,39 @@ async function openTaskFromList(page, taskTitle: string) {
   await taskRow.click();
 }
 
+async function selectTaskDetailTab(page, name: string) {
+  await page.getByRole("tab", { name, exact: true }).click();
+}
+
+async function expectDetailCardsDoNotOverflow(page) {
+  await expect
+    .poll(async () =>
+      page.getByRole("dialog").evaluate((dialog: HTMLElement) => {
+        const dialogRight = dialog.getBoundingClientRect().right;
+        return Array.from(
+          dialog.querySelectorAll<HTMLElement>(
+            ".record-card, .record-title, .record-subtitle",
+          ),
+        )
+          .filter((element) => element.offsetParent !== null)
+          .filter((element) => {
+            const rect = element.getBoundingClientRect();
+            return (
+              element.scrollWidth > element.clientWidth + 1 ||
+              rect.right > dialogRight + 1
+            );
+          })
+          .map((element) => ({
+            className: element.className,
+            scrollWidth: element.scrollWidth,
+            clientWidth: element.clientWidth,
+            text: element.textContent?.slice(0, 80),
+          }));
+      }),
+    )
+    .toEqual([]);
+}
+
 async function openWorkerEditor(page, workerName: string) {
   await page.getByText("Workers").click();
   await page.mouse.move(700, 520);
@@ -94,16 +119,11 @@ async function openWorkerEditor(page, workerName: string) {
   await workerGroup.getByRole("button", { name: "Edit worker" }).click();
 }
 
-async function fillFlutterTextField(page, input, value: string) {
+async function fillTextField(page, input, value: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     await input.click();
     await page.waitForTimeout(100);
-    await page.keyboard.press(
-      process.platform === "darwin" ? "Meta+A" : "Control+A",
-    );
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(100);
-    await input.type(value, { delay: 20 });
+    await input.fill(value);
     await page.waitForTimeout(100);
     if ((await input.inputValue()) === value) {
       return;
@@ -112,13 +132,23 @@ async function fillFlutterTextField(page, input, value: string) {
   await expect(input).toHaveValue(value);
 }
 
+async function selectFieldOption(page, field, optionName: string) {
+  await field.click();
+  const roleOption = page.getByRole("option", { name: optionName });
+  if (await roleOption.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await roleOption.click();
+    return;
+  }
+  await page.getByText(optionName, { exact: true }).last().click();
+}
+
 async function addWorkerEnvVar(page, key: string, value: string) {
   await page.getByRole("button", { name: "New env var" }).click();
   await expect(page.getByText("Create env var")).toBeVisible();
   const keyInput = page.getByLabel("Key").last();
-  await fillFlutterTextField(page, keyInput, key);
+  await fillTextField(page, keyInput, key);
   const valueInput = page.getByLabel("Value").last();
-  await fillFlutterTextField(page, valueInput, value);
+  await fillTextField(page, valueInput, value);
   await page.getByLabel("Description").last().click();
   await page.getByRole("button", { name: "Save" }).last().click();
   await expect(page.getByText("Create env var")).toBeHidden();
@@ -167,7 +197,7 @@ async function waitForTerminalWorker(request) {
           },
         ) || null;
       return Boolean(selected);
-    })
+    }, { timeout: 15000 })
     .toBeTruthy();
   return selected!;
 }
@@ -223,19 +253,60 @@ function runGit(cwd: string, args: string[]) {
 }
 
 function runWorkerGit(cwd: string, args: string[]) {
-  const workerContainer =
-    process.env.BPT_WORKER_CONTAINER || "block-play-table-local-worker-1";
-  return execFileSync("docker", [
-    "exec",
-    workerContainer,
-    "git",
-    "-C",
-    cwd,
-    ...args,
-  ], {
+  if (
+    process.env.BPT_WORKER_EXEC === "wsl" ||
+    (process.platform === "win32" && cwd.startsWith("/"))
+  ) {
+    return execFileSync("wsl", [
+      "-d",
+      process.env.BPT_WSL_DISTRO || "Ubuntu-24.04",
+      "--",
+      "git",
+      "-C",
+      cwd,
+      ...args,
+    ], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  }
+  return execFileSync("git", ["-C", cwd, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+function workerPathFromHostPath(hostPath: string) {
+  const configured = process.env.BPT_WORKER_DATA_WORKER_PATH;
+  if (configured) {
+    const workerRoot = configured.replace(/\/+$/, "");
+    const hostRoot = path.resolve(
+      process.env.BPT_WORKER_DATA_SOURCE ||
+        process.env.WORKER_DATA_SOURCE ||
+        "worker-data",
+    );
+    const relative = path.relative(hostRoot, hostPath).replace(/\\/g, "/");
+    return relative ? `${workerRoot}/${relative}` : workerRoot;
+  }
+  const resolved = path.resolve(hostPath);
+  if (process.platform === "win32") {
+    const drive = resolved.slice(0, 1).toLowerCase();
+    return `/mnt/${drive}${resolved.slice(2).replace(/\\/g, "/")}`;
+  }
+  return resolved;
+}
+
+function hostPathFromWorkerPath(workerPath: string, hostRoot: string, workerRoot: string) {
+  const normalizedWorkerRoot = workerRoot.replace(/\/+$/, "");
+  if (workerPath.startsWith(normalizedWorkerRoot)) {
+    const relative = workerPath.slice(normalizedWorkerRoot.length).replace(/^\/+/, "");
+    return path.join(hostRoot, ...relative.split("/").filter(Boolean));
+  }
+  const wslMatch = workerPath.match(/^\/mnt\/([a-z])\/(.*)$/i);
+  if (wslMatch && process.platform === "win32") {
+    return `${wslMatch[1].toUpperCase()}:\\${wslMatch[2].replace(/\//g, "\\")}`;
+  }
+  return workerPath;
 }
 
 function createReviewGitFixture(suffix: number) {
@@ -249,6 +320,8 @@ function createReviewGitFixture(suffix: number) {
   const fixtureHost = path.join(workerDataHost, fixtureName);
   const remoteHost = path.join(fixtureHost, "remote.git");
   const seedHost = path.join(fixtureHost, "seed");
+  const workerDataWorker = workerPathFromHostPath(workerDataHost);
+  const remoteWorker = `${workerDataWorker}/${fixtureName}/remote.git`;
   mkdirSync(seedHost, { recursive: true });
 
   runGit(fixtureHost, ["init", "--bare", remoteHost]);
@@ -264,9 +337,9 @@ function createReviewGitFixture(suffix: number) {
   return {
     remoteHost,
     seedHost,
-    gitUrl: `file:///worker-data/${fixtureName}/remote.git`,
+    gitUrl: `file://${remoteWorker}`,
     hostPathForWorkerPath: (workerPath: string) =>
-      workerPath.replace(/^\/worker-data/, workerDataHost),
+      hostPathFromWorkerPath(workerPath, workerDataHost, workerDataWorker),
   };
 }
 
@@ -396,6 +469,11 @@ async function runWorkerTerminalCommand(
 
 async function openWorkerTerminal(page, workerName: string) {
   await page.getByText("Workers").click();
+  await fillTextField(
+    page,
+    page.getByRole("textbox", { name: /Search/ }),
+    workerName,
+  );
   await page.mouse.move(700, 520);
   const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
   for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
@@ -493,7 +571,7 @@ function connectWorkerEvents(
       send(`log-${taskId}`, "TASK_LOG", {
         taskId,
         stream: "stdout",
-        content: "hello from e2e worker",
+        content: `hello from e2e worker ${"x".repeat(240)}`,
       });
       send(`conversation-${taskId}`, "TASK_CONVERSATION", {
         taskId,
@@ -779,7 +857,7 @@ function connectWorkerForInteraction(
   return { ready, requested, completed };
 }
 
-test("trusted Flutter web UI paginates board projects workers and events", async ({
+test("trusted Vue web UI paginates board projects workers and events", async ({
   page,
   request,
 }) => {
@@ -873,7 +951,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     );
   }
 
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
   await expect(
@@ -896,7 +974,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
   const boardSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(page, boardSearch, `Pagination Task ${suffix}`);
+  await fillTextField(page, boardSearch, `Pagination Task ${suffix}`);
   await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
   await expect(
     page.getByRole("group", {
@@ -914,7 +992,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       name: new RegExp(`Pagination Task ${suffix}-20`),
     }),
   ).toHaveCount(0);
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     boardSearch,
     `Pagination Task ${suffix}-20`,
@@ -930,7 +1008,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     }),
   ).toHaveCount(0);
 
-  await fillFlutterTextField(page, boardSearch, "");
+  await fillTextField(page, boardSearch, "");
   await page.getByRole("button", { name: /Project All projects/ }).click();
   await page.getByRole("menuitem", { name: projectName }).click();
   await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
@@ -951,7 +1029,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       name: new RegExp(`Pagination Task ${suffix}-20`),
     }),
   ).toBeVisible();
-  await fillFlutterTextField(page, boardSearch, `Pagination Task ${suffix}`);
+  await fillTextField(page, boardSearch, `Pagination Task ${suffix}`);
   await page.getByRole("button", { name: "Sort ascending" }).click();
   await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
   await expect(
@@ -983,7 +1061,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     }),
   ).toBeVisible();
   const projectsSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     projectsSearch,
     `Pagination Project ${suffix}-20`,
@@ -998,6 +1076,26 @@ test("trusted Flutter web UI paginates board projects workers and events", async
       name: new RegExp(`Pagination Project ${suffix}-0`),
     }),
   ).toHaveCount(0);
+
+  const uiProjectName = `UI Created Project ${suffix}`;
+  await fillTextField(page, projectsSearch, "");
+  await page.getByRole("button", { name: "New project" }).click();
+  const createProjectDialog = page.getByRole("dialog", {
+    name: "Create project",
+  });
+  await fillTextField(page, createProjectDialog.getByLabel("Name"), uiProjectName);
+  await fillTextField(
+    page,
+    createProjectDialog.getByLabel("Git URL"),
+    "git@github.com:tangxusc/block-play-table-test-repo.git",
+  );
+  await fillTextField(page, createProjectDialog.getByLabel("Default branch"), "main");
+  await fillTextField(page, createProjectDialog.getByLabel("Worktree prefix"), "task");
+  await createProjectDialog.getByRole("button", { name: "Save" }).click();
+  await expect(createProjectDialog).toBeHidden();
+  await expect(
+    page.getByRole("group", { name: new RegExp(uiProjectName) }),
+  ).toBeVisible({ timeout: 15000 });
 
   await page.getByText("Workers").click();
   await expect(
@@ -1017,7 +1115,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
     }),
   ).toBeVisible();
   const workersSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     workersSearch,
     `Pagination Worker ${suffix}-20`,
@@ -1040,7 +1138,7 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect(page.getByText(/Showing 1-20 of \d+/)).toBeVisible();
   const eventsSearch = page.getByRole("textbox", { name: /Search/ });
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     eventsSearch,
     `Pagination Project ${suffix}-20`,
@@ -1053,12 +1151,186 @@ test("trusted Flutter web UI paginates board projects workers and events", async
   ).toHaveCount(0);
 });
 
-test("trusted Flutter web UI covers DDD event-backed task flow", async ({
+test("task create and detail assignment expose worker controls", async ({
   page,
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
+
+  const suffix = Date.now();
+  const worker = await waitForTerminalWorker(request);
+  const projectName = `UI Assign Project ${suffix}`;
+  const createdProject = await graphQL(
+    request,
+    "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }",
+    {
+      input: {
+        name: projectName,
+        gitUrl: "assign-ui-fixture",
+        defaultBranch: "main",
+        worktreeNamePrefix: "assign-ui",
+      },
+    },
+  );
+  const project = createdProject.createProject;
+
+  const unassignedViaUiTitle = `UI Unassigned Task ${suffix}`;
+  await openVueApp(page);
+  await page.getByRole("button", { name: "New task" }).click();
+  let createTaskDialog = page.getByRole("dialog", { name: "Create task" });
+  await expect(createTaskDialog.getByLabel("Worker")).toBeVisible();
+  await fillTextField(page, createTaskDialog.getByLabel("Title"), unassignedViaUiTitle);
+  await selectFieldOption(page, createTaskDialog.getByLabel("Project"), projectName);
+  await expect(createTaskDialog.getByLabel("Agent")).toHaveCount(0);
+  await expect(createTaskDialog.getByText("Agent runtime parameters")).toHaveCount(0);
+  await createTaskDialog.getByRole("button", { name: "Save" }).click();
+  await expect(createTaskDialog).toBeHidden();
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Tasks($filter: TaskFilter) {
+          tasks(filter: $filter) { nodes { title status workerId agentType } }
+        }`,
+        { filter: { search: unassignedViaUiTitle } },
+      );
+      return data.tasks.nodes[0];
+    }, { timeout: 15000 })
+    .toMatchObject({
+      title: unassignedViaUiTitle,
+      status: "CREATED",
+      workerId: null,
+      agentType: null,
+    });
+
+  const createdViaUiTitle = `UI Worker Selected Task ${suffix}`;
+  await openVueApp(page);
+  await page.getByRole("button", { name: "New task" }).click();
+  createTaskDialog = page.getByRole("dialog", { name: "Create task" });
+  await expect(createTaskDialog.getByLabel("Worker")).toBeVisible();
+  await expect(createTaskDialog.getByLabel("Agent")).toHaveCount(0);
+  await expect(createTaskDialog.getByText("Agent runtime parameters")).toHaveCount(0);
+  await fillTextField(page, createTaskDialog.getByLabel("Title"), createdViaUiTitle);
+  await selectFieldOption(page, createTaskDialog.getByLabel("Project"), projectName);
+  await selectFieldOption(page, createTaskDialog.getByLabel("Worker"), worker.name);
+  await expect(createTaskDialog.getByLabel("Agent")).toBeVisible();
+  await selectFieldOption(page, createTaskDialog.getByLabel("Agent"), "Codex");
+  await expect(createTaskDialog.getByText("Agent runtime parameters")).toBeVisible();
+  await selectFieldOption(page, createTaskDialog.getByLabel("Work mode"), "Implement");
+  await fillTextField(page, createTaskDialog.getByLabel("Codex model"), "gpt-5.4");
+  await selectFieldOption(page, createTaskDialog.getByLabel("Reasoning effort"), "High");
+  await selectFieldOption(page, createTaskDialog.getByLabel("Sandbox", { exact: true }), "Workspace write");
+  await selectFieldOption(page, createTaskDialog.getByLabel("Approval", { exact: true }), "Never");
+  await createTaskDialog.getByLabel("Full auto").check();
+  await createTaskDialog.getByRole("button", { name: "Save" }).click();
+  await expect(createTaskDialog).toBeHidden();
+
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Tasks($filter: TaskFilter) {
+          tasks(filter: $filter) {
+            nodes {
+              title status workerId agentType
+              agentConfig {
+                workMode
+                codex { model reasoningEffort sandboxMode approvalPolicy fullAuto }
+              }
+            }
+          }
+        }`,
+        { filter: { search: createdViaUiTitle } },
+      );
+      return data.tasks.nodes[0];
+    }, { timeout: 15000 })
+    .toMatchObject({
+      title: createdViaUiTitle,
+      status: "ASSIGNED",
+      workerId: worker.id,
+      agentType: "codex",
+      agentConfig: {
+        workMode: "IMPLEMENT",
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "HIGH",
+          sandboxMode: "WORKSPACE_WRITE",
+          approvalPolicy: "NEVER",
+          fullAuto: true,
+        },
+      },
+    });
+
+  const unassignedTitle = `UI Assign Later Task ${suffix}`;
+  const createdTask = await graphQL(
+    request,
+    "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title } }",
+    {
+      input: {
+        title: unassignedTitle,
+        projectId: project.id,
+        baseBranch: "main",
+      },
+    },
+  );
+
+  await openVueApp(page);
+  await openTaskFromList(page, createdTask.createTask.title);
+  await expect(page.getByRole("button", { name: "Assign", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Assign", exact: true }).click();
+  const assignDialog = page.getByRole("dialog", { name: "Assign worker" });
+  await expect(assignDialog.getByLabel("Worker")).toBeVisible();
+  await expect(assignDialog.getByLabel("Agent")).toHaveCount(0);
+  await expect(assignDialog.getByText("Agent runtime parameters")).toHaveCount(0);
+  await selectFieldOption(page, assignDialog.getByLabel("Worker"), worker.name);
+  await expect(assignDialog.getByLabel("Agent")).toBeVisible();
+  await selectFieldOption(page, assignDialog.getByLabel("Agent"), "Codex");
+  await expect(assignDialog.getByText("Agent runtime parameters")).toBeVisible();
+  await selectFieldOption(page, assignDialog.getByLabel("Work mode"), "Review");
+  await fillTextField(page, assignDialog.getByLabel("Codex model"), "gpt-5.4-mini");
+  await selectFieldOption(page, assignDialog.getByLabel("Reasoning effort"), "Medium");
+  await selectFieldOption(page, assignDialog.getByLabel("Approval", { exact: true }), "On request");
+  await assignDialog.getByRole("button", { name: "Assign", exact: true }).click();
+  await expect(assignDialog).toBeHidden();
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query Task($id: ID!) {
+          task(id: $id) {
+            status workerId agentType
+            agentConfig {
+              workMode
+              codex { model reasoningEffort approvalPolicy }
+            }
+          }
+        }`,
+        { id: createdTask.createTask.id },
+      );
+      return data.task;
+    }, { timeout: 15000 })
+    .toMatchObject({
+      status: "ASSIGNED",
+      workerId: worker.id,
+      agentType: "codex",
+      agentConfig: {
+        workMode: "REVIEW",
+        codex: {
+          model: "gpt-5.4-mini",
+          reasoningEffort: "MEDIUM",
+          approvalPolicy: "ON_REQUEST",
+        },
+      },
+    });
+});
+
+test("trusted Vue web UI covers DDD event-backed task flow", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openVueApp(page);
   await expect(page).toHaveTitle("Block Play Table");
 
   const suffix = Date.now();
@@ -1105,11 +1377,25 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
         workDir: "/tmp/e2e-worker",
         projectBindingMode: "SPECIFIC_PROJECTS",
         boundProjectIds: [project.id],
+        agentRuntimeEnv: [
+          {
+            agentType: "codex",
+            vars: [
+              {
+                key: "BPT_EXISTING_PUBLIC_ENV",
+                value: "keep-me",
+                description: "existing public value",
+                enabled: true,
+                sensitive: false,
+              },
+            ],
+          },
+        ],
       },
     },
   );
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openWorkerEditor(page, workerName);
   await expect(page.getByText("Runtime environment")).toBeVisible();
   await addWorkerEnvVar(page, "BPT_E2E_AGENT_ENV", "codex-value");
@@ -1134,7 +1420,10 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
       );
     })
     .toEqual({
-      codex: [{ key: "BPT_E2E_AGENT_ENV", valueMasked: "********" }],
+      codex: [
+        { key: "BPT_E2E_AGENT_ENV", valueMasked: "********" },
+        { key: "BPT_EXISTING_PUBLIC_ENV", valueMasked: "keep-me" },
+      ],
       claude: [{ key: "BPT_E2E_CLAUDE_ENV", valueMasked: "********" }],
     });
 
@@ -1286,37 +1575,61 @@ test("trusted Flutter web UI covers DDD event-backed task flow", async ({
         eventTypes.includes("TaskStartRequested") &&
         eventTypes.includes("TaskCompleted")
       );
-    })
+    }, { timeout: 15000 })
     .toBeTruthy();
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await page.getByRole("button", { name: "Calendar" }).click();
   const calendarSearch = page.getByRole("textbox", { name: /Search/ });
   await expect(calendarSearch).toBeVisible();
-  await fillFlutterTextField(page, calendarSearch, taskTitle);
+  await fillTextField(page, calendarSearch, taskTitle);
   await expect(page.getByText("May 2026")).toBeVisible();
+  await expect(page.locator(".calendar-grid.calendar-month-grid")).toBeVisible();
+  await expect(page.locator(".calendar-grid.calendar-month-grid .calendar-cell")).toHaveCount(35);
   await expect(
-    page.getByRole("button", { name: new RegExp(taskTitle) }),
+    page.getByRole("button", { name: new RegExp(taskTitle) }).first(),
   ).toBeVisible();
   await page.getByRole("button", { name: "Week", exact: true }).click();
   await expect(page.getByText("Apr 27, 2026 - May 3, 2026")).toBeVisible();
+  await expect(page.locator(".calendar-grid.calendar-week-grid")).toBeVisible();
+  await expect(page.locator(".calendar-grid.calendar-week-grid .calendar-cell")).toHaveCount(7);
   await expect(
-    page.getByRole("button", { name: new RegExp(taskTitle) }),
+    page.getByRole("button", { name: new RegExp(taskTitle) }).first(),
   ).toBeVisible();
   await page.getByRole("button", { name: "Day", exact: true }).click();
-  await expect(page.getByText("May 1, 2026")).toBeVisible();
+  await expect(page.getByText("May 1, 2026").first()).toBeVisible();
+  await expect(page.locator(".calendar-day-view")).toBeVisible();
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await page.getByRole("button", { name: "Year", exact: true }).click();
   await expect(page.getByText("2026", { exact: true })).toBeVisible();
+  await expect(page.locator(".calendar-year-grid")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: new RegExp(taskTitle) }),
+    page.getByRole("button", { name: new RegExp(taskTitle) }).first(),
   ).toBeVisible();
   await openTaskFromList(page, taskTitle);
+  for (const tabName of ["Conversation", "Logs", "Review", "Web preview", "Terminal"]) {
+    await expect(page.getByRole("tab", { name: tabName, exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: tabName, exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole("button", { name: "Copy task ID" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await selectTaskDetailTab(page, "Web preview");
+  await fillTextField(page, page.getByLabel("Worker web address"), "localhost:4173/preview");
+  await page.getByRole("button", { name: "Open worker web preview" }).click();
+  await expect(page.locator('[data-testid="task-detail-worker-web-preview"]')).toBeVisible();
+  await expect(page.getByText(/\/proxy\/web\//)).toBeVisible();
   await expect(page.getByText(projectName, { exact: true })).toBeVisible();
   await expect(page.getByText(project.id, { exact: true })).toHaveCount(0);
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
+  await selectTaskDetailTab(page, "Logs");
+  await expect(page.getByText(/hello from e2e worker/)).toBeVisible();
+  await expectDetailCardsDoNotOverflow(page);
+  await selectTaskDetailTab(page, "Domain events");
+  await expect(page.getByText(/TaskLogAppended/)).toBeVisible();
+  await expectDetailCardsDoNotOverflow(page);
   await page.keyboard.press("Escape");
-  await expect(page.locator("flutter-view")).toBeVisible();
+  await expect(page.locator("#app")).toBeVisible();
 });
 
 test("task detail terminal runs commands in task worktree", async ({
@@ -1324,7 +1637,7 @@ test("task detail terminal runs commands in task worktree", async ({
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const marker = `BPT_TERMINAL_E2E_${suffix}`;
@@ -1379,13 +1692,13 @@ test("task detail terminal runs commands in task worktree", async ({
   const output = await runTerminalCommand(task.id, marker, worktreePath);
   expect(output).toContain(worktreePath);
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   const terminalSocketURLs: string[] = [];
   page.on("websocket", (socket) => {
     terminalSocketURLs.push(socket.url());
   });
   await openTaskFromList(page, task.title);
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await selectTaskDetailTab(page, "Terminal");
   await expect(page.getByText("Terminal unavailable")).toHaveCount(0);
   await page.getByRole("button", { name: "Connect worker terminal" }).click();
   await expect(page.getByText("Connected")).toBeVisible();
@@ -1403,7 +1716,7 @@ test("worker list terminal button opens a worker shell in the worker workdir", a
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const marker = `BPT_WORKER_TERMINAL_E2E_${suffix}`;
@@ -1443,7 +1756,7 @@ test("task detail review git workflow commits and publishes staged changes", asy
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const fixture = createReviewGitFixture(suffix);
@@ -1504,19 +1817,30 @@ test("task detail review git workflow commits and publishes staged changes", asy
   runWorkerGit(worktreePath, ["config", "user.email", "bpt@example.test"]);
   runWorkerGit(worktreePath, ["config", "user.name", "Block Play Table"]);
   writeFileSync(path.join(worktreeHost, "tracked.txt"), "base\npublished\n");
-  runWorkerGit(worktreePath, ["add", "tracked.txt"]);
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openTaskFromList(page, task.title);
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await selectTaskDetailTab(page, "Review");
   await page.getByLabel("Remote").fill("origin");
   await page.getByLabel("Target branch").fill("main");
   await expect(page.getByRole("button", { name: /tracked\.txt/ })).toBeVisible({
     timeout: 15000,
   });
+  await page.getByRole("button", { name: "Stage", exact: true }).click();
+  await expect
+    .poll(() => runWorkerGit(worktreePath, ["diff", "--cached", "--name-only"]))
+    .toBe("tracked.txt");
+  await page.getByRole("button", { name: "Unstage", exact: true }).click();
+  await expect
+    .poll(() => runWorkerGit(worktreePath, ["diff", "--cached", "--name-only"]))
+    .toBe("");
+  await page.getByRole("button", { name: "Stage", exact: true }).click();
+  await expect
+    .poll(() => runWorkerGit(worktreePath, ["diff", "--cached", "--name-only"]))
+    .toBe("tracked.txt");
   await page.getByRole("button", { name: "Fetch" }).click();
   await page.getByRole("button", { name: "Commit staged" }).click();
-  await fillFlutterTextField(
+  await fillTextField(
     page,
     page.getByLabel("Commit message"),
     "review git publish",
@@ -1543,7 +1867,7 @@ test("task detail review git workflow fetches and rebases after remote main adva
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const fixture = createReviewGitFixture(suffix);
@@ -1609,9 +1933,9 @@ test("task detail review git workflow fetches and rebases after remote main adva
   runGit(fixture.seedHost, ["commit", "-m", "remote main update"]);
   runGit(fixture.seedHost, ["push", "origin", "main"]);
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openTaskFromList(page, task.title);
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await selectTaskDetailTab(page, "Review");
   await page.getByLabel("Remote").fill("origin");
   await page.getByLabel("Target branch").fill("main");
 
@@ -1632,7 +1956,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const projectName = `E2E Interaction Project ${suffix}`;
@@ -1701,7 +2025,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
         status: data.task.status,
         interactions: data.taskInteractions,
       };
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       status: "WAITING_INPUT",
       interactions: [
@@ -1712,7 +2036,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
       ],
     });
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
     page.getByRole("textbox", { name: /Approve command/ }),
@@ -1765,7 +2089,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
           (event: { eventType: string }) => event.eventType,
         ),
       };
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
@@ -1787,13 +2111,12 @@ test("task detail approves a live agent interaction and refreshes results", asyn
       ]),
     });
 });
-
 test("claude task detail waits for permission interaction before completion", async ({
   page,
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const taskTitle = `E2E Claude Interaction Task ${suffix}`;
@@ -1891,7 +2214,7 @@ test("claude task detail waits for permission interaction before completion", as
       ],
     });
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
     page.getByRole("textbox", { name: /Approve Claude file change/ }),
@@ -1912,7 +2235,7 @@ test("claude task detail waits for permission interaction before completion", as
         { id: taskId, taskId },
       );
       return data;
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
@@ -1933,7 +2256,7 @@ test("task detail continues a completed task with the same agent session", async
   request,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
-  await openFlutterApp(page);
+  await openVueApp(page);
 
   const suffix = Date.now();
   const projectName = `E2E Continue Project ${suffix}`;
@@ -2027,11 +2350,12 @@ test("task detail continues a completed task with the same agent session", async
       agentSessionId: "session-1",
     });
 
-  await openFlutterApp(page);
+  await openVueApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
-    page.getByRole("button", { name: /^Conversation$/ }),
+    page.getByRole("tab", { name: /^Conversation$/ }),
   ).toBeVisible();
+  await selectTaskDetailTab(page, "Conversation");
   await page.getByLabel("Continue conversation").click();
   await page.waitForTimeout(100);
   await page.keyboard.type("follow up from ui");
