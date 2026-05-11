@@ -101,8 +101,8 @@ class SearchSortToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final selectedField =
         sortOptions.any((option) => option.field == sort.field)
-        ? sort.field
-        : sortOptions.first.field;
+            ? sort.field
+            : sortOptions.first.field;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       decoration: BoxDecoration(
@@ -193,17 +193,20 @@ class StatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(context, value);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        border: Border.all(color: color.withOpacity(0.34)),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        value,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+    return Semantics(
+      label: value,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          border: Border.all(color: color.withOpacity(0.34)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          value,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+        ),
       ),
     );
   }
@@ -238,8 +241,8 @@ class EmptyState extends StatelessWidget {
                 message,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ],
@@ -327,9 +330,8 @@ class PaginationBar extends StatelessWidget {
           const Spacer(),
           IconButton(
             tooltip: 'First page',
-            onPressed: canGoBack
-                ? () => onPageChanged(page.withOffset(0))
-                : null,
+            onPressed:
+                canGoBack ? () => onPageChanged(page.withOffset(0)) : null,
             icon: const Icon(Icons.first_page),
           ),
           IconButton(
@@ -367,16 +369,19 @@ class DetailText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 16, color: Theme.of(context).colorScheme.outline),
-        const SizedBox(width: 6),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: Text(text, overflow: TextOverflow.ellipsis),
-        ),
-      ],
+    return Semantics(
+      label: text,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: Theme.of(context).colorScheme.outline),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Text(text, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -417,7 +422,8 @@ Color _statusColor(BuildContext context, String status) {
     'ARCHIVED' ||
     'DISABLED' ||
     'OFFLINE' ||
-    'INTERRUPTED' => scheme.onSurfaceVariant,
+    'INTERRUPTED' =>
+      scheme.onSurfaceVariant,
     _ => scheme.primary,
   };
 }

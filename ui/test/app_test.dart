@@ -420,7 +420,10 @@ void main() {
     await tester.tap(find.text('Refresh board'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('task-detail-modal-card')),
+      findsOneWidget,
+    );
     expect(apiClient.detailFetches, 1);
     expect(find.text('Conversation'), findsOneWidget);
   });
@@ -749,7 +752,10 @@ void main() {
       const ValueKey('task-detail-floating-command-rail'),
     );
 
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('task-detail-modal-card')),
+      findsOneWidget,
+    );
     expect(titleActions, findsOneWidget);
     expect(
       find.descendant(
@@ -1239,7 +1245,10 @@ void main() {
     await tester.tap(find.text('Refresh board').first);
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('task-detail-modal-card')),
+      findsOneWidget,
+    );
     expect(find.text('CREATED'), findsWidgets);
     expect(find.text(_project.name), findsOneWidget);
     expect(find.text(_project.id), findsNothing);
@@ -1425,6 +1434,52 @@ void main() {
 
     expect(clipboardText, 'task-1');
     expect(find.text('Task ID copied'), findsOneWidget);
+  });
+
+  testWidgets('task detail section rail floats outside the dialog', (
+    tester,
+  ) async {
+    const surfaceSize = Size(1200, 800);
+    _setSurfaceSize(tester, surfaceSize);
+    final apiClient = FakeApiClient();
+    await tester.pumpWidget(BlockPlayTableApp(apiClient: apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Refresh board').first);
+    await tester.pumpAndSettle();
+
+    final modalCard = find.byKey(const ValueKey('task-detail-modal-card'));
+    final sectionRail = find.byKey(
+      const ValueKey('task-detail-floating-command-rail'),
+    );
+    final mainContent = find.byKey(const ValueKey('task-detail-main-content'));
+    expect(modalCard, findsOneWidget);
+    expect(mainContent, findsOneWidget);
+    expect(sectionRail, findsOneWidget);
+
+    final cardRect = tester.getRect(modalCard);
+    final railRect = tester.getRect(sectionRail);
+    expect(railRect.left, greaterThan(cardRect.right));
+    expect(railRect.height, greaterThan(cardRect.height * 0.9));
+
+    final railMaterial = tester.widget<Material>(
+      find.descendant(of: sectionRail, matching: find.byType(Material)).first,
+    );
+    expect(railMaterial.elevation, 0);
+
+    for (final key in const [
+      ValueKey('task-detail-section-conversation'),
+      ValueKey('task-detail-section-review'),
+      ValueKey('task-detail-section-web'),
+      ValueKey('task-detail-section-terminal'),
+      ValueKey('task-detail-section-logs'),
+      ValueKey('task-detail-section-domain-events'),
+    ]) {
+      expect(
+        find.descendant(of: sectionRail, matching: find.byKey(key)),
+        findsOneWidget,
+      );
+    }
   });
 
   testWidgets('completed task detail sends continuation message', (

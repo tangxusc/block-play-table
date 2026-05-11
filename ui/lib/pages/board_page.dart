@@ -2514,6 +2514,7 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
   late Future<TaskDetailData> _future;
   TaskDetailData? _lastDetail;
   RealtimeRefreshController? _realtime;
+  _TaskDetailSection _selectedSection = _TaskDetailSection.conversation;
 
   @override
   void initState() {
@@ -2640,54 +2641,119 @@ class _TaskDetailDialogState extends State<_TaskDetailDialog> {
       ...taskActions,
       closeAction,
     ];
-    return AlertDialog(
-      title: _TaskDetailTitleBar(
-        title: currentTask.title,
-        taskId: taskId,
-        actions: actions,
-        onCopyTaskId: _copyTaskId,
-      ),
-      content: SizedBox(
-        width: math.min(MediaQuery.sizeOf(context).width * 0.88, 1280),
-        height: math.min(MediaQuery.sizeOf(context).height * 0.90, 900),
-        child: FutureBuilder<TaskDetailData>(
-          future: _future,
-          builder: (context, snapshot) {
-            final detail = snapshot.data ?? _lastDetail;
-            if (snapshot.connectionState != ConnectionState.done &&
-                detail == null) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError && detail == null) {
-              return ErrorView(
-                message: snapshot.error.toString(),
-                onRetry: () {
-                  _reload();
-                },
-              );
-            }
-            return Stack(
-              children: [
-                _TaskDetailBody(
-                  apiClient: widget.apiClient,
-                  detail: detail!,
-                  projects: widget.boardData.projects,
-                  workers: widget.boardData.workers,
-                  onContinue: _continueTask,
-                  onRefresh: _reload,
-                  onRespondInteraction: _respondInteraction,
-                ),
-                if (snapshot.connectionState != ConnectionState.done)
-                  const Positioned(
-                    left: 0,
-                    right: 0,
-                    top: 0,
-                    child: LinearProgressIndicator(minHeight: 2),
-                  ),
-              ],
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(24),
+      clipBehavior: Clip.none,
+      child: FutureBuilder<TaskDetailData>(
+        future: _future,
+        builder: (context, snapshot) {
+          final detail = snapshot.data ?? _lastDetail;
+          final mediaSize = MediaQuery.sizeOf(context);
+          final totalWidth = math.min(mediaSize.width - 48, 1280).toDouble();
+          final totalHeight = math.min(mediaSize.height - 48, 900).toDouble();
+          if (snapshot.connectionState != ConnectionState.done &&
+              detail == null) {
+            return SizedBox(
+              width: totalWidth,
+              height: totalHeight,
+              child: Center(child: CircularProgressIndicator()),
             );
-          },
-        ),
+          }
+          if (snapshot.hasError && detail == null) {
+            return SizedBox(
+              width: totalWidth,
+              height: totalHeight,
+              child: ErrorView(
+                message: snapshot.error.toString(),
+                onRetry: _reload,
+              ),
+            );
+          }
+          const railGap = 12.0;
+          final railCompact = totalWidth < 860;
+          final railWidth = railCompact ? 64.0 : 168.0;
+          final cardWidth = math.max(0.0, totalWidth - railWidth - railGap);
+          return Stack(
+            children: [
+              SizedBox(
+                width: totalWidth,
+                height: totalHeight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        key: const ValueKey('task-detail-modal-card'),
+                        elevation: 3,
+                        color: Theme.of(context).colorScheme.surface,
+                        shadowColor:
+                            Theme.of(context).shadowColor.withOpacity(0.22),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        ),
+                        child: SizedBox(
+                          width: cardWidth,
+                          height: totalHeight,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _TaskDetailTitleBar(
+                                  title: currentTask.title,
+                                  taskId: taskId,
+                                  actions: actions,
+                                  onCopyTaskId: _copyTaskId,
+                                ),
+                                const SizedBox(height: 16),
+                                Expanded(
+                                  child: _TaskDetailBody(
+                                    apiClient: widget.apiClient,
+                                    detail: detail!,
+                                    projects: widget.boardData.projects,
+                                    workers: widget.boardData.workers,
+                                    selectedSection: _selectedSection,
+                                    onContinue: _continueTask,
+                                    onRefresh: _reload,
+                                    onRespondInteraction: _respondInteraction,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: cardWidth + railGap,
+                      top: 0,
+                      bottom: 0,
+                      child: _FloatingCommandRail(
+                        compact: railCompact,
+                        selected: _selectedSection,
+                        width: railWidth,
+                        onSelected: (section) =>
+                            setState(() => _selectedSection = section),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (snapshot.connectionState != ConnectionState.done)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -2941,7 +3007,12 @@ class _TaskDetailTitleBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: Text(title, overflow: TextOverflow.ellipsis)),
+        Expanded(
+          child: Semantics(
+            label: title,
+            child: Text(title, overflow: TextOverflow.ellipsis),
+          ),
+        ),
         const SizedBox(width: 12),
         Flexible(
           child: Align(
@@ -3018,12 +3089,13 @@ class _TaskDetailIconActionButton extends StatelessWidget {
   }
 }
 
-class _TaskDetailBody extends StatefulWidget {
+class _TaskDetailBody extends StatelessWidget {
   const _TaskDetailBody({
     required this.apiClient,
     required this.detail,
     required this.projects,
     required this.workers,
+    required this.selectedSection,
     required this.onContinue,
     required this.onRefresh,
     required this.onRespondInteraction,
@@ -3033,104 +3105,74 @@ class _TaskDetailBody extends StatefulWidget {
   final TaskDetailData detail;
   final List<ProjectItem> projects;
   final List<WorkerItem> workers;
+  final _TaskDetailSection selectedSection;
   final Future<void> Function(String message) onContinue;
   final VoidCallback onRefresh;
   final _TaskInteractionResponder onRespondInteraction;
 
   @override
-  State<_TaskDetailBody> createState() => _TaskDetailBodyState();
-}
-
-class _TaskDetailBodyState extends State<_TaskDetailBody> {
-  _TaskDetailSection _selectedSection = _TaskDetailSection.conversation;
-
-  @override
   Widget build(BuildContext context) {
-    final task = widget.detail.task;
-    final projectName = _projectName(widget.projects, task.projectId);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 680;
-        final railWidth = compact ? 64.0 : 168.0;
-        return Stack(
+    final task = detail.task;
+    final projectName = _projectName(projects, task.projectId);
+    return Column(
+      key: const ValueKey('task-detail-main-content'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
           children: [
-            Padding(
-              padding: EdgeInsets.only(right: railWidth + 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    children: [
-                      StatusPill(value: task.status),
-                      if (task.agentType.isNotEmpty)
-                        DetailText(icon: Icons.terminal, text: task.agentType),
-                      DetailText(
-                        icon: Icons.folder_copy,
-                        text: projectName ?? task.projectId,
-                      ),
-                      DetailText(
-                        icon: Icons.date_range,
-                        text: _taskDateRangeLabel(task),
-                      ),
-                      if ((task.workerId ?? '').isNotEmpty)
-                        DetailText(icon: Icons.memory, text: task.workerId!),
-                      ..._agentConfigDetailWidgets(task),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(child: _selectedPanel(task)),
-                ],
-              ),
+            StatusPill(value: task.status),
+            if (task.agentType.isNotEmpty)
+              DetailText(icon: Icons.terminal, text: task.agentType),
+            DetailText(
+              icon: Icons.folder_copy,
+              text: projectName ?? task.projectId,
             ),
-            Positioned(
-              top: 0,
-              right: 0,
-              bottom: 0,
-              child: _FloatingCommandRail(
-                compact: compact,
-                selected: _selectedSection,
-                onSelected: (section) =>
-                    setState(() => _selectedSection = section),
-              ),
+            DetailText(
+              icon: Icons.date_range,
+              text: _taskDateRangeLabel(task),
             ),
+            if ((task.workerId ?? '').isNotEmpty)
+              DetailText(icon: Icons.memory, text: task.workerId!),
+            ..._agentConfigDetailWidgets(task),
           ],
-        );
-      },
+        ),
+        const SizedBox(height: 16),
+        Expanded(child: _selectedPanel(task)),
+      ],
     );
   }
 
-  Widget _selectedPanel(TaskItem task) => switch (_selectedSection) {
+  Widget _selectedPanel(TaskItem task) => switch (selectedSection) {
         _TaskDetailSection.conversation => _ConversationTab(
-            conversations: widget.detail.conversations,
-            interactions: widget.detail.interactions,
-            onRespondInteraction: widget.onRespondInteraction,
-            footer: _ContinuationComposer(
-                task: task, onContinue: widget.onContinue),
+            conversations: detail.conversations,
+            interactions: detail.interactions,
+            onRespondInteraction: onRespondInteraction,
+            footer: _ContinuationComposer(task: task, onContinue: onContinue),
           ),
         _TaskDetailSection.review => _ReviewTab(
-            apiClient: widget.apiClient,
-            detail: widget.detail,
-            onRefresh: widget.onRefresh,
+            apiClient: apiClient,
+            detail: detail,
+            onRefresh: onRefresh,
           ),
         _TaskDetailSection.web => _WorkerWebTab(
-            apiClient: widget.apiClient,
+            apiClient: apiClient,
             task: task,
-            workers: widget.workers,
+            workers: workers,
           ),
         _TaskDetailSection.terminal => _WorkerTerminalTab(
-            apiClient: widget.apiClient,
+            apiClient: apiClient,
             task: task,
-            worker: _workerById(widget.workers, task.workerId ?? ''),
+            worker: _workerById(workers, task.workerId ?? ''),
           ),
         _TaskDetailSection.logs => _RuntimeTab(
-            children: widget.detail.logs
+            children: detail.logs
                 .map((item) => '[${item.stream}] ${item.content}')
                 .toList(),
           ),
         _TaskDetailSection.events => _RuntimeTab(
-            children: widget.detail.events
+            children: detail.events
                 .map(
                   (item) =>
                       '${item.eventType} v${item.aggregateVersion}: ${item.payload}',
@@ -3144,18 +3186,20 @@ class _FloatingCommandRail extends StatelessWidget {
   const _FloatingCommandRail({
     required this.compact,
     required this.selected,
+    required this.width,
     required this.onSelected,
   });
 
   final bool compact;
   final _TaskDetailSection selected;
+  final double width;
   final ValueChanged<_TaskDetailSection> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return _FloatingRailFrame(
+    return _DockedRailFrame(
       key: const ValueKey('task-detail-floating-command-rail'),
-      width: compact ? 64 : 168,
+      width: width,
       child: _SectionRailColumn(
         selected: selected,
         compact: compact,
@@ -3248,8 +3292,8 @@ class _SectionRailButton extends StatelessWidget {
   }
 }
 
-class _FloatingRailFrame extends StatelessWidget {
-  const _FloatingRailFrame({
+class _DockedRailFrame extends StatelessWidget {
+  const _DockedRailFrame({
     super.key,
     required this.width,
     required this.child,
@@ -3263,24 +3307,18 @@ class _FloatingRailFrame extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return SizedBox(
       width: width,
-      child: LayoutBuilder(
-        builder: (context, constraints) => Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: constraints.maxHeight),
-            child: Material(
-              elevation: 3,
-              color: scheme.surface,
-              shadowColor: scheme.shadow.withOpacity(0.22),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: BorderSide(color: Theme.of(context).dividerColor),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                child: SingleChildScrollView(child: child),
-              ),
-            ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border:
+              Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+        ),
+        child: Material(
+          elevation: 0,
+          color: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: SingleChildScrollView(child: child),
           ),
         ),
       ),
@@ -3957,11 +3995,14 @@ class _GitWorkspacePanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              _statusSummary(),
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            Semantics(
+              label: _statusSummary(),
+              child: Text(
+                _statusSummary(),
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             const SizedBox(height: 8),
