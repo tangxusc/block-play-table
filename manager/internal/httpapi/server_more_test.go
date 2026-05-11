@@ -147,6 +147,84 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	}
 }
 
+func TestServerTaskLogsFallBackToConversationsWhenNoLogsPersisted(t *testing.T) {
+	ctx := context.Background()
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	server := httptest.NewServer(NewServer(service).Handler())
+	defer server.Close()
+
+	project, err := service.CreateProject(ctx, app.CreateProjectInput{
+		Name:               "P",
+		GitURL:             "file:///tmp/repo",
+		DefaultBranch:      "main",
+		WorktreeNamePrefix: "p",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
+		ID:              "worker-conversation-log",
+		Name:            "W",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, app.CreateTaskInput{
+		Title:      "Conversation-only",
+		ProjectID:  project.ID,
+		AgentType:  domain.AgentCodex,
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-conversation-log", task.ID, "/tmp/worktree"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApplyWorkerConversation(ctx, "conversation-log", task.ID, "assistant", "conversation appears in logs"); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) {
+		taskLogs(taskId: $taskId) { id stream content createdAt }
+	}`, map[string]any{"taskId": task.ID})["data"].(map[string]any)["taskLogs"].([]any)
+	if len(logs) != 1 {
+		t.Fatalf("fallback logs count = %d, want 1: %#v", len(logs), logs)
+	}
+	first := logs[0].(map[string]any)
+	if first["stream"] != "assistant" || first["content"] != "conversation appears in logs" {
+		t.Fatalf("fallback log = %#v", first)
+	}
+
+	if _, err := service.ApplyWorkerTaskLog(ctx, "real-log", task.ID, "stdout", "real persisted log"); err != nil {
+		t.Fatal(err)
+	}
+	logs = postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) {
+		taskLogs(taskId: $taskId) { stream content }
+	}`, map[string]any{"taskId": task.ID})["data"].(map[string]any)["taskLogs"].([]any)
+	if len(logs) != 1 {
+		t.Fatalf("persisted logs count = %d, want only real logs: %#v", len(logs), logs)
+	}
+	only := logs[0].(map[string]any)
+	if only["stream"] != "stdout" || only["content"] != "real persisted log" {
+		t.Fatalf("persisted log = %#v", only)
+	}
+}
+
 func TestServerPaginationConnections(t *testing.T) {
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {

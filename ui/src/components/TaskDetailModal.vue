@@ -605,6 +605,7 @@ function parseDiffHunks(patch: string): DiffHunk[] {
 
           <a-tab-pane key="logs" tab="Logs">
             <div class="record-list">
+              <a-empty v-if="(detail?.logs || []).length === 0" description="No logs" />
               <div v-for="log in detail?.logs || []" :key="log.id" class="record-card">
                 <div class="record-title">{{ log.stream }}</div>
                 <div class="record-subtitle mono">{{ log.content }}</div>

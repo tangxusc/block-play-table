@@ -1543,7 +1543,7 @@ PostgreSQL Implementation
 | --- | --- | --- |
 | `id` | string | 日志 ID |
 | `task_id` | string | 任务 ID |
-| `stream` | string | `stdout` / `stderr` / `system` |
+| `stream` | string | `stdout` / `stderr` / `system`；Conversation 派生或镜像日志可使用 `assistant` / `user` 等会话角色 |
 | `content` | text | 日志内容 |
 | `created_at` | datetime | 创建时间 |
 

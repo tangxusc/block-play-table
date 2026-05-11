@@ -613,6 +613,88 @@ function connectWorkerEvents(
   return { ready, done };
 }
 
+function connectWorkerConversationOnly(
+  workerId: string,
+  taskId: string,
+  conversation: string,
+) {
+  const url = new URL(managerWorkerWs);
+  url.searchParams.set("worker_id", workerId);
+  if (managerWorkerToken) {
+    url.searchParams.set("token", managerWorkerToken);
+  }
+  const ws = new WebSocket(url.toString());
+  const now = () => new Date().toISOString();
+  const send = (
+    messageId: string,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ) => {
+    ws.send(
+      JSON.stringify({
+        messageId,
+        type,
+        workerId,
+        taskId,
+        timestamp: now(),
+        payload,
+      }),
+    );
+  };
+  const ready = new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(), { once: true });
+    ws.addEventListener(
+      "error",
+      () => reject(new Error("worker websocket failed")),
+      { once: true },
+    );
+  });
+  const done = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error("timed out waiting for TASK_START"));
+    }, 5000);
+    ws.addEventListener("message", (message) => {
+      const envelope = JSON.parse(String(message.data));
+      if (envelope.type !== "TASK_START") {
+        return;
+      }
+      send(`accepted-conversation-${taskId}`, "TASK_ACCEPTED");
+      send(`started-conversation-${taskId}`, "TASK_STARTED", {
+        taskId,
+        content: "/tmp/e2e-conversation-worktree",
+      });
+      send(`conversation-only-${taskId}`, "TASK_CONVERSATION", {
+        taskId,
+        content: conversation,
+        metadata: { role: "assistant" },
+      });
+      send(`result-conversation-${taskId}`, "TASK_RESULT", {
+        taskId,
+        result: conversation,
+      });
+      send(`completed-conversation-${taskId}`, "TASK_COMPLETED", {
+        taskId,
+        result: conversation,
+      });
+      setTimeout(() => {
+        clearTimeout(timeout);
+        ws.close();
+        resolve();
+      }, 250);
+    });
+    ws.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timeout);
+        reject(new Error("worker websocket failed"));
+      },
+      { once: true },
+    );
+  });
+  return { ready, done };
+}
+
 function connectWorkerForContinuation(
   workerId: string,
   taskId: string,
@@ -1641,6 +1723,89 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
   await expectDetailCardsDoNotOverflow(page);
   await page.keyboard.press("Escape");
   await expect(page.locator("#app")).toBeVisible();
+});
+
+test("task detail logs show conversation-only agent output", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const suffix = Date.now();
+  const projectName = `Conversation Log Project ${suffix}`;
+  const taskTitle = `Conversation Log Task ${suffix}`;
+  const workerId = `worker-conversation-log-${suffix}`;
+  const workerName = `Conversation Log Worker ${suffix}`;
+  const conversation = `assistant conversation-only log ${suffix}`;
+
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }",
+      {
+        input: {
+          name: projectName,
+          gitUrl: "conversation-log-fixture",
+          defaultBranch: "main",
+          worktreeNamePrefix: "conversation-log",
+        },
+      },
+    )
+  ).createProject;
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: workerId,
+        name: workerName,
+        supportedAgents: ["codex"],
+        workDir: "/tmp/e2e-conversation-log-worker",
+        projectBindingMode: "SPECIFIC_PROJECTS",
+        boundProjectIds: [project.id],
+      },
+    },
+  );
+  const task = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id title } }",
+      {
+        input: {
+          title: taskTitle,
+          projectId: project.id,
+          workerId,
+          agentType: "codex",
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask;
+
+  const workerSocket = connectWorkerConversationOnly(workerId, task.id, conversation);
+  await workerSocket.ready;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId: task.id },
+  );
+  await workerSocket.done;
+
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        "query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { stream content } }",
+        { taskId: task.id },
+      );
+      return data.taskLogs;
+    }, { timeout: 15000 })
+    .toEqual([{ stream: "assistant", content: conversation }]);
+
+  await openVueApp(page);
+  await openTaskFromList(page, taskTitle);
+  await selectTaskDetailTab(page, "Logs");
+  await expect(page.getByLabel("Logs").getByText(conversation)).toBeVisible();
+  await expectDetailCardsDoNotOverflow(page);
 });
 
 test("task detail terminal runs commands in task worktree", async ({

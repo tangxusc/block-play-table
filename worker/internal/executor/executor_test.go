@@ -84,6 +84,53 @@ func TestExecutorRunsPreCommandsAgentAndPostCommands(t *testing.T) {
 	}
 }
 
+func TestExecutorMirrorsConversationEventsToAssistantLogs(t *testing.T) {
+	root := t.TempDir()
+	exec := NewExecutor(Config{
+		WorkDir: root,
+		Agents: map[domain.AgentType]Agent{
+			domain.AgentCodex: AgentFunc(func(ctx context.Context, input AgentInput, emit func(AgentEvent)) error {
+				emit(AgentEvent{Type: AgentEventConversation, Content: "assistant-only output"})
+				emit(AgentEvent{Type: AgentEventCompleted, Content: "done"})
+				return nil
+			}),
+		},
+	})
+
+	var events []protocol.WorkerEvent
+	exec.reporter = ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err := exec.Execute(context.Background(), protocol.TaskStartPayload{
+		Task:    protocol.TaskPayload{ID: "task-conversation-log", AgentType: domain.AgentCodex},
+		Project: protocol.ProjectPayload{ID: "project-1", DefaultBranch: "main", WorktreeNamePrefix: "p"},
+	}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	var sawConversation bool
+	var assistantLogs []string
+	for _, event := range events {
+		switch event.Type {
+		case protocol.MessageTaskConversation:
+			if event.Content == "assistant-only output" {
+				sawConversation = true
+			}
+		case protocol.MessageTaskLog:
+			if event.Stream == "assistant" {
+				assistantLogs = append(assistantLogs, event.Content)
+			}
+		}
+	}
+	if !sawConversation {
+		t.Fatalf("events did not include conversation: %+v", events)
+	}
+	if len(assistantLogs) != 1 || assistantLogs[0] != "assistant-only output" {
+		t.Fatalf("assistant logs = %#v, want conversation mirror", assistantLogs)
+	}
+}
+
 func TestExecutorRecordsReviewTurnAroundAgentWork(t *testing.T) {
 	root := t.TempDir()
 	recorder := &recordingReviewRecorder{}
@@ -217,6 +264,15 @@ func TestExecutorContinuesExistingAgentSessionWithoutCommandsOrWorktree(t *testi
 	}
 	if len(events) < 2 || events[0].Type != protocol.MessageTaskStarted || events[0].Content != worktree {
 		t.Fatalf("events should start existing worktree, got %+v", events)
+	}
+	var assistantLogs []string
+	for _, event := range events {
+		if event.Type == protocol.MessageTaskLog && event.Stream == "assistant" {
+			assistantLogs = append(assistantLogs, event.Content)
+		}
+	}
+	if len(assistantLogs) != 1 || assistantLogs[0] != "continued reply" {
+		t.Fatalf("assistant logs = %#v, want continued conversation mirror", assistantLogs)
 	}
 	last := events[len(events)-1]
 	if last.Type != protocol.MessageTaskCompleted || last.Result != "continued result" || last.AgentSessionID != "session-1" {

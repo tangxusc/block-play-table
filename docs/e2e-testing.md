@@ -246,7 +246,7 @@ npm run e2e:real-agents
 | Task | `TASK_START` 和 `TASK_CONTINUE` 下发同一份 `agentConfig` | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_ACCEPTED` 后保持启动流程可追踪 | L2 | [已实现] |
 | Task | Worker 上报 `TASK_STARTED` 后任务进入 `RUNNING` 并记录 worktree | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_LOG` 后日志可在 API/UI 查询 | L1/L2 | [已实现] |
+| Task | Worker 上报 `TASK_LOG` 后日志可在 API/UI 查询；只有 `TASK_CONVERSATION` 的历史或真实 Agent 输出也会以会话角色派生到 `taskLogs` | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_CONVERSATION` 后会话可在 API/UI 查询 | L2 | [已实现] |
 | Task | Worker 上报 `TASK_RESULT` 后结果暂存到任务 | L2 | [已实现] |
 | Task | Worker 上报 `TASK_COMPLETED` 后任务进入 `COMPLETED` 并释放 Worker | L1/L2 | [已实现] |
@@ -355,7 +355,7 @@ npm run e2e:real-agents
 | Worker WebSocket 连接失败 | `BPT_MANAGER_WS_URL`、`WORKER_TOKEN` 与 `BPT_MANAGER_WS_TOKEN` 是否一致、`/worker/ws` 查询参数 |
 | 任务停在 `ASSIGNED` | Worker 是否在线、是否支持目标 Agent、是否绑定目标 Project、是否空闲 |
 | 任务停在 `STARTING` | Worker 是否收到 `TASK_START`、是否上报 `TASK_ACCEPTED`/`TASK_STARTED` |
-| 日志或会话缺失 | Worker 是否上报 `TASK_LOG`/`TASK_CONVERSATION`，Manager 是否拒绝了消息或 messageId 被去重 |
+| 日志或会话缺失 | Worker 是否上报 `TASK_LOG`/`TASK_CONVERSATION`，Manager 是否拒绝了消息或 messageId 被去重；若没有持久化 `task_logs`，`taskLogs` 会从 `task_conversations` 派生可展示日志 |
 | Playwright 看板截图为空 | UI 是否加载完成、测试数据是否写入 Manager、浏览器 viewport 是否为 `1400x900` |
 | 真实 Agent 任务失败 | CLI 是否登录、fixture 是否可访问、worktree 是否创建成功、前置/后置命令输出、Agent stderr |
 | PostgreSQL readiness 失败 | `DB_DSN`、PostgreSQL healthcheck、迁移日志、网络连通性 |
