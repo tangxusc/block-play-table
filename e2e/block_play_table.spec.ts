@@ -65,6 +65,15 @@ async function selectTaskDetailTab(page, name: string) {
   await page.getByRole("tab", { name, exact: true }).click();
 }
 
+async function expectIconOnlyTitleAction(page, name: string) {
+  const button = page.getByRole("button", { name, exact: true }).first();
+  await expect(button).toBeVisible();
+  await expect(button).toHaveText(/^\s*$/);
+  await button.hover();
+  await expect(page.getByRole("tooltip", { name, exact: true })).toBeVisible();
+  await page.mouse.move(0, 0);
+}
+
 async function expectDetailCardsDoNotOverflow(page) {
   await expect
     .poll(async () =>
@@ -1277,7 +1286,9 @@ test("task create and detail assignment expose worker controls", async ({
 
   await openVueApp(page);
   await openTaskFromList(page, createdTask.createTask.title);
-  await expect(page.getByRole("button", { name: "Assign", exact: true })).toBeVisible();
+  for (const actionName of ["Copy task ID", "Assign", "Start", "Retry", "Archive", "Close"]) {
+    await expectIconOnlyTitleAction(page, actionName);
+  }
   await page.getByRole("button", { name: "Assign", exact: true }).click();
   const assignDialog = page.getByRole("dialog", { name: "Assign worker" });
   await expect(assignDialog.getByLabel("Worker")).toBeVisible();
@@ -1611,7 +1622,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
     await expect(page.getByRole("tab", { name: tabName, exact: true })).toHaveCount(1);
     await expect(page.getByRole("button", { name: tabName, exact: true })).toHaveCount(0);
   }
-  await expect(page.getByRole("button", { name: "Copy task ID" })).toBeVisible();
+  await expectIconOnlyTitleAction(page, "Copy task ID");
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
   await selectTaskDetailTab(page, "Web preview");

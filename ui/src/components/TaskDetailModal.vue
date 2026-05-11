@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { message as antMessage } from "ant-design-vue";
+import {
+  CloseOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  InboxOutlined,
+  PlayCircleOutlined,
+  RedoOutlined,
+  StopOutlined,
+  UserSwitchOutlined,
+} from "@ant-design/icons-vue";
 import { api } from "../api";
 import type { BoardData, TaskDetailData, TaskGitDiffFile, TaskInteraction, TaskItem, WorkerItem } from "../models";
 import {
@@ -413,56 +423,123 @@ function parseDiffHunks(patch: string): DiffHunk[] {
     open
     width="1120px"
     :footer="null"
+    :closable="false"
     @cancel="close"
   >
     <template #title>
       <div class="task-detail-titlebar">
         <span class="task-detail-title">{{ task?.title || "Task detail" }}</span>
-        <a-space v-if="task" wrap>
-          <a-button aria-label="Copy task ID" @click="copyTaskId">Copy task ID</a-button>
-          <a-button
-            v-if="!isArchived"
-            aria-label="Assign"
-            :disabled="!canAssign || isWaitingForInput"
-            :loading="busy"
-            @click="openAssignDialog"
-          >
-            Assign
-          </a-button>
-          <a-button
-            v-if="!isArchived"
-            aria-label="Start"
-            type="primary"
-            :disabled="!canStart || isWaitingForInput"
-            :loading="busy"
-            @click="startCurrentTask"
-          >
-            Start
-          </a-button>
-          <a-button
-            v-if="!isArchived"
-            aria-label="Retry"
-            :disabled="isWaitingForInput"
-            :loading="busy"
-            @click="retryCurrentTask"
-          >
-            Retry
-          </a-button>
-          <a-button
-            v-if="!isArchived && canInterrupt"
-            aria-label="Interrupt"
-            :loading="busy"
-            @click="interruptCurrentTask"
-          >
-            Interrupt
-          </a-button>
-          <a-button v-if="!isArchived" aria-label="Archive" :loading="busy" @click="archiveCurrentTask">
-            Archive
-          </a-button>
-          <a-button v-else danger aria-label="Delete" :loading="busy" @click="deleteCurrentTask">
-            Delete
-          </a-button>
-        </a-space>
+        <div class="task-detail-title-actions">
+          <template v-if="task">
+            <a-tooltip title="Copy task ID">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Copy task ID"
+                  @click="copyTaskId"
+                >
+                  <CopyOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-if="!isArchived" title="Assign">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Assign"
+                  :disabled="!canAssign || isWaitingForInput"
+                  :loading="busy"
+                  @click="openAssignDialog"
+                >
+                  <UserSwitchOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-if="!isArchived" title="Start">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Start"
+                  type="primary"
+                  :disabled="!canStart || isWaitingForInput"
+                  :loading="busy"
+                  @click="startCurrentTask"
+                >
+                  <PlayCircleOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-if="!isArchived" title="Retry">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Retry"
+                  :disabled="isWaitingForInput"
+                  :loading="busy"
+                  @click="retryCurrentTask"
+                >
+                  <RedoOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-if="!isArchived && canInterrupt" title="Interrupt">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Interrupt"
+                  :loading="busy"
+                  @click="interruptCurrentTask"
+                >
+                  <StopOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-if="!isArchived" title="Archive">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Archive"
+                  :loading="busy"
+                  @click="archiveCurrentTask"
+                >
+                  <InboxOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+            <a-tooltip v-else title="Delete">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  danger
+                  aria-label="Delete"
+                  :loading="busy"
+                  @click="deleteCurrentTask"
+                >
+                  <DeleteOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
+          </template>
+          <a-tooltip title="Close">
+            <span class="task-title-action-wrapper">
+              <a-button
+                class="task-title-action-button"
+                shape="circle"
+                aria-label="Close"
+                @click="close"
+              >
+                <CloseOutlined />
+              </a-button>
+            </span>
+          </a-tooltip>
+        </div>
       </div>
     </template>
     <a-spin :spinning="loading">

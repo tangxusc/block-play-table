@@ -351,13 +351,30 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .task-detail-title {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-detail-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.task-title-action-wrapper {
+  display: inline-flex;
+}
+
+.task-title-action-button {
+  flex: 0 0 auto;
 }
 
 .detail-grid {
