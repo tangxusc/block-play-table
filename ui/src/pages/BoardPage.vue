@@ -12,7 +12,7 @@ import PaginationBar from "../components/PaginationBar.vue";
 import TaskDetailModal from "../components/TaskDetailModal.vue";
 import AgentConfigFields from "../components/AgentConfigFields.vue";
 
-interface CalendarTaskRange {
+interface ScheduleRange {
   task: TaskItem;
   start: Date;
   end: Date;
@@ -64,7 +64,7 @@ const calendarFocus = computed(() =>
     ? parseDate(draftCalendarFocus.value)
     : calendarRanges.value[0]?.start || parseDate(activeTasks.value[0]?.startDate),
 );
-const calendarTitle = computed(() => {
+const periodLabel = computed(() => {
   const focus = calendarFocus.value;
   if (calendarMode.value === "Month") return formatMonth(focus);
   if (calendarMode.value === "Day") return formatDay(focus);
@@ -253,7 +253,7 @@ function scrumColumnId(status: string): string {
   return "done";
 }
 
-function taskRanges(tasks: TaskItem[]): CalendarTaskRange[] {
+function taskRanges(tasks: TaskItem[]): ScheduleRange[] {
   return tasks
     .filter((task) => task.status !== "ARCHIVED" && (task.startDate || task.endDate))
     .map((task) => {
@@ -282,16 +282,16 @@ function sameDay(left: Date, right: Date): boolean {
   );
 }
 
-function isTaskVisibleOn(range: CalendarTaskRange, day: Date): boolean {
+function isTaskVisibleOn(range: ScheduleRange, day: Date): boolean {
   const current = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
   return current >= range.start.getTime() && current <= range.end.getTime();
 }
 
-function rangesForDay(day: Date): CalendarTaskRange[] {
+function rangesForDay(day: Date): ScheduleRange[] {
   return calendarRanges.value.filter((range) => isTaskVisibleOn(range, day));
 }
 
-function rangesForMonth(month: Date): CalendarTaskRange[] {
+function rangesForMonth(month: Date): ScheduleRange[] {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
   return calendarRanges.value.filter((range) => range.end >= first && range.start <= last);
@@ -418,7 +418,7 @@ function moveCalendar(delta: number) {
 
         <section v-else class="calendar-panel">
           <div class="calendar-toolbar">
-            <div class="calendar-title">{{ calendarTitle }}</div>
+            <div class="calendar-title">{{ periodLabel }}</div>
             <a-space>
               <a-button
                 v-for="mode in ['Month', 'Week', 'Day', 'Year']"

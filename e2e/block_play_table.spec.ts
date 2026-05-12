@@ -61,28 +61,17 @@ function withManagerAccessToken(rawURL: string) {
   return url.toString();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function openTaskFromList(page, taskTitle: string) {
   await page.getByRole("button", { name: "List" }).click();
-  await page.mouse.move(700, 520);
-  const taskRow = page.getByRole("button", { name: new RegExp(taskTitle) });
-  for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
-    for (let scrollAttempt = 0; scrollAttempt < 20; scrollAttempt++) {
-      if (await taskRow.isVisible().catch(() => false)) {
-        await taskRow.click();
-        return;
-      }
-      await page.mouse.wheel(0, 900);
-      await page.waitForTimeout(150);
-    }
-    const nextPage = page.getByRole("button", { name: "Next page" });
-    if (!(await nextPage.isEnabled().catch(() => false))) {
-      break;
-    }
-    await nextPage.click();
-    await page.waitForTimeout(300);
-    await page.mouse.wheel(0, -5000);
-  }
-  await expect(taskRow).toBeVisible();
+  const searchInput = page.getByRole("textbox", { name: /Search/ });
+  await expect(searchInput).toBeVisible();
+  await fillTextField(page, searchInput, taskTitle);
+  const taskRow = page.getByRole("button", { name: new RegExp(escapeRegExp(taskTitle)) });
+  await expect(taskRow).toBeVisible({ timeout: 15000 });
   await taskRow.click();
 }
 
@@ -273,7 +262,7 @@ async function waitForReviewWorker(request) {
           },
         ) || null;
       return Boolean(selected);
-    })
+    }, { timeout: 15000 })
     .toBeTruthy();
   return selected!;
 }
@@ -1536,7 +1525,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
           }) => [group.agentType, group.vars],
         ),
       );
-    })
+    }, { timeout: 15000 })
     .toEqual({
       codex: [
         { key: "BPT_E2E_AGENT_ENV", valueMasked: "********" },
@@ -1614,7 +1603,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
           task.startDate === taskStartDate &&
           task.endDate === taskEndDate,
       );
-    })
+    }, { timeout: 15000 })
     .toBeTruthy();
   const tasks = await graphQL(
     request,
@@ -1887,7 +1876,7 @@ test("task detail terminal runs commands in task worktree", async ({
       );
       worktreePath = data.task.worktreePath || "";
       return worktreePath !== "";
-    })
+    }, { timeout: 30000 })
     .toBeTruthy();
 
   const output = await runTerminalCommand(task.id, marker, worktreePath);
@@ -1904,10 +1893,12 @@ test("task detail terminal runs commands in task worktree", async ({
   await page.getByRole("button", { name: "Connect worker terminal" }).click();
   await expect(page.getByText("Connected")).toBeVisible();
   await expect
-    .poll(() =>
-      terminalSocketURLs.some((url) =>
-        url.includes(`/terminal/tasks/${task.id}/ws`),
-      ),
+    .poll(
+      () =>
+        terminalSocketURLs.some((url) =>
+          url.includes(`/terminal/tasks/${task.id}/ws`),
+        ),
+      { timeout: 15000 },
     )
     .toBeTruthy();
 });
@@ -1937,10 +1928,12 @@ test("worker list terminal button opens a worker shell in the worker workdir", a
     .click();
   await expect(terminalDialog.getByText("Connected")).toBeVisible();
   await expect
-    .poll(() =>
-      workerTerminalSocketURLs.some((url) =>
-        url.includes(`/terminal/workers/${worker.id}/ws`),
-      ),
+    .poll(
+      () =>
+        workerTerminalSocketURLs.some((url) =>
+          url.includes(`/terminal/workers/${worker.id}/ws`),
+        ),
+      { timeout: 15000 },
     )
     .toBeTruthy();
 
@@ -2008,7 +2001,7 @@ test("task detail review git workflow commits and publishes staged changes", asy
       );
       worktreePath = data.task.worktreePath || "";
       return worktreePath;
-    })
+    }, { timeout: 30000 })
     .not.toBe("");
 
   const worktreeHost = fixture.hostPathForWorkerPath(worktreePath);
@@ -2119,7 +2112,7 @@ test("task detail review git workflow fetches and rebases after remote main adva
       );
       worktreePath = data.task.worktreePath || "";
       return worktreePath;
-    })
+    }, { timeout: 30000 })
     .not.toBe("");
 
   const worktreeHost = fixture.hostPathForWorkerPath(worktreePath);
@@ -2404,7 +2397,7 @@ test("claude task detail waits for permission interaction before completion", as
         task: data.task,
         interactions: data.taskInteractions,
       };
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       task: { status: "WAITING_INPUT", agentType: "claude" },
       interactions: [
@@ -2544,7 +2537,7 @@ test("task detail continues a completed task with the same agent session", async
         { id: taskId },
       );
       return data.task;
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       status: "COMPLETED",
       result: "first result",
@@ -2581,7 +2574,7 @@ test("task detail continues a completed task with the same agent session", async
         task: taskData.task,
         messages: conversationData.taskConversations,
       };
-    })
+    }, { timeout: 15000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",

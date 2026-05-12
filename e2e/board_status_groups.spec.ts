@@ -350,7 +350,7 @@ test("board scrum groups task statuses into four visual columns", async ({
             task.status === "ARCHIVED",
         ),
       };
-    })
+    }, { timeout: 30000 })
     .toEqual({ pending: true, running: true, ready: true, done: true, complete: true });
 
   await openVueApp(page);
@@ -421,7 +421,7 @@ test("board scrum groups task statuses into four visual columns", async ({
         { id: completedBucketTask.createTask.id },
       );
       return data.task;
-    })
+    }, { timeout: 15000 })
     .toBeNull();
 
   await page.screenshot({

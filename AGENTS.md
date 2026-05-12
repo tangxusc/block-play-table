@@ -27,5 +27,5 @@
 ## 开发约束
 
 - 优先沿用项目现有结构、命令和测试入口。
-- 修改测试门禁、Playwright 配置、Docker Compose、Manager/Worker 协议或 Flutter UI 时，必须同步更新相关文档。
+- 修改测试门禁、Playwright 配置、Docker Compose、Manager/Worker 协议或 Vue UI 时，必须同步更新相关文档。
 - 不要提交未验证的主流程改动；端到端测试失败时，应先修复失败原因，再交付结果。
