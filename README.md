@@ -40,9 +40,14 @@ In another shell:
 ```bash
 MANAGER_WS_URL=ws://localhost:8080/worker/ws \
 WORKER_ID=worker-local \
+WORKER_NAME=local-worker \
 WORKER_WORK_DIR=./worker-data \
+WORKER_SUPPORTED_AGENTS=codex,claude \
+WORKER_TOKEN=dev-worker-token \
 go run ./worker/cmd/worker
 ```
+
+If Manager is already running, the Worker can also be started directly with the same command above. `MANAGER_WS_URL` points to the running Manager, `WORKER_WORK_DIR` is the local directory where task worktrees are created, and `WORKER_TOKEN` must match Manager when Manager was started with a token.
 
 Workers can connect to multiple Managers at the same time by using comma-separated URLs:
 
@@ -135,6 +140,61 @@ Manager storage is selected by:
 - `DB_DRIVER=memory` for temporary tests or demos only
 
 Readiness is exposed at `GET /readyz` and checks the configured store.
+
+## Docker Run
+
+Build the three local images:
+
+```bash
+docker build -f Dockerfile.manager -t block-play-table-manager .
+docker build -f Dockerfile.worker -t block-play-table-worker .
+docker build -f ui/Dockerfile -t block-play-table-ui .
+```
+
+Create a shared Docker network:
+
+```bash
+docker network create block-play-table
+```
+
+Start Manager:
+
+```bash
+docker run --rm --name bpt-manager \
+  --network block-play-table \
+  -p 8080:8080 \
+  -v bpt-manager-data:/data \
+  -e MANAGER_HTTP_ADDR=:8080 \
+  -e DB_DRIVER=sqlite \
+  -e DB_DSN=/data/manager.db \
+  -e WORKER_TOKEN=dev-worker-token \
+  ghcr.io/tangxusc/block-play-table-manager:latest
+```
+
+Start Worker in another shell:
+
+```bash
+docker run --rm --name bpt-worker \
+  --network block-play-table \
+  -v bpt-worker-data:/worker-data \
+  -e MANAGER_WS_URL=ws://bpt-manager:8080/worker/ws \
+  -e WORKER_ID=worker-local \
+  -e WORKER_NAME=local-worker \
+  -e WORKER_WORK_DIR=/worker-data \
+  -e WORKER_SUPPORTED_AGENTS=codex,claude \
+  -e WORKER_TOKEN=dev-worker-token \
+  ghcr.io/tangxusc/block-play-table-worker:latest
+```
+
+Start UI in another shell:
+
+```bash
+docker run --rm --name bpt-ui \
+  -p 18080:80 \
+  ghcr.io/tangxusc/block-play-table-ui:latest
+```
+
+Then open `http://localhost:18080`. The UI image is built with Manager URLs that point to `http://localhost:8080/graphql` and `ws://localhost:8080/subscriptions` by default.
 
 ## Tests
 
