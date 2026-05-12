@@ -24,7 +24,8 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
-	server := httptest.NewServer(NewServer(service).Handler())
+	api := NewServer(service)
+	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
 	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
@@ -71,6 +72,7 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workerConn.Close()
+	waitForWorkerGatewayConnection(t, api.gateway, "worker-ops")
 
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"title": "T", "projectId": projectID, "agentType": "codex"},
@@ -696,7 +698,8 @@ func TestWorkerGatewayRoutesTaskInteractionResponse(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
-	server := httptest.NewServer(NewServer(service).Handler())
+	api := NewServer(service)
+	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
 	ctx := context.Background()
@@ -727,6 +730,7 @@ func TestWorkerGatewayRoutesTaskInteractionResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	waitForWorkerGatewayConnection(t, api.gateway, worker.ID)
 
 	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": task.ID})
 	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -910,7 +914,8 @@ func TestGraphQLContinueTaskSendsTaskContinueToOriginalWorker(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
-	server := httptest.NewServer(NewServer(service).Handler())
+	api := NewServer(service)
+	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
 	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
@@ -925,6 +930,7 @@ func TestGraphQLContinueTaskSendsTaskContinueToOriginalWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	waitForWorkerGatewayConnection(t, api.gateway, "worker-continue")
 
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"title": "T", "projectId": projectID, "workerId": "worker-continue", "agentType": "codex"},
@@ -1049,6 +1055,7 @@ func TestWorkerGatewaySendsTaskCancelAndHeartbeatOption(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	waitForWorkerGatewayConnection(t, api.gateway, "worker-cancel")
 
 	if err := api.gateway.SendTaskCancel("", "task-1"); err != nil {
 		t.Fatalf("SendTaskCancel with empty worker id returned error: %v", err)
@@ -1171,6 +1178,23 @@ func sendWS(t *testing.T, conn *websocket.Conn, envelope protocol.Envelope) {
 	t.Helper()
 	if err := conn.WriteJSON(envelope); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForWorkerGatewayConnection(t *testing.T, gateway *WorkerGateway, workerID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		gateway.mu.RLock()
+		connected := gateway.connections[workerID] != nil
+		gateway.mu.RUnlock()
+		if connected {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker %s gateway connection was not tracked", workerID)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
