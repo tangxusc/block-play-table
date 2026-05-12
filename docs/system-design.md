@@ -103,7 +103,7 @@ Worker 是具体任务执行节点。
 | --- | --- |
 | 任务列表 | 查看所有任务，支持状态、Project、Worker、时间过滤 |
 | 任务创建页 | 创建任务，选择 Project、Agent 和 Worker |
-| 任务详情页 | 查看任务基础信息、状态、日志、AI 对话和结果 |
+| 任务详情页 | 查看任务基础信息、状态、计划、日志、AI 对话和结果 |
 | 看板页 | 以 Kanban 或日历方式查看任务 |
 | Worker 管理页 | 查看 Worker 列表、状态、能力、当前任务和运行时环境变量 |
 | Project 管理页 | 管理项目 Git URL、默认分支、worktree 名称前缀 |
@@ -965,7 +965,7 @@ CLI 参数映射：
 
 Codex adapter 使用 app-server 的 server request 作为授权通道：`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 和 `item/tool/requestUserInput` 会映射成统一 `TaskInteraction`；UI 响应后再映射回 app-server 的 `accept`、`acceptForSession`、`decline`、`cancel` 或用户输入 answers。`codex exec --json` 只保留为旧测试辅助路径，不作为需要授权任务的执行通道。
 
-Claude adapter 使用非交互式 `stream-json` 输出中的 `permission_denials` 作为授权通道。Worker 将 Claude 的 `Bash`、文件编辑和其他工具拒绝分别映射为 `COMMAND_APPROVAL`、`FILE_APPROVAL` 和 `PERMISSION_APPROVAL`，任务进入 `WAITING_INPUT`。用户响应后 Worker 继续同一个 Claude `session_id`：批准时追加本次或本任务会话内的 `--allowedTools`，拒绝或取消时把用户决定作为 follow-up 消息传回 Claude。
+Claude adapter 使用非交互式 `stream-json` 输出中的 `permission_denials` 作为授权通道。Worker 将 Claude 的 `Bash`、文件编辑和其他工具拒绝分别映射为 `COMMAND_APPROVAL`、`FILE_APPROVAL` 和 `PERMISSION_APPROVAL`，任务进入 `WAITING_INPUT`。当 Claude Plan 模式通过 `ExitPlanMode` 在原始 payload 中携带 Markdown `plan` 时，UI 会在任务详情 Overview 中直接展示该计划，审批流程仍沿用同一个 `TaskInteraction` 闭环。用户响应后 Worker 继续同一个 Claude `session_id`：批准时追加本次或本任务会话内的 `--allowedTools`，拒绝或取消时把用户决定作为 follow-up 消息传回 Claude。
 
 统一 Agent 事件：
 

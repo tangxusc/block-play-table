@@ -79,6 +79,15 @@ const latestBackup = computed(() => {
 const pendingInteractions = computed(() =>
   (detail.value?.interactions || []).filter((interaction) => interaction.status === "PENDING"),
 );
+const planMarkdown = computed(() => {
+  const interactions = detail.value?.interactions || [];
+  for (let index = interactions.length - 1; index >= 0; index--) {
+    const plan = planFromInteraction(interactions[index]);
+    if (plan) return plan;
+  }
+  return "";
+});
+const planBlocks = computed(() => parsePlanMarkdown(planMarkdown.value));
 const selectedPatch = computed(() => selectedFile.value?.patch || diffFiles.value[0]?.patch || "");
 const selectedHunks = computed(() => parseDiffHunks(selectedFile.value?.patch || ""));
 const previewWorkers = computed(() => props.board.workers);
@@ -365,6 +374,162 @@ function openWebPreview() {
   }
 }
 
+type MarkdownInline = {
+  type: "text" | "code" | "strong";
+  text: string;
+};
+
+type MarkdownBlock = {
+  type: "heading" | "paragraph" | "list" | "code";
+  level?: number;
+  ordered?: boolean;
+  inline?: MarkdownInline[];
+  items?: MarkdownInline[][];
+  text?: string;
+  language?: string;
+};
+
+function planFromInteraction(interaction: TaskInteraction): string {
+  const rawPayload = interaction.rawPayload?.trim();
+  if (!rawPayload) return "";
+  try {
+    const parsed = JSON.parse(rawPayload);
+    return planFromValue(parsed);
+  } catch {
+    return "";
+  }
+}
+
+function planFromValue(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const plan = planFromValue(item);
+      if (plan) return plan;
+    }
+    return "";
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.plan === "string" && record.plan.trim()) {
+    return record.plan.trim();
+  }
+  for (const key of ["tool_input", "toolInput", "input", "payload"]) {
+    const plan = planFromValue(record[key]);
+    if (plan) return plan;
+  }
+  return "";
+}
+
+function parsePlanMarkdown(markdown: string): MarkdownBlock[] {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index++;
+      continue;
+    }
+
+    const fence = line.match(/^```(\S*)\s*$/);
+    if (fence) {
+      index++;
+      const codeLines: string[] = [];
+      while (index < lines.length && !lines[index].startsWith("```")) {
+        codeLines.push(lines[index]);
+        index++;
+      }
+      if (index < lines.length) index++;
+      blocks.push({ type: "code", language: fence[1] || "", text: codeLines.join("\n") });
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        inline: parseMarkdownInline(heading[2].trim()),
+      });
+      index++;
+      continue;
+    }
+
+    const listMatch = parseListLine(line);
+    if (listMatch) {
+      const ordered = listMatch.ordered;
+      const items: MarkdownInline[][] = [];
+      while (index < lines.length) {
+        const item = parseListLine(lines[index]);
+        if (!item || item.ordered !== ordered) break;
+        items.push(parseMarkdownInline(item.text));
+        index++;
+      }
+      blocks.push({ type: "list", ordered, items });
+      continue;
+    }
+
+    const paragraph: string[] = [line.trim()];
+    index++;
+    while (index < lines.length && lines[index].trim() && !startsMarkdownBlock(lines[index])) {
+      paragraph.push(lines[index].trim());
+      index++;
+    }
+    blocks.push({ type: "paragraph", inline: parseMarkdownInline(paragraph.join(" ")) });
+  }
+  return blocks;
+}
+
+function parseListLine(line: string): { ordered: boolean; text: string } | null {
+  const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+  if (ordered) return { ordered: true, text: ordered[1].trim() };
+  const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+  if (unordered) return { ordered: false, text: unordered[1].trim() };
+  return null;
+}
+
+function startsMarkdownBlock(line: string): boolean {
+  return /^```/.test(line) || /^(#{1,6})\s+/.test(line) || parseListLine(line) !== null;
+}
+
+function parseMarkdownInline(text: string): MarkdownInline[] {
+  const parts: MarkdownInline[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === "`") {
+      const end = text.indexOf("`", index + 1);
+      if (end > index + 1) {
+        parts.push({ type: "code", text: text.slice(index + 1, end) });
+        index = end + 1;
+        continue;
+      }
+    }
+    if (text.startsWith("**", index)) {
+      const end = text.indexOf("**", index + 2);
+      if (end > index + 2) {
+        parts.push({ type: "strong", text: text.slice(index + 2, end) });
+        index = end + 2;
+        continue;
+      }
+    }
+    const nextCode = nextTokenIndex(text, "`", index + 1);
+    const nextStrong = nextTokenIndex(text, "**", index + 1);
+    const next = Math.min(nextCode, nextStrong);
+    parts.push({ type: "text", text: text.slice(index, next) });
+    index = next;
+  }
+  return parts.filter((part) => part.text.length > 0);
+}
+
+function nextTokenIndex(text: string, token: string, from: number): number {
+  const index = text.indexOf(token, from);
+  return index === -1 ? text.length : index;
+}
+
+function headingTag(level = 1): string {
+  return `h${Math.min(Math.max(level + 2, 3), 6)}`;
+}
+
 type DiffHunk = {
   id: string;
   header: string;
@@ -568,6 +733,55 @@ function parseDiffHunks(patch: string): DiffHunk[] {
                 <p class="mono">{{ task.result || "No result yet" }}</p>
               </section>
             </div>
+            <section
+              v-if="planBlocks.length"
+              class="detail-section plan-section"
+              role="region"
+              aria-label="Plan"
+            >
+              <h3>Plan</h3>
+              <div class="markdown-body">
+                <template v-for="(block, blockIndex) in planBlocks" :key="blockIndex">
+                  <component
+                    :is="headingTag(block.level)"
+                    v-if="block.type === 'heading'"
+                    class="markdown-heading"
+                  >
+                    <template v-for="(part, partIndex) in block.inline || []" :key="partIndex">
+                      <code v-if="part.type === 'code'">{{ part.text }}</code>
+                      <strong v-else-if="part.type === 'strong'">{{ part.text }}</strong>
+                      <template v-else>{{ part.text }}</template>
+                    </template>
+                  </component>
+                  <p v-else-if="block.type === 'paragraph'">
+                    <template v-for="(part, partIndex) in block.inline || []" :key="partIndex">
+                      <code v-if="part.type === 'code'">{{ part.text }}</code>
+                      <strong v-else-if="part.type === 'strong'">{{ part.text }}</strong>
+                      <template v-else>{{ part.text }}</template>
+                    </template>
+                  </p>
+                  <ol v-else-if="block.type === 'list' && block.ordered" class="markdown-list">
+                    <li v-for="(item, itemIndex) in block.items || []" :key="itemIndex">
+                      <template v-for="(part, partIndex) in item" :key="partIndex">
+                        <code v-if="part.type === 'code'">{{ part.text }}</code>
+                        <strong v-else-if="part.type === 'strong'">{{ part.text }}</strong>
+                        <template v-else>{{ part.text }}</template>
+                      </template>
+                    </li>
+                  </ol>
+                  <ul v-else-if="block.type === 'list'" class="markdown-list">
+                    <li v-for="(item, itemIndex) in block.items || []" :key="itemIndex">
+                      <template v-for="(part, partIndex) in item" :key="partIndex">
+                        <code v-if="part.type === 'code'">{{ part.text }}</code>
+                        <strong v-else-if="part.type === 'strong'">{{ part.text }}</strong>
+                        <template v-else>{{ part.text }}</template>
+                      </template>
+                    </li>
+                  </ul>
+                  <pre v-else-if="block.type === 'code'" class="markdown-code"><code>{{ block.text }}</code></pre>
+                </template>
+              </div>
+            </section>
             <div v-for="interaction in pendingInteractions" :key="interaction.id" class="interaction-box">
               <textarea :aria-label="interaction.title" readonly :value="interaction.body" />
               <textarea :aria-label="interactionPayloadSummary(interaction)" readonly :value="interactionPayloadSummary(interaction)" />

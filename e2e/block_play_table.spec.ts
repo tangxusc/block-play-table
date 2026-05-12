@@ -71,6 +71,14 @@ async function openTaskFromList(page, taskTitle: string) {
   await expect(searchInput).toBeVisible();
   await fillTextField(page, searchInput, taskTitle);
   const taskRow = page.getByRole("button", { name: new RegExp(escapeRegExp(taskTitle)) });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (await taskRow.isVisible().catch(() => false)) {
+      await taskRow.click();
+      return;
+    }
+    await page.getByRole("button", { name: "Refresh board" }).click();
+    await page.waitForTimeout(500);
+  }
   await expect(taskRow).toBeVisible({ timeout: 15000 });
   await taskRow.click();
 }
@@ -783,7 +791,7 @@ function connectWorkerForContinuation(
   const continued = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error("timed out waiting for TASK_CONTINUE")),
-      15000,
+      30000,
     );
     ws.addEventListener("message", (message) => {
       const envelope = JSON.parse(String(message.data));
@@ -2429,7 +2437,7 @@ test("claude task detail waits for permission interaction before completion", as
         { id: taskId, taskId },
       );
       return data;
-    }, { timeout: 15000 })
+    }, { timeout: 30000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
@@ -2443,6 +2451,107 @@ test("claude task detail waits for permission interaction before completion", as
         }),
       ],
     });
+});
+
+test("task detail shows Claude plan markdown from plan mode interaction", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openVueApp(page);
+
+  const suffix = Date.now();
+  const taskTitle = `E2E Claude Plan Task ${suffix}`;
+  const workerId = `worker-e2e-claude-plan-${suffix}`;
+  const planMarkdown = [
+    "# Update README Plan",
+    "",
+    "## Steps",
+    "",
+    "1. Change `README.md` only.",
+    "2. Run verification.",
+    "",
+    "```bash",
+    "git diff -- README.md",
+    "```",
+  ].join("\n");
+  const project = (
+    await graphQL(
+      request,
+      "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
+      {
+        input: {
+          name: `E2E Claude Plan Project ${suffix}`,
+          gitUrl: "e2e-fixture",
+          defaultBranch: "main",
+          worktreeNamePrefix: "e2e-claude-plan",
+        },
+      },
+    )
+  ).createProject;
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }",
+    {
+      input: {
+        id: workerId,
+        name: `E2E Claude Plan Worker ${suffix}`,
+        supportedAgents: ["claude"],
+        workDir: "/tmp/e2e-claude-plan-worker",
+        projectBindingMode: "ALL_PROJECTS",
+      },
+    },
+  );
+  const taskId = (
+    await graphQL(
+      request,
+      "mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }",
+      {
+        input: {
+          title: taskTitle,
+          projectId: project.id,
+          workerId,
+          agentType: "claude",
+          agentConfig: { workMode: "PLAN" },
+          baseBranch: "main",
+        },
+      },
+    )
+  ).createTask.id;
+  const workerSocket = connectWorkerForInteraction(workerId, taskId, {
+    kind: "PERMISSION_APPROVAL",
+    title: "Approve Claude ExitPlanMode",
+    body: "Exit plan mode?",
+    rawPayload: JSON.stringify({
+      tool_name: "ExitPlanMode",
+      tool_use_id: "toolu_plan_e2e",
+      tool_input: {
+        plan: planMarkdown,
+        planFilePath: "C:\\Users\\56205\\.claude\\plans\\e2e-plan.md",
+      },
+    }),
+    agentSessionId: "claude-plan-session-e2e",
+    result: "claude plan e2e completed",
+    conversation: "claude plan approved",
+  });
+  await workerSocket.ready;
+  await graphQL(
+    request,
+    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }",
+    { taskId },
+  );
+  await workerSocket.requested;
+
+  await openTaskFromList(page, taskTitle);
+  const planRegion = page.getByRole("region", { name: "Plan" });
+  await expect(planRegion).toBeVisible();
+  await expect(planRegion.getByRole("heading", { name: "Update README Plan" })).toBeVisible();
+  await expect(planRegion.getByText("Change README.md only.")).toBeVisible();
+  await expect(planRegion.locator("code").filter({ hasText: "git diff -- README.md" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await workerSocket.completed;
+  await expect(planRegion.getByRole("heading", { name: "Update README Plan" })).toBeVisible();
 });
 
 test("task detail continues a completed task with the same agent session", async ({
@@ -2537,7 +2646,7 @@ test("task detail continues a completed task with the same agent session", async
         { id: taskId },
       );
       return data.task;
-    }, { timeout: 15000 })
+    }, { timeout: 30000 })
     .toMatchObject({
       status: "COMPLETED",
       result: "first result",

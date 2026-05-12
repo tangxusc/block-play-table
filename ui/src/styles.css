@@ -421,6 +421,68 @@ select {
   background: #fff;
 }
 
+.plan-section {
+  margin-top: 12px;
+}
+
+.markdown-body {
+  color: #172033;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-heading {
+  margin: 12px 0 8px;
+  color: #111827;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.markdown-body p {
+  margin: 8px 0;
+}
+
+.markdown-list {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.markdown-list li + li {
+  margin-top: 4px;
+}
+
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2f6;
+}
+
+.markdown-code {
+  margin: 10px 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.markdown-code code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;

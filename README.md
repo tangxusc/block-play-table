@@ -90,6 +90,8 @@ Browser clients that cannot set custom headers can use `/proxy/web/<worker name>
 
 Task detail groups `Copy task ID`, lifecycle actions, archive/delete, and close controls in the dialog title as icon-only buttons. Each control exposes a tooltip on hover; the right-side floating command rail is reserved for switching between detail panels.
 
+When a Claude plan-mode interaction includes a Markdown `plan` value in its raw `TaskInteraction` payload, Task detail renders that plan in the Overview tab before the approval controls. The rendered plan uses a safe Markdown subset and does not execute raw HTML.
+
 Task detail also provides a Worker terminal panel. The UI first calls `GET /terminal/tasks/{taskID}` to validate that the assigned Worker is online, the FRP tunnel is connected, and the recorded `worktreePath` still exists under the Worker `WorkDir`; then it connects to `/terminal/tasks/{taskID}/ws`. Manager proxies the WebSocket through the Worker FRP tunnel to the Worker's local terminal service. The shell starts in the task worktree only; tasks without `worktreePath`, archived tasks, or missing local worktree directories do not fall back to the Worker root directory. Worker terminal support is enabled by default and can be disabled with `WORKER_TERMINAL_ENABLED=false`; `WORKER_TERMINAL_HOST` defaults to `127.0.0.1`, and `WORKER_TERMINAL_SHELL` can override the shell binary on Unix Workers.
 
 The Workers list also exposes a terminal button for each Worker. It opens a dialog terminal that starts in the Worker `WorkDir`, first calling `GET /terminal/workers/{workerID}` and then connecting to `/terminal/workers/{workerID}/ws` through the same FRP tunnel and local terminal service.

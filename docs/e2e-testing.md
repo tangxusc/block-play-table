@@ -256,6 +256,7 @@ npm run e2e:real-agents
 | Task | Worker 上报 `TASK_FAILED` 后任务进入 `FAILED` 并保留失败原因 | L1/L2 | [待补齐] |
 | Task | Worker 上报 `TASK_WAITING_INPUT` 后任务进入 `WAITING_INPUT` | L1/L2 | [已实现] |
 | Task | Worker 上报 `TASK_INTERACTION_REQUEST` 后 UI 展示待处理授权/输入，响应后 Worker 收到 `TASK_INTERACTION_RESPONSE` 并通过 `TASK_INTERACTION_RESOLVED` 恢复任务 | L1/L2 | [已实现] |
+| Task | Claude Plan 模式通过 `ExitPlanMode` 上报 Markdown `plan` 时，任务详情 Overview 直接展示计划并保留审批闭环 | L2 | [已实现] |
 | Task | 中断运行中任务，下发 `TASK_INTERRUPT`，Worker 上报 `TASK_INTERRUPTED` | L1/L2 | [待补齐] |
 | Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
 | Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [部分实现：Worker 同 task 分支 worktree 清理由单元测试覆盖，浏览器主流程待补齐] |
