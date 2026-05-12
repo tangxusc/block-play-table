@@ -412,7 +412,6 @@ test("board scrum groups task statuses into four visual columns", async ({
   await expect(taskLocator(page, pendingTask.createTask.title)).toBeHidden();
 
   await page.getByRole("button", { name: "Delete task" }).click();
-  await page.getByRole("button", { name: "Delete" }).click();
   await expect(taskLocator(page, completedBucketTask.createTask.title)).toBeHidden();
   await expect
     .poll(async () => {

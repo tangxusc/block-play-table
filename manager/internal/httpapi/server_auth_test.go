@@ -67,6 +67,38 @@ func TestManagerTokenGatewayProtectsGraphQLAndAuthEndpoints(t *testing.T) {
 	}
 }
 
+func TestManagerTokenAuthEndpointsRejectInvalidRequests(t *testing.T) {
+	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore()), WithWorkerToken("secret")).Handler())
+	defer server.Close()
+
+	statusMethod, err := http.Post(server.URL+"/auth/status", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusMethod.Body.Close()
+	if statusMethod.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /auth/status status = %d, want 405", statusMethod.StatusCode)
+	}
+
+	verifyMethod, err := http.Get(server.URL + "/auth/verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verifyMethod.Body.Close()
+	if verifyMethod.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /auth/verify status = %d, want 405", verifyMethod.StatusCode)
+	}
+
+	invalidJSON, err := http.Post(server.URL+"/auth/verify", "application/json", strings.NewReader("{"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer invalidJSON.Body.Close()
+	if invalidJSON.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid JSON /auth/verify status = %d, want 400", invalidJSON.StatusCode)
+	}
+}
+
 func TestManagerTokenGatewayProtectsRealtimeTerminalAndProxyEntrypoints(t *testing.T) {
 	server := httptest.NewServer(NewServer(app.NewService(store.NewMemoryStore()), WithWorkerToken("secret")).Handler())
 	defer server.Close()

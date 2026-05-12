@@ -814,6 +814,98 @@ func TestWorkerGatewayRoutesTaskInteractionResponse(t *testing.T) {
 	}
 }
 
+func TestWorkerGatewayApplyTaskTerminalEvents(t *testing.T) {
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	gateway := NewServer(service).gateway
+	ctx := context.Background()
+	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
+		ID:              "worker-apply-terminal",
+		Name:            "Apply Terminal Worker",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	failedTask, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "Failed", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, failedTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.apply(ctx, rawEnvelope{MessageID: "accepted-apply", Type: protocol.MessageTaskAccepted, WorkerID: worker.ID, TaskID: failedTask.ID}, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.apply(ctx, rawEnvelope{MessageID: "started-failed-apply", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: failedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "/tmp/failed-worktree"})}, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.apply(ctx, rawEnvelope{MessageID: "failed-apply", Type: protocol.MessageTaskFailed, WorkerID: worker.ID, TaskID: failedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Result: "agent failed"})}, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	loadedFailed, err := service.Task(ctx, failedTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedFailed.Status != domain.TaskFailed || loadedFailed.Result != "agent failed" {
+		t.Fatalf("failed task = %+v, want FAILED with result", loadedFailed)
+	}
+
+	interruptedTask, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "Interrupted", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, interruptedTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.apply(ctx, rawEnvelope{MessageID: "started-interrupted-apply", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: interruptedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "/tmp/interrupted-worktree"})}, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.apply(ctx, rawEnvelope{MessageID: "interrupted-apply", Type: protocol.MessageTaskInterrupted, WorkerID: worker.ID, TaskID: interruptedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "partial result"})}, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	loadedInterrupted, err := service.Task(ctx, interruptedTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedInterrupted.Status != domain.TaskInterrupted || loadedInterrupted.Result != "partial result" {
+		t.Fatalf("interrupted task = %+v, want INTERRUPTED with result", loadedInterrupted)
+	}
+}
+
+func TestWorkerGatewaySendTaskInteractionResponseCleansWaiterOnSendFailure(t *testing.T) {
+	gateway := NewServer(app.NewService(store.NewMemoryStore())).gateway
+
+	if err := gateway.SendTaskInteractionResponse("", "task-1", protocol.TaskInteractionResponsePayload{InteractionID: "interaction-empty-worker"}); err == nil || !strings.Contains(err.Error(), "worker id is required") {
+		t.Fatalf("empty worker SendTaskInteractionResponse error = %v, want worker id error", err)
+	}
+
+	err := gateway.SendTaskInteractionResponse("missing-worker", "task-1", protocol.TaskInteractionResponsePayload{
+		InteractionID: "interaction-send-fails",
+		Decision:      domain.TaskInteractionApprove,
+	})
+	if err == nil || !strings.Contains(err.Error(), "worker missing-worker is not connected") {
+		t.Fatalf("missing worker SendTaskInteractionResponse error = %v, want not connected", err)
+	}
+	gateway.interactionMu.Lock()
+	_, exists := gateway.interactionWaiters["interaction-send-fails"]
+	gateway.interactionMu.Unlock()
+	if exists {
+		t.Fatal("interaction waiter was not removed after send failure")
+	}
+}
+
 func TestGraphQLContinueTaskSendsTaskContinueToOriginalWorker(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
@@ -1080,4 +1172,13 @@ func sendWS(t *testing.T, conn *websocket.Conn, envelope protocol.Envelope) {
 	if err := conn.WriteJSON(envelope); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testRawPayload(t *testing.T, payload any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
