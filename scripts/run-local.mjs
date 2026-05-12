@@ -9,6 +9,9 @@ const dataDir = resolve(process.env.BPT_DATA_DIR || join(root, "data"));
 const workerDir = resolve(process.env.WORKER_DATA_SOURCE || join(root, "worker-data"));
 const managerAddr = process.env.MANAGER_ADDR || "127.0.0.1:8080";
 const managerURL = `http://${managerAddr}`;
+const uiPort = process.env.BPT_UI_PORT || "18080";
+const uiURL = `http://127.0.0.1:${uiPort}`;
+const uiDisplayURL = `http://localhost:${uiPort}`;
 const workerToken = process.env.WORKER_TOKEN || "dev-worker-token";
 const wslDistro = process.env.BPT_WSL_DISTRO || "Ubuntu-24.04";
 const useWslBackend =
@@ -107,14 +110,14 @@ if (useWslBackend) {
   });
 }
 
-startProcess("ui", process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:ui", "--", "--host", "127.0.0.1", "--port", "3000"], {
+startProcess("ui", process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:ui", "--", "--host", "127.0.0.1", "--port", uiPort], {
   shell: process.platform === "win32",
   env: {
     VITE_MANAGER_GRAPHQL_URL: `${managerURL}/graphql`,
     VITE_MANAGER_GRAPHQL_WS_URL: `ws://${managerAddr}/subscriptions`,
   },
 });
-await waitForHTTP("http://127.0.0.1:3000", "UI");
+await waitForHTTP(uiURL, "UI");
 
 writeFileSync(
   statePath,
@@ -136,7 +139,7 @@ writeFileSync(
 );
 
 console.log(`Local stack is running:
-  UI:      http://localhost:3000
+  UI:      ${uiDisplayURL}
   Manager: ${managerURL}
   Logs:    ${runDir}`);
 

@@ -57,7 +57,7 @@ make run-local
 
 该命令通过 npm 脚本在本地后台启动 Manager、Worker 和 Vue UI，默认使用 SQLite。默认端口：
 
-- UI：`http://localhost:3000`
+- UI：`http://localhost:18080`
 - Manager：`http://localhost:8080`
 - GraphQL：`http://localhost:8080/graphql`
 - Worker WebSocket：`ws://localhost:8080/worker/ws`
@@ -78,7 +78,8 @@ make clean-local
 
 | 变量 | 默认值或来源 | 用途 |
 | --- | --- | --- |
-| `BPT_UI_URL` | `http://localhost:3000` | Playwright `baseURL`，指定 UI 地址 |
+| `BPT_UI_URL` | `http://localhost:18080` | Playwright `baseURL`，指定 UI 地址 |
+| `BPT_UI_PORT` | `18080` | `make run-local` 启动 Vue UI 时使用的端口 |
 | `BPT_MANAGER_GRAPHQL_URL` | `http://localhost:8080/graphql` | Playwright 测试访问 Manager GraphQL 的地址 |
 | `BPT_MANAGER_TOKEN` | `WORKER_TOKEN` 或 `dev-worker-token` | Playwright 访问 Manager GraphQL、UI 解锁、订阅、终端和代理时使用的固定 token |
 | `BPT_MANAGER_WS_URL` | 由 GraphQL URL 推导为 `/worker/ws` | Playwright 模拟 Worker 连接的 WebSocket 地址 |
@@ -146,7 +147,7 @@ npm run e2e
 连接非默认地址时：
 
 ```bash
-BPT_UI_URL=http://localhost:3000 \
+BPT_UI_URL=http://localhost:18080 \
 BPT_MANAGER_GRAPHQL_URL=http://localhost:8080/graphql \
 BPT_MANAGER_TOKEN=dev-worker-token \
 BPT_MANAGER_WS_URL=ws://localhost:8080/worker/ws \

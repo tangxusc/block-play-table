@@ -8,7 +8,7 @@ export default defineConfig({
   timeout: 120_000,
   workers: 1,
   use: {
-    baseURL: process.env.BPT_UI_URL || 'http://localhost:3000',
+    baseURL: process.env.BPT_UI_URL || 'http://localhost:18080',
     trace: 'on-first-retry'
   },
   projects: [

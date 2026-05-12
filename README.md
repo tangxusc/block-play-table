@@ -116,10 +116,10 @@ make run-local
 
 Then open:
 
-- UI: `http://localhost:3000`
+- UI: `http://localhost:18080`
 - Manager: `http://localhost:8080`
 
-`make run-local` delegates to `npm run run-local`. It starts Manager, Worker, and the Vue UI in the background, writes logs to `.local-run/`, and uses SQLite at `data/manager.db`. On Windows it prefers WSL for Manager/Worker so terminal e2e can use a real Unix pty, while the UI still runs through local npm.
+`make run-local` delegates to `npm run run-local`. It starts Manager, Worker, and the Vue UI in the background, writes logs to `.local-run/`, and uses SQLite at `data/manager.db`. On Windows it prefers WSL for Manager/Worker so terminal e2e can use a real Unix pty, while the UI still runs through local npm. The UI defaults to port `18080`; override it with `BPT_UI_PORT` when needed.
 
 Stop or clean the local stack:
 

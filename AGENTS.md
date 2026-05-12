@@ -20,7 +20,7 @@
 
 1. 如依赖缺失，先运行 `npm install`。
 2. 启动本地完整栈：`make run-local`。
-3. 确认 UI 可访问：`http://localhost:3000`。
+3. 确认 UI 可访问：`http://localhost:18080`。
 4. 运行浏览器自动化测试：`npm run e2e`。
 5. 测试结束后按需清理本地栈：`make stop-local`。
 
