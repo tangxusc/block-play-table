@@ -7,6 +7,7 @@ import {
   DeleteOutlined,
   InboxOutlined,
   PlayCircleOutlined,
+  ReloadOutlined,
   RedoOutlined,
   StopOutlined,
   UserSwitchOutlined,
@@ -59,7 +60,6 @@ const previewAddress = ref("");
 const previewUrl = ref("");
 const previewError = ref("");
 let unsubscribe: (() => void) | undefined;
-let pollTimer: number | undefined;
 
 const task = computed(() => detail.value?.task);
 const isArchived = computed(() => task.value?.status === "ARCHIVED");
@@ -128,15 +128,12 @@ watch(
       { aggregateType: "Task", aggregateId: props.taskId },
       () => void load(false),
     );
-    window.clearInterval(pollTimer);
-    pollTimer = window.setInterval(() => void load(false), 5000);
   },
   { immediate: true },
 );
 
 onBeforeUnmount(() => {
   unsubscribe?.();
-  window.clearInterval(pollTimer);
 });
 
 async function load(showSpinner = true) {
@@ -692,6 +689,19 @@ function parseDiffHunks(patch: string): DiffHunk[] {
               </span>
             </a-tooltip>
           </template>
+          <a-tooltip title="Refresh task">
+            <span class="task-title-action-wrapper">
+              <a-button
+                class="task-title-action-button"
+                shape="circle"
+                aria-label="Refresh task"
+                :loading="loading"
+                @click="load()"
+              >
+                <ReloadOutlined />
+              </a-button>
+            </span>
+          </a-tooltip>
           <a-tooltip title="Close">
             <span class="task-title-action-wrapper">
               <a-button

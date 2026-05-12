@@ -1727,6 +1727,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
     await expect(page.getByRole("button", { name: tabName, exact: true })).toHaveCount(0);
   }
   await expectIconOnlyTitleAction(page, "Copy task ID");
+  await expectIconOnlyTitleAction(page, "Refresh task");
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
   await selectTaskDetailTab(page, "Web preview");
