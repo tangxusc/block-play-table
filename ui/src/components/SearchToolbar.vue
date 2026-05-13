@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from "vue";
 import type { ProjectItem, SortRequest } from "../models";
 
 const props = defineProps<{
@@ -16,8 +15,6 @@ const emit = defineEmits<{
   "update:project": [value: string];
 }>();
 
-const menuOpen = ref(false);
-
 function toggleDirection() {
   emit("update:sort", {
     ...props.sort,
@@ -25,9 +22,8 @@ function toggleDirection() {
   });
 }
 
-function setProject(projectId: string) {
-  emit("update:project", projectId);
-  menuOpen.value = false;
+function popupContainer() {
+  return document.body;
 }
 </script>
 
@@ -38,14 +34,37 @@ function setProject(projectId: string) {
       aria-label="Search"
       placeholder="Search"
       allow-clear
-      style="width: 340px"
+      class="toolbar-search"
       @update:value="emit('update:search', String($event))"
       @search="emit('update:search', $event)"
     />
     <a-select
+      v-if="projects"
+      :value="selectedProjectId || undefined"
+      aria-label="Project"
+      class="toolbar-project"
+      placeholder="Project All projects"
+      show-search
+      allow-clear
+      option-filter-prop="label"
+      :get-popup-container="popupContainer"
+      @change="emit('update:project', String($event || ''))"
+      @clear="emit('update:project', '')"
+    >
+      <a-select-option value="" label="All projects">All projects</a-select-option>
+      <a-select-option
+        v-for="project in projects"
+        :key="project.id"
+        :value="project.id"
+        :label="project.name"
+      >
+        {{ project.name }}
+      </a-select-option>
+    </a-select>
+    <a-select
       :value="sort.field"
       aria-label="Sort field"
-      style="width: 170px"
+      class="toolbar-sort"
       @change="emit('update:sort', { ...sort, field: String($event) })"
     >
       <a-select-option
@@ -62,24 +81,5 @@ function setProject(projectId: string) {
     >
       {{ sort.direction === "DESC" ? "Sort descending" : "Sort ascending" }}
     </a-button>
-    <div v-if="projects" style="position: relative">
-      <a-button
-        :aria-label="`Project ${projects.find((project) => project.id === selectedProjectId)?.name || 'All projects'}`"
-        @click="menuOpen = !menuOpen"
-      >
-        Project {{ projects.find((project) => project.id === selectedProjectId)?.name || "All projects" }}
-      </a-button>
-      <div v-if="menuOpen" class="project-menu" role="menu">
-        <button role="menuitem" @click="setProject('')">All projects</button>
-        <button
-          v-for="project in projects"
-          :key="project.id"
-          role="menuitem"
-          @click="setProject(project.id)"
-        >
-          {{ project.name }}
-        </button>
-      </div>
-    </div>
   </div>
 </template>

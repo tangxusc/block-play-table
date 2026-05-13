@@ -126,7 +126,7 @@ function markReady() {
     <a-layout-sider class="bpt-sider" width="220">
       <div class="bpt-brand">
         <ThunderboltOutlined />
-        <span style="margin-left: 8px">Block Play Table</span>
+        <span>Block Play Table</span>
       </div>
       <a-menu
         theme="dark"

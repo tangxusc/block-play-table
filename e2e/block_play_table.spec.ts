@@ -1122,8 +1122,11 @@ test("trusted Vue web UI paginates board projects workers and events", async ({
   ).toHaveCount(0);
 
   await fillTextField(page, boardSearch, "");
-  await page.getByRole("button", { name: /Project All projects/ }).click();
-  await page.getByRole("menuitem", { name: projectName }).click();
+  const projectFilter = page.locator(".toolbar-project");
+  await projectFilter.click();
+  await projectFilter.locator("input").fill(projectName);
+  await expect(page.getByText(projectName, { exact: true }).last()).toBeVisible();
+  await page.getByText(projectName, { exact: true }).last().click();
   await expect(page.getByText(/Showing 1-20 of 21/)).toBeVisible();
   await expect(
     page.getByRole("group", {

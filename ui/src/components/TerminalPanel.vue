@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <a-space style="margin-bottom: 10px">
+    <a-space class="terminal-toolbar">
       <a-button
         type="primary"
         :loading="state === 'connecting'"
