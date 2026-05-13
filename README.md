@@ -88,7 +88,9 @@ When `WORKER_TOKEN` is set, user-facing Manager requests must include the token 
 
 Browser clients that cannot set custom headers can use `/proxy/web/<worker name>/<host>/<port>/**`. The task detail UI uses that route for its Web preview panel.
 
-Task detail groups `Copy task ID`, lifecycle actions, archive/delete, and close controls in the dialog title as icon-only buttons. Each control exposes a tooltip on hover; the right-side floating command rail is reserved for switching between detail panels.
+Task detail groups `Copy task ID`, edit, lifecycle actions, archive/delete, and close controls in the dialog title as icon-only buttons. Each control exposes a tooltip on hover; the right-side floating command rail is reserved for switching between detail panels.
+
+Tasks can carry optional start and end dates for display. The create-task dialog accepts `Start date` and `End date`, and Task detail edit can update the title, description, project, base branch, and those dates. Dates are shown on task cards, Task detail metadata, and Calendar views; they are display markers only and do not schedule, sort, or constrain task execution.
 
 When a Claude plan-mode interaction includes a Markdown `plan` value in its raw `TaskInteraction` payload, Task detail renders that plan in the Overview tab before the approval controls. The rendered plan uses a safe Markdown subset and does not execute raw HTML.
 

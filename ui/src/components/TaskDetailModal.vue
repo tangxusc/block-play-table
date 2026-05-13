@@ -5,6 +5,7 @@ import {
   CloseOutlined,
   CopyOutlined,
   DeleteOutlined,
+  EditOutlined,
   InboxOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -21,6 +22,7 @@ import {
   type AgentConfigDraft,
 } from "../agentConfig";
 import {
+  dateOnly,
   interactionPayloadSummary,
   projectName,
   taskDateRange,
@@ -51,6 +53,10 @@ const selectedFile = ref<TaskGitDiffFile | null>(null);
 const commitOpen = ref(false);
 const publishOpen = ref(false);
 const assignOpen = ref(false);
+const editOpen = ref(false);
+const editDraft = ref<TaskItem | null>(null);
+const editStartDate = ref("");
+const editEndDate = ref("");
 const assignWorkerId = ref("");
 const assignAgentType = ref("");
 const assignAgentConfig = ref<AgentConfigDraft>(emptyAgentConfigDraft());
@@ -109,6 +115,9 @@ const assignAgentOptions = computed(() => {
   return worker.supportedAgents;
 });
 const canAssignSelection = computed(() => canAssign.value && !!assignWorkerId.value && !!assignAgentType.value);
+const canSaveEditTask = computed(
+  () => !!editDraft.value && editDraft.value.title.trim().length > 0 && editDraft.value.projectId.length > 0,
+);
 const selectedPreviewWorker = computed(() =>
   previewWorkers.value.find((worker) => worker.id === selectedPreviewWorkerId.value) || previewWorkers.value[0],
 );
@@ -184,6 +193,33 @@ async function startCurrentTask() {
 async function retryCurrentTask() {
   if (!task.value) return;
   await run(() => api.retryTask(task.value!.id));
+}
+
+function openEditDialog() {
+  if (!task.value) return;
+  editDraft.value = { ...task.value };
+  editStartDate.value = pickerDate(task.value.startDate);
+  editEndDate.value = pickerDate(task.value.endDate);
+  editOpen.value = true;
+}
+
+async function saveEditTask() {
+  if (!editDraft.value) return;
+  const updatedTask = {
+    ...editDraft.value,
+    startDate: taskDateInput(editStartDate.value),
+    endDate: taskDateInput(editEndDate.value),
+  };
+  await run(() => api.updateTask(updatedTask));
+  editOpen.value = false;
+}
+
+function pickerDate(value?: string): string {
+  return dateOnly(value);
+}
+
+function taskDateInput(value: string): string {
+  return value ? `${value}T00:00:00Z` : "";
 }
 
 function openAssignDialog() {
@@ -605,6 +641,19 @@ function parseDiffHunks(patch: string): DiffHunk[] {
                 </a-button>
               </span>
             </a-tooltip>
+            <a-tooltip v-if="!isArchived" title="Edit">
+              <span class="task-title-action-wrapper">
+                <a-button
+                  class="task-title-action-button"
+                  shape="circle"
+                  aria-label="Edit task"
+                  :disabled="busy"
+                  @click="openEditDialog"
+                >
+                  <EditOutlined />
+                </a-button>
+              </span>
+            </a-tooltip>
             <a-tooltip v-if="!isArchived" title="Assign">
               <span class="task-title-action-wrapper">
                 <a-button
@@ -1020,6 +1069,49 @@ function parseDiffHunks(patch: string): DiffHunk[] {
         </a-tabs>
       </template>
     </a-spin>
+  </a-modal>
+
+  <a-modal
+    v-model:open="editOpen"
+    title="Edit task"
+    ok-text="Save"
+    :ok-button-props="{ disabled: !canSaveEditTask, loading: busy }"
+    @ok="saveEditTask"
+  >
+    <a-form v-if="editDraft" layout="vertical">
+      <a-form-item label="Title">
+        <a-input v-model:value="editDraft.title" aria-label="Edit title" />
+      </a-form-item>
+      <a-form-item label="Description">
+        <a-textarea v-model:value="editDraft.description" aria-label="Edit description" />
+      </a-form-item>
+      <a-form-item label="Project">
+        <a-select v-model:value="editDraft.projectId" aria-label="Edit project">
+          <a-select-option v-for="project in board.projects" :key="project.id" :value="project.id">
+            {{ project.name }}
+          </a-select-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item label="Base branch">
+        <a-input v-model:value="editDraft.baseBranch" aria-label="Edit base branch" />
+      </a-form-item>
+      <a-form-item label="Start date">
+        <a-date-picker
+          v-model:value="editStartDate"
+          value-format="YYYY-MM-DD"
+          placeholder="Edit start date"
+          style="width: 100%"
+        />
+      </a-form-item>
+      <a-form-item label="End date">
+        <a-date-picker
+          v-model:value="editEndDate"
+          value-format="YYYY-MM-DD"
+          placeholder="Edit end date"
+          style="width: 100%"
+        />
+      </a-form-item>
+    </a-form>
   </a-modal>
 
   <a-modal

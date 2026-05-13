@@ -36,6 +36,8 @@ const board = ref<BoardData>(emptyBoard());
 const selectedTaskId = ref("");
 const taskDialogOpen = ref(false);
 const draftTask = ref<Record<string, unknown>>({});
+const draftStartDate = ref("");
+const draftEndDate = ref("");
 const draftAgentConfig = ref<AgentConfigDraft>(emptyAgentConfigDraft());
 const calendarMode = ref<"Month" | "Week" | "Day" | "Year">("Month");
 const draftCalendarFocus = ref("");
@@ -157,6 +159,8 @@ function openNewTask() {
     agentType: "",
     baseBranch: "main",
   };
+  draftStartDate.value = "";
+  draftEndDate.value = "";
   draftAgentConfig.value = emptyAgentConfigDraft();
   reconcileDraftTaskSelection();
   taskDialogOpen.value = true;
@@ -166,6 +170,8 @@ async function saveTask() {
   const input = { ...draftTask.value };
   if (!input.workerId) delete input.workerId;
   if (!input.agentType) delete input.agentType;
+  if (draftStartDate.value) input.startDate = taskDateInput(draftStartDate.value);
+  if (draftEndDate.value) input.endDate = taskDateInput(draftEndDate.value);
   if (draftAgentType.value) {
     input.agentConfig = agentConfigInput(draftAgentType.value, draftAgentConfig.value);
   }
@@ -200,6 +206,10 @@ function reconcileDraftTaskSelection() {
   if (!worker.supportedAgents.includes(currentAgent)) {
     draftTask.value.agentType = "";
   }
+}
+
+function taskDateInput(value: string): string | undefined {
+  return value ? `${value}T00:00:00Z` : undefined;
 }
 
 function availableWorkersForProject(projectId: string): WorkerItem[] {
@@ -559,6 +569,22 @@ function moveCalendar(delta: number) {
               {{ project.name }}
             </a-select-option>
           </a-select>
+        </a-form-item>
+        <a-form-item label="Start date">
+          <a-date-picker
+            v-model:value="draftStartDate"
+            value-format="YYYY-MM-DD"
+            placeholder="Start date"
+            style="width: 100%"
+          />
+        </a-form-item>
+        <a-form-item label="End date">
+          <a-date-picker
+            v-model:value="draftEndDate"
+            value-format="YYYY-MM-DD"
+            placeholder="End date"
+            style="width: 100%"
+          />
         </a-form-item>
         <a-form-item label="Worker">
           <a-select :value="draftTask.workerId" aria-label="Worker" @change="updateDraftWorker">
