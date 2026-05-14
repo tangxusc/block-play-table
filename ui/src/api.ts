@@ -19,7 +19,27 @@ import type {
 
 type CreateProjectInput = Pick<ProjectItem, "name" | "gitUrl" | "defaultBranch" | "worktreeNamePrefix">;
 
+const managerURLStorageKey = "block-play-table.manager-url";
 const managerTokenStorageKey = "block-play-table.manager-token";
+
+export function loadManagerBaseURL(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(managerURLStorageKey) || "";
+}
+
+export function saveManagerBaseURL(rawURL: string): string {
+  const normalized = normalizeManagerBaseURL(rawURL);
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(managerURLStorageKey, normalized);
+  }
+  api.configureManagerBaseURL(normalized);
+  return normalized;
+}
+
+export function clearManagerBaseURL(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(managerURLStorageKey);
+}
 
 export function loadManagerToken(): string {
   if (typeof window === "undefined") return "";
@@ -65,19 +85,29 @@ const eventFields = `
 `;
 
 export class ApiClient {
-  readonly endpoint: string;
-  readonly websocketEndpoint: string;
+  managerBaseURL: string;
+  endpoint: string;
+  websocketEndpoint: string;
 
-  constructor() {
-    this.endpoint =
-      import.meta.env.VITE_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
-    this.websocketEndpoint =
-      import.meta.env.VITE_MANAGER_GRAPHQL_WS_URL ||
-      this.endpoint.replace(/^http/, "ws").replace(/\/graphql$/, "/subscriptions");
+  constructor(managerBaseURL = loadManagerBaseURL()) {
+    this.managerBaseURL = "";
+    this.endpoint = "";
+    this.websocketEndpoint = "";
+    if (managerBaseURL) {
+      this.configureManagerBaseURL(managerBaseURL);
+    }
+  }
+
+  configureManagerBaseURL(rawURL: string): string {
+    const normalized = normalizeManagerBaseURL(rawURL);
+    this.managerBaseURL = normalized;
+    this.endpoint = urlFromManagerBase(normalized, ["graphql"]);
+    this.websocketEndpoint = urlFromManagerBase(normalized, ["subscriptions"], "websocket");
+    return normalized;
   }
 
   async fetchAuthStatus(): Promise<{ required: boolean }> {
-    const response = await fetch(urlFromEndpoint(this.endpoint, ["auth", "status"]));
+    const response = await fetch(urlFromManagerBase(this.ensureManagerBaseURL(), ["auth", "status"]));
     if (!response.ok) {
       throw new Error(`Auth status HTTP ${response.status}`);
     }
@@ -85,7 +115,7 @@ export class ApiClient {
   }
 
   async verifyManagerToken(token: string): Promise<void> {
-    const response = await fetch(urlFromEndpoint(this.endpoint, ["auth", "verify"]), {
+    const response = await fetch(urlFromManagerBase(this.ensureManagerBaseURL(), ["auth", "verify"]), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
@@ -99,7 +129,7 @@ export class ApiClient {
     query: string,
     variables: Record<string, unknown> = {},
   ): Promise<T> {
-    const response = await fetch(this.endpoint, {
+    const response = await fetch(this.ensureEndpoint(), {
       method: "POST",
       headers: { "content-type": "application/json", ...managerTokenHeaders() },
       body: JSON.stringify({ query, variables }),
@@ -124,7 +154,7 @@ export class ApiClient {
     let retryTimer: number | undefined;
     const connect = () => {
       if (closed) return;
-      socket = new WebSocket(urlWithManagerToken(this.websocketEndpoint), "graphql-transport-ws");
+      socket = new WebSocket(urlWithManagerToken(this.ensureWebsocketEndpoint()), "graphql-transport-ws");
       const id = `sub-${Math.random().toString(36).slice(2)}`;
       socket.addEventListener("open", () => {
         socket?.send(JSON.stringify({ type: "connection_init", payload: {} }));
@@ -531,19 +561,19 @@ export class ApiClient {
   }
 
   workerTerminalCheckUrlForTask(taskId: string): string {
-    return urlWithManagerToken(urlFromEndpoint(this.endpoint, ["terminal", "tasks", taskId]));
+    return urlWithManagerToken(urlFromManagerBase(this.ensureManagerBaseURL(), ["terminal", "tasks", taskId]));
   }
 
   workerTerminalWebSocketUrlForTask(taskId: string): string {
-    return urlWithManagerToken(urlFromEndpoint(this.websocketEndpoint, ["terminal", "tasks", taskId, "ws"]));
+    return urlWithManagerToken(urlFromManagerBase(this.ensureManagerBaseURL(), ["terminal", "tasks", taskId, "ws"], "websocket"));
   }
 
   workerTerminalCheckUrlForWorker(workerId: string): string {
-    return urlWithManagerToken(urlFromEndpoint(this.endpoint, ["terminal", "workers", workerId]));
+    return urlWithManagerToken(urlFromManagerBase(this.ensureManagerBaseURL(), ["terminal", "workers", workerId]));
   }
 
   workerTerminalWebSocketUrlForWorker(workerId: string): string {
-    return urlWithManagerToken(urlFromEndpoint(this.websocketEndpoint, ["terminal", "workers", workerId, "ws"]));
+    return urlWithManagerToken(urlFromManagerBase(this.ensureManagerBaseURL(), ["terminal", "workers", workerId, "ws"], "websocket"));
   }
 
   workerWebProxyUrl(workerName: string, address: string): string {
@@ -555,19 +585,39 @@ export class ApiClient {
     if (target.protocol !== "http:") throw new Error("Only http addresses are supported");
     if (!target.hostname.trim()) throw new Error("Host is required");
     const port = target.port || "80";
-    const url = new URL(this.endpoint);
     const targetPath = target.pathname.split("/").filter(Boolean);
-    url.pathname = [
+    const url = new URL(urlFromManagerBase(this.ensureManagerBaseURL(), [
       "proxy",
       "web",
       normalizedWorker,
       target.hostname,
       port,
       ...targetPath,
-    ].map(encodeURIComponent).join("/");
+    ]));
     url.search = target.search;
     url.hash = "";
     return urlWithManagerToken(url.toString());
+  }
+
+  private ensureManagerBaseURL(): string {
+    if (!this.managerBaseURL) {
+      throw new Error("Manager URL is required.");
+    }
+    return this.managerBaseURL;
+  }
+
+  private ensureEndpoint(): string {
+    if (!this.endpoint) {
+      throw new Error("Manager URL is required.");
+    }
+    return this.endpoint;
+  }
+
+  private ensureWebsocketEndpoint(): string {
+    if (!this.websocketEndpoint) {
+      throw new Error("Manager URL is required.");
+    }
+    return this.websocketEndpoint;
   }
 
   private async taskGitChange(
@@ -627,10 +677,33 @@ function normalizeRuntimeEnv(groups: WorkerAgentRuntimeEnv[]): WorkerAgentRuntim
   }));
 }
 
-function urlFromEndpoint(endpoint: string, segments: string[]): string {
-  const url = new URL(endpoint);
-  url.pathname = `/${segments.map(encodeURIComponent).join("/")}`;
+export function normalizeManagerBaseURL(rawURL: string): string {
+  const trimmed = rawURL.trim();
+  if (!trimmed) throw new Error("Manager URL is required.");
+  const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const url = new URL(withProtocol);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Manager URL must start with http:// or https://.");
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
   url.search = "";
+  url.hash = "";
+  const normalized = url.toString();
+  return normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+}
+
+function urlFromManagerBase(baseURL: string, segments: string[], mode: "http" | "websocket" = "http"): string {
+  const url = new URL(baseURL);
+  if (mode === "websocket") {
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  }
+  const basePath = url.pathname.replace(/\/+$/, "");
+  url.pathname = [basePath, ...segments.map(encodeURIComponent)].filter(Boolean).join("/");
+  if (!url.pathname.startsWith("/")) {
+    url.pathname = `/${url.pathname}`;
+  }
+  url.search = "";
+  url.hash = "";
   return url.toString();
 }
 

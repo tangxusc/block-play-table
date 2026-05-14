@@ -6,6 +6,8 @@ import WebSocket from "ws";
 
 const managerGraphQL =
   process.env.BPT_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
+const managerBaseURL =
+  process.env.BPT_MANAGER_URL || managerGraphQL.replace(/\/graphql$/, "");
 const managerWorkerWs =
   process.env.BPT_MANAGER_WS_URL ||
   managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
@@ -41,12 +43,24 @@ async function openVueApp(page) {
   const authState = await page
     .waitForFunction(() => {
       if (document.querySelector("#app[data-ready='true']")) return "ready";
+      if (document.querySelector('input[aria-label="Manager URL"]')) return "manager-url";
+      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      return "";
+    }, null, { timeout: 120000 })
+    .then((handle) => handle.jsonValue());
+  if (authState === "manager-url") {
+    await page.getByLabel("Manager URL").fill(managerBaseURL);
+    await page.getByRole("button", { name: "Connect manager" }).click();
+  }
+  const postConnectState = await page
+    .waitForFunction(() => {
+      if (document.querySelector("#app[data-ready='true']")) return "ready";
       if (document.querySelector('input[aria-label="Manager token"]')) return "token";
       return "";
     }, null, { timeout: 120000 })
     .then((handle) => handle.jsonValue());
   const tokenInput = page.getByLabel("Manager token");
-  if (authState === "token") {
+  if (postConnectState === "token") {
     await tokenInput.fill(managerAccessToken);
     await page.getByRole("button", { name: "Unlock manager" }).click();
   }
@@ -54,6 +68,41 @@ async function openVueApp(page) {
     timeout: 120000,
   });
 }
+
+test("first run configures manager URL and settings persists it", async ({
+  page,
+}) => {
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
+
+  await expect(page.getByLabel("Manager URL")).toBeVisible({ timeout: 120000 });
+  await page.getByLabel("Manager URL").fill(managerBaseURL);
+  await page.getByRole("button", { name: "Connect manager" }).click();
+
+  const postConnectState = await page
+    .waitForFunction(() => {
+      if (document.querySelector("#app[data-ready='true']")) return "ready";
+      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      return "";
+    }, null, { timeout: 120000 })
+    .then((handle) => handle.jsonValue());
+  const tokenInput = page.getByLabel("Manager token");
+  if (postConnectState === "token") {
+    await tokenInput.fill(managerAccessToken);
+    await page.getByRole("button", { name: "Unlock manager" }).click();
+  }
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({
+    timeout: 120000,
+  });
+
+  await page.getByText("Settings").click();
+  await expect(page.getByLabel("Manager URL")).toHaveValue(managerBaseURL);
+  await page.getByRole("button", { name: "Save manager address" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.localStorage.getItem("block-play-table.manager-url")),
+    )
+    .toBe(managerBaseURL);
+});
 
 function withManagerAccessToken(rawURL: string) {
   const url = new URL(rawURL);

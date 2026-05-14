@@ -112,10 +112,6 @@ if (useWslBackend) {
 
 startProcess("ui", process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:ui", "--", "--host", "127.0.0.1", "--port", uiPort], {
   shell: process.platform === "win32",
-  env: {
-    VITE_MANAGER_GRAPHQL_URL: `${managerURL}/graphql`,
-    VITE_MANAGER_GRAPHQL_WS_URL: `ws://${managerAddr}/subscriptions`,
-  },
 });
 await waitForHTTP(uiURL, "UI");
 

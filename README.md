@@ -128,7 +128,9 @@ Then open:
 - UI: `http://localhost:18080`
 - Manager: `http://localhost:8080`
 
-`make run-local` delegates to `npm run run-local`. It starts Manager, Worker, and the Vue UI in the background, writes logs to `.local-run/`, and uses SQLite at `data/manager.db`. On Windows it prefers WSL for Manager/Worker so terminal e2e can use a real Unix pty, while the UI still runs through local npm. The UI defaults to port `18080`; override it with `BPT_UI_PORT` when needed.
+On first open, enter the Manager URL `http://localhost:8080`. If Manager was started with `WORKER_TOKEN`, enter the same token when prompted. The UI stores the Manager URL in browser local storage; the token is stored only for the current tab session.
+
+`make run-local` delegates to `npm run run-local`. It starts Manager, Worker, and the Vue UI in the background, writes logs to `.local-run/`, and uses SQLite at `data/manager.db`. On Windows it prefers WSL for Manager/Worker so terminal e2e can use a real Unix pty, while the UI still runs through local npm. The UI defaults to port `18080`; override it with `BPT_UI_PORT` when needed. The UI is a static app and does not need Manager URLs baked into its build.
 
 Stop or clean the local stack:
 
@@ -198,7 +200,7 @@ docker run --rm --name bpt-ui \
   ghcr.io/tangxusc/block-play-table-ui:latest
 ```
 
-Then open `http://localhost:18080`. The UI image is built with Manager URLs that point to `http://localhost:8080/graphql` and `ws://localhost:8080/subscriptions` by default.
+Then open `http://localhost:18080`, enter the Manager URL `http://localhost:8080`, and unlock with `dev-worker-token` when prompted. The same UI image can point at any trusted Manager reachable from the browser.
 
 ## Tests
 
@@ -228,6 +230,7 @@ make stop-local
 The repository defines two workflows:
 
 - `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs `make test`, `make coverage`, `make build`, `make ui-typecheck`, `make ui-build`, and `make docker-build`. It intentionally does not run Playwright, `make run-local`, or `make stop-local`.
+- `Deploy UI to GitHub Pages` runs on `main` updates that affect the UI package and on manual dispatch. It builds the static UI from `ui/dist` and publishes it through GitHub Pages.
 - `Real Agent Release Gate` runs on manual dispatch and `v*` tags. It requires a self-hosted Linux runner labeled `real-agent` with Go, Node.js, npm, bash, curl, python3, Codex CLI, and Claude CLI installed and authenticated. The workflow runs `npm run e2e:real-agents`.
 
 When `CI` passes on `main`, it publishes Docker images to GHCR:

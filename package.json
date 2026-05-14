@@ -1,10 +1,13 @@
 {
   "name": "block-play-table",
   "private": true,
+  "workspaces": [
+    "ui"
+  ],
   "scripts": {
-    "dev:ui": "vite --config ui/vite.config.ts",
-    "build": "vite build --config ui/vite.config.ts",
-    "typecheck": "vue-tsc -p ui/tsconfig.json --noEmit",
+    "dev:ui": "npm --workspace @block-play-table/ui run dev --",
+    "build": "npm --workspace @block-play-table/ui run build",
+    "typecheck": "npm --workspace @block-play-table/ui run typecheck",
     "run-local": "node scripts/run-local.mjs",
     "stop-local": "node scripts/stop-local.mjs",
     "clean-local": "node scripts/clean-local.mjs",
@@ -13,16 +16,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
-    "@vitejs/plugin-vue": "^5.2.4",
-    "typescript": "^5.9.3",
-    "vite": "^5.4.21",
-    "vue-tsc": "^2.2.12",
     "ws": "^8.20.0"
-  },
-  "dependencies": {
-    "@ant-design/icons-vue": "^7.0.1",
-    "@xterm/xterm": "^5.5.0",
-    "ant-design-vue": "^4.2.6",
-    "vue": "^3.5.34"
   }
 }

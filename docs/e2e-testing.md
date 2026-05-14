@@ -33,7 +33,7 @@
 现有测试文件：
 
 - `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Vue Web UI，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
+- `e2e/block_play_table.spec.ts`：L2，打开 Vue Web UI，验证首次进入时配置 Manager URL，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
 - `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/archived 任务，验证活跃 Board 视图排除归档任务、Archived 视图展示并删除归档任务，并生成截图 `board-status-groups.png`。
 - `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
 
@@ -62,6 +62,8 @@ make run-local
 - GraphQL：`http://localhost:8080/graphql`
 - Worker WebSocket：`ws://localhost:8080/worker/ws`
 
+UI 是静态应用，首次打开时需要填写 Manager 基础地址，例如 `http://localhost:8080`。Playwright 用例会在浏览器上下文中自动填写该地址，并在需要时输入 Manager token。
+
 结束本地栈：
 
 ```bash
@@ -80,6 +82,7 @@ make clean-local
 | --- | --- | --- |
 | `BPT_UI_URL` | `http://localhost:18080` | Playwright `baseURL`，指定 UI 地址 |
 | `BPT_UI_PORT` | `18080` | `make run-local` 启动 Vue UI 时使用的端口 |
+| `BPT_MANAGER_URL` | 由 `BPT_MANAGER_GRAPHQL_URL` 去掉 `/graphql` 推导 | Playwright 首次进入 UI 时填写的 Manager 基础地址 |
 | `BPT_MANAGER_GRAPHQL_URL` | `http://localhost:8080/graphql` | Playwright 测试访问 Manager GraphQL 的地址 |
 | `BPT_MANAGER_TOKEN` | `WORKER_TOKEN` 或 `dev-worker-token` | Playwright 访问 Manager GraphQL、UI 解锁、订阅、终端和代理时使用的固定 token |
 | `BPT_MANAGER_WS_URL` | 由 GraphQL URL 推导为 `/worker/ws` | Playwright 模拟 Worker 连接的 WebSocket 地址 |
@@ -355,7 +358,7 @@ npm run e2e:real-agents
 | 现象 | 优先检查 |
 | --- | --- |
 | UI 打不开或 `Vue-view` 不可见 | `BPT_UI_URL`、Vue dev server、浏览器控制台、浏览器控制台 |
-| GraphQL 请求失败 | `BPT_MANAGER_GRAPHQL_URL`、`BPT_MANAGER_TOKEN`/`WORKER_TOKEN`、Manager `/healthz`、Manager 日志、GraphQL response errors |
+| GraphQL 请求失败 | UI 中保存的 Manager URL、`BPT_MANAGER_GRAPHQL_URL`、`BPT_MANAGER_TOKEN`/`WORKER_TOKEN`、Manager `/healthz`、Manager 日志、GraphQL response errors |
 | Worker WebSocket 连接失败 | `BPT_MANAGER_WS_URL`、`WORKER_TOKEN` 与 `BPT_MANAGER_WS_TOKEN` 是否一致、`/worker/ws` 查询参数 |
 | 任务停在 `ASSIGNED` | Worker 是否在线、是否支持目标 Agent、是否绑定目标 Project、是否空闲 |
 | 任务停在 `STARTING` | Worker 是否收到 `TASK_START`、是否上报 `TASK_ACCEPTED`/`TASK_STARTED` |

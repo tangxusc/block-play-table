@@ -1702,6 +1702,7 @@ Vue Web Dockerfile 结构建议：
 FROM node:22-alpine AS builder
 WORKDIR /src
 COPY package.json package-lock.json ./
+COPY ui/package.json ./ui/package.json
 RUN npm ci
 COPY ui/ ./ui/
 RUN npm run build
@@ -1709,6 +1710,8 @@ RUN npm run build
 FROM nginx:1.27-alpine AS runtime
 COPY --from=builder /src/ui/dist /usr/share/nginx/html
 ```
+
+Vue Web 构建产物是纯静态文件，可以由 Nginx、GitHub Pages 或任意静态文件服务承载。Manager 地址不再写入构建产物，浏览器首次进入 UI 时填写 Manager 基础地址，UI 再推导 GraphQL、Subscription、Terminal 和 Proxy 路径。
 
 ### 11.5 本地 npm 启动示例
 
