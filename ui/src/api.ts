@@ -19,41 +19,162 @@ import type {
 
 type CreateProjectInput = Pick<ProjectItem, "name" | "gitUrl" | "defaultBranch" | "worktreeNamePrefix">;
 
-const managerURLStorageKey = "block-play-table.manager-url";
-const managerTokenStorageKey = "block-play-table.manager-token";
+const managersStorageKey = "block-play-table.managers";
+const legacyURLStorageKey = "block-play-table.manager-url";
+const legacyTokenStorageKey = "block-play-table.manager-token";
+
+export type ManagerEntry = {
+  id: string;
+  url: string;
+  token: string;
+  addedAt: string;
+};
+
+export type ManagersState = {
+  version: 1;
+  managers: ManagerEntry[];
+  activeManagerId: string | null;
+};
+
+const emptyManagersState = (): ManagersState => ({
+  version: 1,
+  managers: [],
+  activeManagerId: null,
+});
+
+function generateId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `mgr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function loadManagersState(): ManagersState {
+  if (typeof window === "undefined") return emptyManagersState();
+  const raw = window.localStorage.getItem(managersStorageKey);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as ManagersState;
+      if (parsed && Array.isArray(parsed.managers)) {
+        return {
+          version: 1,
+          managers: parsed.managers.filter((entry) => entry && typeof entry.url === "string"),
+          activeManagerId: parsed.activeManagerId ?? null,
+        };
+      }
+    } catch {
+      /* fall through to migration */
+    }
+  }
+  const legacyURL = window.localStorage.getItem(legacyURLStorageKey) || "";
+  const legacyToken = window.sessionStorage.getItem(legacyTokenStorageKey) || "";
+  if (!legacyURL) {
+    const empty = emptyManagersState();
+    saveManagersState(empty);
+    return empty;
+  }
+  const entry: ManagerEntry = {
+    id: generateId(),
+    url: legacyURL,
+    token: legacyToken,
+    addedAt: new Date().toISOString(),
+  };
+  const migrated: ManagersState = {
+    version: 1,
+    managers: [entry],
+    activeManagerId: entry.id,
+  };
+  saveManagersState(migrated);
+  window.localStorage.removeItem(legacyURLStorageKey);
+  window.sessionStorage.removeItem(legacyTokenStorageKey);
+  return migrated;
+}
+
+export function saveManagersState(state: ManagersState): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(managersStorageKey, JSON.stringify(state));
+}
+
+export function listManagers(): ManagerEntry[] {
+  return loadManagersState().managers;
+}
+
+export function getActiveManager(): ManagerEntry | null {
+  const state = loadManagersState();
+  if (!state.activeManagerId) return null;
+  return state.managers.find((entry) => entry.id === state.activeManagerId) ?? null;
+}
+
+export function setActiveManager(id: string | null): ManagerEntry | null {
+  const state = loadManagersState();
+  if (id === null) {
+    state.activeManagerId = null;
+    saveManagersState(state);
+    return null;
+  }
+  const entry = state.managers.find((m) => m.id === id);
+  if (!entry) {
+    throw new Error("Manager not found.");
+  }
+  state.activeManagerId = entry.id;
+  saveManagersState(state);
+  api.configureManagerBaseURL(entry.url);
+  return entry;
+}
+
+export async function addManager(input: { url: string; token: string }): Promise<ManagerEntry> {
+  const normalizedURL = normalizeManagerBaseURL(input.url);
+  const token = (input.token ?? "").trim();
+  const probe = new ApiClient(normalizedURL);
+  const status = await probe.fetchAuthStatus();
+  if (status.required) {
+    if (!token) throw new Error("Manager token is required.");
+    await probe.verifyManagerToken(token);
+  }
+  const state = loadManagersState();
+  const existing = state.managers.find((entry) => entry.url === normalizedURL);
+  let entry: ManagerEntry;
+  if (existing) {
+    existing.token = token;
+    entry = existing;
+  } else {
+    entry = {
+      id: generateId(),
+      url: normalizedURL,
+      token,
+      addedAt: new Date().toISOString(),
+    };
+    state.managers.push(entry);
+  }
+  state.activeManagerId = entry.id;
+  saveManagersState(state);
+  api.configureManagerBaseURL(entry.url);
+  return entry;
+}
+
+export function removeManager(id: string): void {
+  const state = loadManagersState();
+  const before = state.managers.length;
+  state.managers = state.managers.filter((entry) => entry.id !== id);
+  if (state.managers.length === before) return;
+  if (state.activeManagerId === id) {
+    state.activeManagerId = null;
+  }
+  saveManagersState(state);
+}
+
+export function maskToken(token: string): string {
+  if (!token) return "";
+  if (token.length < 6) return "••••";
+  return `••••${token.slice(-4)}`;
+}
 
 export function loadManagerBaseURL(): string {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(managerURLStorageKey) || "";
-}
-
-export function saveManagerBaseURL(rawURL: string): string {
-  const normalized = normalizeManagerBaseURL(rawURL);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(managerURLStorageKey, normalized);
-  }
-  api.configureManagerBaseURL(normalized);
-  return normalized;
-}
-
-export function clearManagerBaseURL(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(managerURLStorageKey);
+  return getActiveManager()?.url ?? "";
 }
 
 export function loadManagerToken(): string {
-  if (typeof window === "undefined") return "";
-  return window.sessionStorage.getItem(managerTokenStorageKey) || "";
-}
-
-export function saveManagerToken(token: string): void {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(managerTokenStorageKey, token);
-}
-
-export function clearManagerToken(): void {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(managerTokenStorageKey);
+  return getActiveManager()?.token ?? "";
 }
 
 const taskFields = `

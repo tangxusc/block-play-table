@@ -40,68 +40,54 @@ async function graphQL(
 
 async function openVueApp(page) {
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
-  const authState = await page
+  const state = await page
     .waitForFunction(() => {
       if (document.querySelector("#app[data-ready='true']")) return "ready";
-      if (document.querySelector('input[aria-label="Manager URL"]')) return "manager-url";
-      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      if (document.querySelector('input[aria-label="Manager URL"]')) return "managers-page";
       return "";
     }, null, { timeout: 120000 })
     .then((handle) => handle.jsonValue());
-  if (authState === "manager-url") {
+  if (state === "managers-page") {
     await page.getByLabel("Manager URL").fill(managerBaseURL);
-    await page.getByRole("button", { name: "Connect manager" }).click();
-  }
-  const postConnectState = await page
-    .waitForFunction(() => {
-      if (document.querySelector("#app[data-ready='true']")) return "ready";
-      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
-      return "";
-    }, null, { timeout: 120000 })
-    .then((handle) => handle.jsonValue());
-  const tokenInput = page.getByLabel("Manager token");
-  if (postConnectState === "token") {
-    await tokenInput.fill(managerAccessToken);
-    await page.getByRole("button", { name: "Unlock manager" }).click();
+    await page.getByLabel("Manager token").fill(managerAccessToken);
+    await page.getByRole("button", { name: "Add manager" }).click();
   }
   await expect(page.locator("#app[data-ready='true']")).toBeVisible({
     timeout: 120000,
   });
 }
 
-test("first run configures manager URL and settings persists it", async ({
+test("first run configures manager via Managers page and persists", async ({
   page,
 }) => {
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
 
   await expect(page.getByLabel("Manager URL")).toBeVisible({ timeout: 120000 });
   await page.getByLabel("Manager URL").fill(managerBaseURL);
-  await page.getByRole("button", { name: "Connect manager" }).click();
+  await page.getByLabel("Manager token").fill(managerAccessToken);
+  await page.getByRole("button", { name: "Add manager" }).click();
 
-  const postConnectState = await page
-    .waitForFunction(() => {
-      if (document.querySelector("#app[data-ready='true']")) return "ready";
-      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
-      return "";
-    }, null, { timeout: 120000 })
-    .then((handle) => handle.jsonValue());
-  const tokenInput = page.getByLabel("Manager token");
-  if (postConnectState === "token") {
-    await tokenInput.fill(managerAccessToken);
-    await page.getByRole("button", { name: "Unlock manager" }).click();
-  }
   await expect(page.locator("#app[data-ready='true']")).toBeVisible({
     timeout: 120000,
   });
 
-  await page.getByText("Settings").click();
-  await expect(page.getByLabel("Manager URL")).toHaveValue(managerBaseURL);
-  await page.getByRole("button", { name: "Save manager address" }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => window.localStorage.getItem("block-play-table.manager-url")),
-    )
-    .toBe(managerBaseURL);
+  await page.getByRole("menuitem", { name: "Managers" }).click();
+  const firstRow = page.locator('[data-testid="manager-row"]').first();
+  await expect(firstRow).toContainText(managerBaseURL);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({
+    timeout: 120000,
+  });
+
+  const stored = await page.evaluate(() =>
+    window.localStorage.getItem("block-play-table.managers"),
+  );
+  expect(stored).not.toBeNull();
+  const parsed = JSON.parse(stored as string);
+  expect(parsed.managers.length).toBeGreaterThan(0);
+  expect(parsed.managers[0].url).toBe(managerBaseURL);
+  expect(parsed.activeManagerId).toBe(parsed.managers[0].id);
 });
 
 function withManagerAccessToken(rawURL: string) {

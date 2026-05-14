@@ -55,31 +55,19 @@ function taskLocator(page, title: string) {
 
 async function openVueApp(page) {
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
-  const authState = await page
+  const state = await page
     .waitForFunction(() => {
       if (document.querySelector("#app[data-ready='true']")) return "ready";
-      if (document.querySelector('input[aria-label="Manager URL"]')) return "manager-url";
-      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
+      if (document.querySelector('input[aria-label="Manager URL"]')) return "managers-page";
       return "";
     }, null, { timeout: 120000 })
     .then((handle) => handle.jsonValue());
-  const tokenInput = page.getByLabel("Manager token");
-  if (authState === "manager-url") {
+  if (state === "managers-page") {
     await page.getByLabel("Manager URL").fill(managerBaseURL);
-    await page.getByRole("button", { name: "Connect manager" }).click();
+    await page.getByLabel("Manager token").fill(managerAccessToken);
+    await page.getByRole("button", { name: "Add manager" }).click();
   }
-  const postConnectState = await page
-    .waitForFunction(() => {
-      if (document.querySelector("#app[data-ready='true']")) return "ready";
-      if (document.querySelector('input[aria-label="Manager token"]')) return "token";
-      return "";
-    }, null, { timeout: 120000 })
-    .then((handle) => handle.jsonValue());
-  if (postConnectState === "token") {
-    await tokenInput.fill(managerAccessToken);
-    await page.getByRole("button", { name: "Unlock manager" }).click();
-  }
-  await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 30000 });
+  await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 120000 });
 }
 
 function connectWorkerUntilStarted(
