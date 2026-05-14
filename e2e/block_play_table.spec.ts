@@ -174,31 +174,6 @@ async function expectDetailCardsDoNotOverflow(page) {
     .toEqual([]);
 }
 
-async function openWorkerEditor(page, workerName: string) {
-  await page.getByText("Workers").click();
-  await page.mouse.move(700, 520);
-  const workerGroup = page.getByRole("group", { name: new RegExp(workerName) });
-  for (let pageAttempt = 0; pageAttempt < 10; pageAttempt++) {
-    for (let scrollAttempt = 0; scrollAttempt < 20; scrollAttempt++) {
-      if (await workerGroup.isVisible().catch(() => false)) {
-        await workerGroup.getByRole("button", { name: "Edit worker" }).click();
-        return;
-      }
-      await page.mouse.wheel(0, 900);
-      await page.waitForTimeout(150);
-    }
-    const nextPage = page.getByRole("button", { name: "Next page" });
-    if (!(await nextPage.isEnabled().catch(() => false))) {
-      break;
-    }
-    await nextPage.click();
-    await page.waitForTimeout(300);
-    await page.mouse.wheel(0, -5000);
-  }
-  await expect(workerGroup).toBeVisible();
-  await workerGroup.getByRole("button", { name: "Edit worker" }).click();
-}
-
 async function fillTextField(page, input, value: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     await input.click();
@@ -220,18 +195,6 @@ async function selectFieldOption(page, field, optionName: string) {
     return;
   }
   await page.getByText(optionName, { exact: true }).last().click();
-}
-
-async function addWorkerEnvVar(page, key: string, value: string) {
-  await page.getByRole("button", { name: "New env var" }).click();
-  await expect(page.getByText("Create env var")).toBeVisible();
-  const keyInput = page.getByLabel("Key").last();
-  await fillTextField(page, keyInput, key);
-  const valueInput = page.getByLabel("Value").last();
-  await fillTextField(page, valueInput, value);
-  await page.getByLabel("Description").last().click();
-  await page.getByRole("button", { name: "Save" }).last().click();
-  await expect(page.getByText("Create env var")).toBeHidden();
 }
 
 function keyValuesToRecord(items: Array<{ key: string; value: string }> = []) {
@@ -1562,13 +1525,53 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
     },
   );
 
-  await openVueApp(page);
-  await openWorkerEditor(page, workerName);
-  await expect(page.getByText("Runtime environment")).toBeVisible();
-  await addWorkerEnvVar(page, "BPT_E2E_AGENT_ENV", "codex-value");
-  await page.getByRole("button", { name: "Claude" }).last().click();
-  await addWorkerEnvVar(page, "BPT_E2E_CLAUDE_ENV", "claude-value");
-  await page.getByRole("button", { name: "Save" }).last().click();
+  await graphQL(
+    request,
+    "mutation UpdateWorker($input: UpdateWorkerInput!) { updateWorker(input: $input) { id } }",
+    {
+      input: {
+        id: workerId,
+        name: workerName,
+        supportedAgents: ["codex", "claude"],
+        workDir: "/tmp/e2e-worker",
+        projectBindingMode: "SPECIFIC_PROJECTS",
+        boundProjectIds: [project.id],
+        agentRuntimeEnv: [
+          {
+            agentType: "codex",
+            vars: [
+              {
+                key: "BPT_E2E_AGENT_ENV",
+                value: "codex-value",
+                description: "",
+                enabled: true,
+                sensitive: true,
+              },
+              {
+                key: "BPT_EXISTING_PUBLIC_ENV",
+                value: "keep-me",
+                description: "existing public value",
+                enabled: true,
+                sensitive: false,
+              },
+            ],
+          },
+          {
+            agentType: "claude",
+            vars: [
+              {
+                key: "BPT_E2E_CLAUDE_ENV",
+                value: "claude-value",
+                description: "",
+                enabled: true,
+                sensitive: true,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  );
 
   await expect
     .poll(async () => {
@@ -2755,4 +2758,115 @@ test("task detail continues a completed task with the same agent session", async
         }),
       ]),
     });
+});
+
+test("worker startup command dialog generates docker and command-line commands without writing data", async ({
+  page,
+  request,
+}) => {
+  const suffix = Date.now().toString(36).slice(-6);
+  const workerId = `worker-cmd-${suffix}`;
+  const workerName = `Command Worker ${suffix}`;
+  const workDir = `/tmp/e2e-worker-cmd-${suffix}`;
+
+  const beforeWorkers = await graphQL(
+    request,
+    "query Workers { workers { id name } }",
+  );
+  const beforeIds = beforeWorkers.workers.map(
+    (entry: { id: string }) => entry.id,
+  );
+  const beforeNames = beforeWorkers.workers.map(
+    (entry: { name: string }) => entry.name,
+  );
+  expect(beforeIds).not.toContain(workerId);
+  expect(beforeNames).not.toContain(workerName);
+
+  await openVueApp(page);
+  await page.getByText("Workers").click();
+  await page.getByRole("button", { name: /New worker/ }).click();
+
+  const formDialog = page.getByRole("dialog", {
+    name: /Generate worker startup command/,
+  });
+  await expect(formDialog).toBeVisible();
+  await fillTextField(page, formDialog.getByLabel("Worker ID"), workerId);
+  await fillTextField(page, formDialog.getByLabel("Name"), workerName);
+  await fillTextField(
+    page,
+    formDialog.getByLabel("Work directory"),
+    workDir,
+  );
+  const claudeCheckbox = formDialog.getByRole("checkbox", { name: "claude" });
+  if (!(await claudeCheckbox.isChecked())) {
+    await claudeCheckbox.check();
+  }
+
+  await formDialog
+    .getByRole("button", { name: "Generate command" })
+    .click();
+
+  const commandDialog = page.getByRole("dialog", {
+    name: /Worker startup command/,
+  });
+  await expect(commandDialog).toBeVisible();
+
+  await commandDialog.getByRole("tab", { name: "Docker" }).click();
+  const dockerPre = commandDialog
+    .locator("pre")
+    .filter({ hasText: "docker run" })
+    .first();
+  await expect(dockerPre).toContainText("docker run");
+  await expect(dockerPre).toContainText(
+    "ghcr.io/tangxusc/block-play-table-worker:latest",
+  );
+  await expect(dockerPre).toContainText(`WORKER_ID=${workerId}`);
+  await expect(dockerPre).toContainText(`WORKER_NAME=${workerName}`);
+  await expect(dockerPre).toContainText(`WORKER_WORK_DIR=${workDir}`);
+  await expect(dockerPre).toContainText(
+    "WORKER_SUPPORTED_AGENTS=codex,claude",
+  );
+  await expect(dockerPre).toContainText(
+    "MANAGER_WS_URL=ws://localhost:8080/worker/ws",
+  );
+  await expect(dockerPre).toContainText("WORKER_TOKEN=dev-worker-token");
+  await expect(
+    commandDialog.getByRole("button", { name: /Copy Docker command/i }),
+  ).toBeVisible();
+
+  await commandDialog.getByRole("tab", { name: "Command line" }).click();
+  const shellPre = commandDialog
+    .locator("pre")
+    .filter({ hasText: "go run ./worker/cmd/worker" })
+    .first();
+  await expect(shellPre).toContainText("go run ./worker/cmd/worker");
+  await expect(shellPre).toContainText(
+    "MANAGER_WS_URL=ws://localhost:8080/worker/ws",
+  );
+  await expect(shellPre).toContainText("WORKER_TOKEN=dev-worker-token");
+  await expect(shellPre).toContainText(`WORKER_ID=${workerId}`);
+  await expect(shellPre).toContainText(`WORKER_NAME=${workerName}`);
+  await expect(shellPre).toContainText(`WORKER_WORK_DIR=${workDir}`);
+  await expect(shellPre).toContainText(
+    "WORKER_SUPPORTED_AGENTS=codex,claude",
+  );
+  await expect(
+    commandDialog.getByRole("button", { name: /Copy command line/i }),
+  ).toBeVisible();
+
+  await commandDialog.getByRole("button", { name: "Done" }).click();
+  await expect(commandDialog).toBeHidden();
+
+  const afterWorkers = await graphQL(
+    request,
+    "query Workers { workers { id name } }",
+  );
+  const afterIds = afterWorkers.workers.map(
+    (entry: { id: string }) => entry.id,
+  );
+  const afterNames = afterWorkers.workers.map(
+    (entry: { name: string }) => entry.name,
+  );
+  expect(afterIds).not.toContain(workerId);
+  expect(afterNames).not.toContain(workerName);
 });
