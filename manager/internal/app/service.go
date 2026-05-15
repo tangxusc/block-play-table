@@ -1094,6 +1094,10 @@ func (s *Service) WorkerDisconnected(ctx context.Context, workerID string) (*dom
 }
 
 func (s *Service) MarkStaleWorkersOffline(ctx context.Context, timeout time.Duration) error {
+	return s.markWorkersLost(ctx, timeout)
+}
+
+func (s *Service) markWorkersLost(ctx context.Context, timeout time.Duration) error {
 	if timeout <= 0 {
 		return nil
 	}
@@ -1103,22 +1107,78 @@ func (s *Service) MarkStaleWorkersOffline(ctx context.Context, timeout time.Dura
 	}
 	cutoff := s.clock().Add(-timeout)
 	for _, worker := range workers {
-		if worker.Status != domain.WorkerOnline {
+		online := worker.Status == domain.WorkerOnline
+		hasTasks := len(worker.CurrentTaskIDs) > 0
+		stale := worker.LastHeartbeatAt == nil || !worker.LastHeartbeatAt.After(cutoff)
+		if online && !stale {
 			continue
 		}
-		if worker.LastHeartbeatAt != nil && worker.LastHeartbeatAt.After(cutoff) {
+		if !online && !hasTasks {
 			continue
 		}
-		worker.MarkOffline(s.clock())
-		events := worker.PullEvents()
-		if err := s.store.SaveWorker(ctx, worker); err != nil {
-			return err
+		if online && !hasTasks && stale {
+			worker.MarkOffline(s.clock())
+			events := worker.PullEvents()
+			if err := s.store.SaveWorker(ctx, worker); err != nil {
+				return err
+			}
+			if err := s.appendEvents(ctx, events); err != nil {
+				return err
+			}
+			continue
 		}
-		if err := s.appendEvents(ctx, events); err != nil {
+		if _, err := s.MarkWorkerLost(ctx, worker.ID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) MarkWorkerLost(ctx context.Context, workerID string) (*domain.Worker, error) {
+	now := s.clock()
+	worker, err := s.store.Worker(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	if worker.Status == domain.WorkerOnline {
+		worker.MarkOffline(now)
+	}
+	taskIDs := append([]string(nil), worker.CurrentTaskIDs...)
+	events := worker.PullEvents()
+	for _, taskID := range taskIDs {
+		task, err := s.store.Task(ctx, taskID)
+		if err != nil {
+			continue
+		}
+		if isTaskTerminal(task.Status) || task.Status == domain.TaskCreated || task.Status == domain.TaskAssigned {
+			if task.Status == domain.TaskAssigned {
+				worker.ReleaseTask(taskID, now)
+				events = append(events, worker.PullEvents()...)
+			}
+			continue
+		}
+		if err := task.Fail("worker_lost: "+workerID, now); err != nil {
+			continue
+		}
+		if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
+			return nil, err
+		}
+		worker.ReleaseTask(taskID, now)
+		taskEvents := task.PullEvents()
+		workerEvents := worker.PullEvents()
+		if err := s.store.SaveTask(ctx, task); err != nil {
+			return nil, err
+		}
+		events = append(events, taskEvents...)
+		events = append(events, workerEvents...)
+	}
+	if err := s.store.SaveWorker(ctx, worker); err != nil {
+		return nil, err
+	}
+	if err := s.appendEvents(ctx, events); err != nil {
+		return nil, err
+	}
+	return worker, nil
 }
 
 func (s *Service) MonitorWorkerHeartbeats(ctx context.Context, timeout, interval time.Duration) {
@@ -1138,7 +1198,7 @@ func (s *Service) MonitorWorkerHeartbeats(ctx context.Context, timeout, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.MarkStaleWorkersOffline(ctx, timeout)
+			_ = s.markWorkersLost(ctx, timeout)
 		}
 	}
 }
@@ -1260,6 +1320,9 @@ func (s *Service) ContinueTask(ctx context.Context, input ContinueTaskInput) (*d
 	}
 	events := task.PullEvents()
 	if err := task.Continue(now); err != nil {
+		return nil, protocol.TaskContinuePayload{}, err
+	}
+	if err := task.QueueContinueDirective("dir_"+uuid.NewString(), input.Message, now); err != nil {
 		return nil, protocol.TaskContinuePayload{}, err
 	}
 	if err := worker.AssignTask(task.ID, now); err != nil {
@@ -1478,45 +1541,13 @@ func (s *Service) ApplyWorkerTaskInteractionRequest(ctx context.Context, message
 	return task, s.appendEvents(ctx, events)
 }
 
-func (s *Service) PrepareTaskInteractionResponse(ctx context.Context, input RespondTaskInteractionInput) (*domain.Task, *domain.TaskInteraction, protocol.TaskInteractionResponsePayload, error) {
+func (s *Service) RespondTaskInteraction(ctx context.Context, input RespondTaskInteractionInput) (*domain.TaskInteraction, error) {
 	if strings.TrimSpace(input.InteractionID) == "" {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("interaction id is required")
+		return nil, fmt.Errorf("interaction id is required")
 	}
 	if !input.Decision.Valid() {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("unsupported task interaction decision %q", input.Decision)
+		return nil, fmt.Errorf("unsupported task interaction decision %q", input.Decision)
 	}
-	interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
-	if err != nil {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
-	}
-	if interaction.Status != domain.TaskInteractionPending {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: interaction %s is %s", domain.ErrConflict, interaction.ID, interaction.Status)
-	}
-	task, err := s.store.Task(ctx, interaction.TaskID)
-	if err != nil {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
-	}
-	if task.WorkerID == "" {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: interaction %s has no worker", domain.ErrConflict, interaction.ID)
-	}
-	worker, err := s.store.Worker(ctx, task.WorkerID)
-	if err != nil {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, err
-	}
-	if worker.Status != domain.WorkerOnline {
-		return nil, nil, protocol.TaskInteractionResponsePayload{}, fmt.Errorf("%w: worker %s is not online", domain.ErrConflict, worker.ID)
-	}
-	payload := protocol.TaskInteractionResponsePayload{
-		InteractionID: interaction.ID,
-		TaskID:        task.ID,
-		Decision:      input.Decision,
-		Message:       input.Message,
-		Payload:       input.Payload,
-	}
-	return task, interaction, payload, nil
-}
-
-func (s *Service) MarkTaskInteractionAnswered(ctx context.Context, input RespondTaskInteractionInput) (*domain.TaskInteraction, error) {
 	now := s.clock()
 	interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
 	if err != nil {
@@ -1533,6 +1564,20 @@ func (s *Service) MarkTaskInteractionAnswered(ctx context.Context, input Respond
 	if interaction.Status != domain.TaskInteractionPending {
 		return nil, fmt.Errorf("%w: interaction %s is %s", domain.ErrConflict, interaction.ID, interaction.Status)
 	}
+	task, err := s.store.Task(ctx, interaction.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.WorkerID == "" {
+		return nil, fmt.Errorf("%w: interaction %s has no worker", domain.ErrConflict, interaction.ID)
+	}
+	worker, err := s.store.Worker(ctx, task.WorkerID)
+	if err != nil {
+		return nil, err
+	}
+	if worker.Status != domain.WorkerOnline {
+		return nil, fmt.Errorf("%w: worker %s is not online", domain.ErrConflict, worker.ID)
+	}
 	interaction.Status = domain.TaskInteractionAnswered
 	interaction.ResponseDecision = input.Decision
 	interaction.ResponseMessage = input.Message
@@ -1541,11 +1586,10 @@ func (s *Service) MarkTaskInteractionAnswered(ctx context.Context, input Respond
 	if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
 		return nil, err
 	}
-	task, err := s.store.Task(ctx, interaction.TaskID)
-	if err != nil {
-		return interaction, nil
-	}
 	if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
+		return nil, err
+	}
+	if err := task.QueueInteractionDirective("dir_"+uuid.NewString(), interaction.ID, input.Decision, input.Message, input.Payload, now); err != nil {
 		return nil, err
 	}
 	events := task.PullEvents()
@@ -1556,6 +1600,76 @@ func (s *Service) MarkTaskInteractionAnswered(ctx context.Context, input Respond
 		return nil, err
 	}
 	return interaction, nil
+}
+
+func (s *Service) AssignedTasks(ctx context.Context, workerID string) ([]*domain.Task, error) {
+	all, err := s.store.Tasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Task, 0, 4)
+	for _, task := range all {
+		if task.WorkerID != workerID {
+			continue
+		}
+		if isTaskTerminal(task.Status) {
+			continue
+		}
+		if task.Status == domain.TaskCreated || task.Status == domain.TaskAssigned {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out, nil
+}
+
+func (s *Service) AssignedTaskBundle(ctx context.Context, taskID string) (*domain.Task, *domain.Project, *domain.Worker, error) {
+	task, err := s.store.Task(ctx, taskID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if task.WorkerID == "" {
+		return nil, nil, nil, fmt.Errorf("%w: task %s has no worker", domain.ErrConflict, taskID)
+	}
+	project, err := s.store.Project(ctx, task.ProjectID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	worker, err := s.store.Worker(ctx, task.WorkerID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return task, project, worker, nil
+}
+
+func (s *Service) BuildStartPayload(task *domain.Task, project *domain.Project, worker *domain.Worker) protocol.TaskStartPayload {
+	return buildStartPayload(task, project, worker)
+}
+
+func (s *Service) BuildContinuePayload(task *domain.Task, project *domain.Project, worker *domain.Worker, message string) protocol.TaskContinuePayload {
+	return buildContinuePayload(task, project, worker, message)
+}
+
+func (s *Service) AckTaskDirective(ctx context.Context, taskID, directiveID string) (*domain.Task, error) {
+	now := s.clock()
+	task, err := s.store.Task(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := task.AckDirective(directiveID, now); err != nil {
+		return nil, err
+	}
+	events := task.PullEvents()
+	if len(events) == 0 {
+		return task, nil
+	}
+	if err := s.store.SaveTask(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.appendEvents(ctx, events); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 func (s *Service) ApplyWorkerTaskInteractionResolved(ctx context.Context, messageID string, input TaskInteractionResolvedInput) (*domain.Task, error) {
@@ -1595,6 +1709,11 @@ func (s *Service) ApplyWorkerTaskInteractionResolved(ctx context.Context, messag
 		return nil, fmt.Errorf("%w: resolve interaction from %s", domain.ErrInvalidTransition, task.Status)
 	} else {
 		if err := task.RecordInteractionResolved(input.InteractionID, now); err != nil {
+			return nil, err
+		}
+	}
+	if task.PendingDirective != nil && task.PendingDirective.Kind == domain.TaskDirectiveInteraction && task.PendingDirective.InteractionID == input.InteractionID {
+		if err := task.AckDirective(task.PendingDirective.ID, now); err != nil {
 			return nil, err
 		}
 	}

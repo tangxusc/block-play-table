@@ -294,8 +294,6 @@ func (c *Client) readLoop(ctx context.Context) error {
 			}()
 		case protocol.MessageTaskInterrupt:
 			c.executor.Interrupt(envelope.TaskID)
-		case protocol.MessageTaskCancel:
-			c.executor.Interrupt(envelope.TaskID)
 		case protocol.MessageTaskInteractionResponse:
 			var payload protocol.TaskInteractionResponsePayload
 			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {

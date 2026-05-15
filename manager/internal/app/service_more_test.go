@@ -83,22 +83,12 @@ func TestServiceTaskInteractionLifecycleAndDedup(t *testing.T) {
 		t.Fatalf("interactions = %+v", interactions)
 	}
 
-	_, _, payload, err := service.PrepareTaskInteractionResponse(ctx, RespondTaskInteractionInput{
+	answered, err := service.RespondTaskInteraction(ctx, RespondTaskInteractionInput{
 		InteractionID: "interaction-1",
 		Decision:      domain.TaskInteractionApprove,
 	})
 	if err != nil {
-		t.Fatalf("PrepareTaskInteractionResponse returned error: %v", err)
-	}
-	if payload.TaskID != task.ID || payload.Decision != domain.TaskInteractionApprove {
-		t.Fatalf("response payload = %+v", payload)
-	}
-	answered, err := service.MarkTaskInteractionAnswered(ctx, RespondTaskInteractionInput{
-		InteractionID: "interaction-1",
-		Decision:      domain.TaskInteractionApprove,
-	})
-	if err != nil {
-		t.Fatalf("MarkTaskInteractionAnswered returned error: %v", err)
+		t.Fatalf("RespondTaskInteraction returned error: %v", err)
 	}
 	if answered.Status != domain.TaskInteractionAnswered || answered.ResponseDecision != domain.TaskInteractionApprove {
 		t.Fatalf("answered interaction = %+v", answered)
@@ -133,7 +123,7 @@ func TestServiceTaskInteractionResponseRequiresOnlineWorkerAndTerminalCancelsPen
 	if _, err := service.WorkerDisconnected(ctx, task.WorkerID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := service.PrepareTaskInteractionResponse(ctx, RespondTaskInteractionInput{
+	if _, err := service.RespondTaskInteraction(ctx, RespondTaskInteractionInput{
 		InteractionID: "interaction-offline",
 		Message:       "answer",
 	}); !errors.Is(err, domain.ErrConflict) {
@@ -180,12 +170,12 @@ func TestServiceTaskInteractionResolvedWithResponseBeatsFastCompletion(t *testin
 	if _, err := service.ApplyWorkerTaskCompleted(ctx, "interaction-completed-race", task.ID, "done"); err != nil {
 		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
 	}
-	answered, err := service.MarkTaskInteractionAnswered(ctx, RespondTaskInteractionInput{
+	answered, err := service.RespondTaskInteraction(ctx, RespondTaskInteractionInput{
 		InteractionID: "interaction-race",
 		Decision:      domain.TaskInteractionApprove,
 	})
 	if err != nil {
-		t.Fatalf("MarkTaskInteractionAnswered should be idempotent after resolved response: %v", err)
+		t.Fatalf("RespondTaskInteraction should be idempotent after resolved response: %v", err)
 	}
 	if answered.Status != domain.TaskInteractionAnswered || answered.ResponseDecision != domain.TaskInteractionApprove {
 		t.Fatalf("interaction after fast completion = %+v", answered)

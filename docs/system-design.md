@@ -1326,14 +1326,17 @@ Worker 默认启动本地 Review HTTP 服务并通过 `capabilities` 上报 `rev
 
 ### 9.3 Manager 下发 Worker 的消息
 
+Manager 不再以"命令式"主动下发任务指令。改为 Worker 通过 `/worker/ws` 连接成功后，Manager 内部 watch pump 订阅领域事件并按"分配给当前 Worker"的过滤条件派发下行 envelope；envelope 形态保持不变以便 Worker 端解析逻辑不动。
+
 | 消息类型 | 说明 |
 | --- | --- |
-| `TASK_START` | 启动任务，payload 包含任务信息、任务级 Agent CLI 配置、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
-| `TASK_CONTINUE` | 继续已完成任务的 Agent 会话，payload 包含同一任务级 Agent CLI 配置、会话 ID、用户追加消息、worktree 路径和同一来源的运行时环境变量 |
-| `TASK_INTERRUPT` | 中断任务 |
-| `TASK_CANCEL` | 取消任务 |
-| `WORKER_CONFIG_UPDATE` | 更新 Worker 配置 |
+| `TASK_START` | watch pump 在任务进入 STARTING 且无 PendingDirective 时下发，payload 包含任务信息、任务级 Agent CLI 配置、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
+| `TASK_CONTINUE` | watch pump 在任务 STARTING 且 PendingDirective 为 `CONTINUE` 时下发，payload 携带同一任务级 Agent CLI 配置、会话 ID、用户追加消息、worktree 路径和运行时环境变量 |
+| `TASK_INTERRUPT` | watch pump 在任务进入 INTERRUPTING 时下发 |
+| `TASK_INTERACTION_RESPONSE` | watch pump 在任务存在 PendingDirective 为 `INTERACTION_RESPONSE` 时下发，payload 包含 `interactionId`、`decision`、`message`、`payload` |
 | `PING` | 心跳检测 |
+
+`TASK_CANCEL` 与 `WORKER_CONFIG_UPDATE` 已下线：取消等价于中断（统一走 `TASK_INTERRUPT`）；Worker 配置变更通过下次 `WORKER_REGISTER` 携带最新 capabilities，无需独立消息。
 
 `TASK_START` payload 示例：
 
@@ -1739,11 +1742,11 @@ Manager 判断 Worker 离线：
 last_heartbeat_at 超过 3 个心跳周期
 ```
 
-处理策略：
+处理策略由独立的 Reconciler loop 承担（见 §12.5）：
 
-1. Worker 心跳超时后标记为 `OFFLINE`。
-2. 如果 Worker 正在执行任务，任务标记为 `WORKER_LOST` 或保留为异常状态。
-3. 用户可选择重新分配任务、重试任务或人工确认任务结果。
+1. Worker 心跳超时 → 标记为 `OFFLINE`。
+2. 若 Worker 在 OFFLINE 时仍持有 `currentTaskIds`，则其名下处于 `ASSIGNED`/`STARTING`/`RUNNING`/`WAITING_INPUT`/`INTERRUPTING` 的任务一律 `Fail(reason="worker_lost: <workerID>")`，并清空 worker 的 `currentTaskIds`。
+3. 用户后续可对失败任务调用 `retryTask` 重新分配并启动；该 mutation 会清空旧 worker、`worktreePath`、`agentSessionId` 与 `result`，回到 `CREATED` 状态。
 
 ### 12.2 事件可靠性
 
@@ -1788,6 +1791,22 @@ Manager 根据上报信息恢复状态。
 7. Task Interrupted 上报。
 
 每条 WebSocket 消息应包含 `messageId`，Manager 记录已处理消息，避免重复消费。
+
+### 12.5 Watch+Reconcile 控制面
+
+Manager 的下行不是命令式 push，而是 watch+reconcile 两段式：
+
+1. **Watch pump**：Worker 通过 `/worker/ws` 连接成功后，Manager 内部为该连接启动一个 goroutine——先按 `workerID` list 一遍当前未终态的已分配任务并下发对应 envelope（`TASK_START` / `TASK_CONTINUE` / `TASK_INTERRUPT` / `TASK_INTERACTION_RESPONSE`），随后订阅领域事件，过滤出 `workerId == self` 的 `TaskAssigned` / `TaskStartRequested` / `TaskContinueRequested` / `TaskInterruptRequested` / `TaskDirectiveQueued` / `TaskDirectiveAcked` 事件并按当前 task 状态重新派生 envelope。Worker 短暂掉线再重连时，list 阶段会自然把缺漏的指令重发，无需 Manager 单独维护"未送达消息"队列。
+
+2. **Reconciler loop**：Manager 进程启动一个独立的 reconcile loop（默认间隔为心跳超时的 1/3）。每次 tick 扫描所有 Worker：
+   - `ONLINE` 且心跳新鲜：跳过；
+   - `ONLINE` 且心跳过期、无 `currentTaskIds`：仅标 `OFFLINE`（等价于温和下线）；
+   - 任何 `currentTaskIds` 仍非空但 Worker 已 OFFLINE 或心跳过期：调用 `MarkWorkerLost(workerID)`，把 Worker 标 OFFLINE 并将其名下所有未终态任务 `Fail("worker_lost: <workerID>")`，同时取消该任务下所有 PENDING 交互、释放 worker 上的 task 占用。
+   - `WorkerDisconnected`（WS 主动断开被 readLoop 检出）后也会立刻触发 `MarkWorkerLost`，无需等下次 reconciler tick；该方法本身幂等，与定时 loop 并存安全。
+
+这套模型替代了旧的 `MonitorWorkerHeartbeats`：原先只把 Worker 标 OFFLINE，任务会永久卡在 `RUNNING`；现在保证 Worker 不可达时任务必然进入终态，用户可通过 `retryTask` 自行恢复。
+
+任务级别的瞬态指令（`continueTask` 的 message、`respondTaskInteraction` 的 decision/payload）通过 Task 聚合上的 `PendingDirective` 字段承载——写入聚合即等同于"投递"，watch pump 根据 directive 派生下行 envelope。Worker 上行 `TASK_STARTED`（CONTINUE 已被消费）或 `TASK_INTERACTION_RESOLVED`（INTERACTION 已被消费）时 Manager 自动清除 directive，无需新增独立的 ack 协议。
 
 ## 13. 安全设计
 

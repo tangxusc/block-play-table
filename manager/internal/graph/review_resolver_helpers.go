@@ -10,8 +10,8 @@ import (
 )
 
 func (r *Resolver) taskGitDiff(ctx context.Context, taskID string, scope model.TaskGitDiffScope, staged *bool) (*model.TaskGitDiff, error) {
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
+	if r.ReviewProxy == nil {
+		return nil, fmt.Errorf("task review proxy is not configured")
 	}
 	query := url.Values{}
 	query.Set("scope", string(scope))
@@ -19,15 +19,15 @@ func (r *Resolver) taskGitDiff(ctx context.Context, taskID string, scope model.T
 		query.Set("staged", fmt.Sprintf("%t", *staged))
 	}
 	var response TaskGitDiffResponse
-	if err := r.WorkerSender.ProxyTaskReview(ctx, taskID, http.MethodGet, "/diff?"+query.Encode(), nil, &response); err != nil {
+	if err := r.ReviewProxy.ProxyTaskReview(ctx, taskID, http.MethodGet, "/diff?"+query.Encode(), nil, &response); err != nil {
 		return nil, err
 	}
 	return toModelTaskGitDiff(&response), nil
 }
 
 func (r *Resolver) taskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error) {
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
+	if r.ReviewProxy == nil {
+		return nil, fmt.Errorf("task review proxy is not configured")
 	}
 	query := url.Values{}
 	if remote != nil {
@@ -41,15 +41,15 @@ func (r *Resolver) taskGitStatus(ctx context.Context, taskID string, remote *str
 		path += "?" + encoded
 	}
 	var response TaskGitStatusResponse
-	if err := r.WorkerSender.ProxyTaskReview(ctx, taskID, http.MethodGet, path, nil, &response); err != nil {
+	if err := r.ReviewProxy.ProxyTaskReview(ctx, taskID, http.MethodGet, path, nil, &response); err != nil {
 		return nil, err
 	}
 	return toModelTaskGitStatus(&response), nil
 }
 
 func (r *Resolver) gitChange(ctx context.Context, action string, input model.TaskGitChangeInput) (*model.TaskGitChangeResult, error) {
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
+	if r.ReviewProxy == nil {
+		return nil, fmt.Errorf("task review proxy is not configured")
 	}
 	request := TaskGitChangeRequest{
 		Paths: append([]string(nil), input.Paths...),
@@ -59,7 +59,7 @@ func (r *Resolver) gitChange(ctx context.Context, action string, input model.Tas
 		request.BackupID = *input.BackupID
 	}
 	var response TaskGitChangeResponse
-	if err := r.WorkerSender.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/"+action, request, &response); err != nil {
+	if err := r.ReviewProxy.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/"+action, request, &response); err != nil {
 		return nil, err
 	}
 	if response.Backup != nil {
@@ -71,8 +71,8 @@ func (r *Resolver) gitChange(ctx context.Context, action string, input model.Tas
 }
 
 func (r *Resolver) runTaskGitCommand(ctx context.Context, input model.TaskGitCommandInput) (*model.TaskGitCommandResult, error) {
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
+	if r.ReviewProxy == nil {
+		return nil, fmt.Errorf("task review proxy is not configured")
 	}
 	request := TaskGitCommandRequest{
 		Command: string(input.Command),
@@ -84,7 +84,7 @@ func (r *Resolver) runTaskGitCommand(ctx context.Context, input model.TaskGitCom
 		request.PublishStrategy = string(*input.PublishStrategy)
 	}
 	var response TaskGitCommandResponse
-	if err := r.WorkerSender.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/git-command", request, &response); err != nil {
+	if err := r.ReviewProxy.ProxyTaskReview(ctx, input.TaskID, http.MethodPost, "/git-command", request, &response); err != nil {
 		return nil, err
 	}
 	return toModelTaskGitCommandResult(&response), nil

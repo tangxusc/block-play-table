@@ -33,7 +33,8 @@ func main() {
 	service := app.NewService(st)
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	defer stopMonitor()
-	go service.MonitorWorkerHeartbeats(monitorCtx, heartbeatTimeout, heartbeatTimeout/3)
+	reconciler := app.NewReconciler(service, heartbeatTimeout, heartbeatTimeout/3, app.WithReconcilerLogger(logger))
+	go reconciler.Run(monitorCtx)
 
 	apiServer := httpapi.NewServer(
 		service,

@@ -1,0 +1,2 @@
+ALTER TABLE tasks ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'RUN';
+ALTER TABLE tasks ADD COLUMN pending_directive TEXT;

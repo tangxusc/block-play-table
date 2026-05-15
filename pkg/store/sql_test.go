@@ -58,6 +58,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "010_unique_worker_name", SQL: migrations.UniqueWorkerNameSQL},
 		{Version: "011_task_review", SQL: migrations.TaskReviewSQL},
 		{Version: "012_drop_task_review", SQL: migrations.DropTaskReviewSQL},
+		{Version: "013_task_desired_state", SQL: migrations.TaskDesiredStateSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)
@@ -432,8 +433,12 @@ func TestSQLStoreDeleteTaskRemovesTaskAndDetailRows(t *testing.T) {
 		t.Fatalf("OpenSQLStore returned error: %v", err)
 	}
 	defer sqlStore.Close()
-	if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
-		t.Fatalf("Migrate returned error: %v", err)
+	versioned := make([]Migration, 0, len(migrations.All))
+	for _, m := range migrations.All {
+		versioned = append(versioned, Migration{Version: m.Version, SQL: m.SQL})
+	}
+	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
+		t.Fatalf("MigrateVersioned returned error: %v", err)
 	}
 
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
@@ -511,8 +516,12 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 		t.Fatalf("OpenSQLStore returned error: %v", err)
 	}
 	defer sqlStore.Close()
-	if err := sqlStore.Migrate(ctx, migrations.SchemaSQL); err != nil {
-		t.Fatalf("Migrate returned error: %v", err)
+	versioned := make([]Migration, 0, len(migrations.All))
+	for _, m := range migrations.All {
+		versioned = append(versioned, Migration{Version: m.Version, SQL: m.SQL})
+	}
+	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
+		t.Fatalf("MigrateVersioned returned error: %v", err)
 	}
 
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)

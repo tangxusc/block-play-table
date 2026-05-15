@@ -468,6 +468,10 @@ func cloneTask(task *domain.Task) *domain.Task {
 	copy := *task
 	copy.PreCommands = append([]string(nil), task.PreCommands...)
 	copy.PostCommands = append([]string(nil), task.PostCommands...)
+	if task.PendingDirective != nil {
+		directive := *task.PendingDirective
+		copy.PendingDirective = &directive
+	}
 	return &copy
 }
 

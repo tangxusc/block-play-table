@@ -208,7 +208,6 @@ func TestReadLoopHandlesPingTaskStartAndInterrupt(t *testing.T) {
 		seen[envelope.Type] = true
 	}
 	writeRawEnvelope(t, remote, rawEnvelope{MessageID: "interrupt-1", Type: protocol.MessageTaskInterrupt, TaskID: "task-1"})
-	writeRawEnvelope(t, remote, rawEnvelope{MessageID: "cancel-1", Type: protocol.MessageTaskCancel, TaskID: "task-1"})
 	cancel()
 	_ = remote.Close()
 	select {

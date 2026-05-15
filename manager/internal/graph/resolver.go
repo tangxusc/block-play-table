@@ -15,25 +15,19 @@ import (
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/graph/model"
 	"github.com/tangxusc/block-play-table/pkg/domain"
-	"github.com/tangxusc/block-play-table/pkg/protocol"
 )
 
-type WorkerSender interface {
-	SendTaskStart(workerID, taskID string, payload protocol.TaskStartPayload) error
-	SendTaskContinue(workerID, taskID string, payload protocol.TaskContinuePayload) error
-	SendTaskInteractionResponse(workerID, taskID string, payload protocol.TaskInteractionResponsePayload) error
-	SendTaskInterrupt(workerID, taskID string) error
-	SendTaskCancel(workerID, taskID string) error
+type TaskReviewProxy interface {
 	ProxyTaskReview(ctx context.Context, taskID, method, path string, input any, out any) error
 }
 
 type Resolver struct {
-	Service      *app.Service
-	WorkerSender WorkerSender
+	Service     *app.Service
+	ReviewProxy TaskReviewProxy
 }
 
-func NewResolver(service *app.Service, sender WorkerSender) *Resolver {
-	return &Resolver{Service: service, WorkerSender: sender}
+func NewResolver(service *app.Service, reviewProxy TaskReviewProxy) *Resolver {
+	return &Resolver{Service: service, ReviewProxy: reviewProxy}
 }
 
 func toModelTask(task *domain.Task) *model.Task {

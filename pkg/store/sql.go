@@ -254,6 +254,18 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	if err != nil {
 		return err
 	}
+	desiredState := task.DesiredState
+	if desiredState == "" {
+		desiredState = domain.TaskDesiredRun
+	}
+	var pendingDirective sql.NullString
+	if task.PendingDirective != nil {
+		encoded, err := encodeJSON(task.PendingDirective)
+		if err != nil {
+			return err
+		}
+		pendingDirective = sql.NullString{String: encoded, Valid: true}
+	}
 	startDate := storeTaskDisplayDate(task.StartDate)
 	if startDate.IsZero() {
 		startDate = storeTaskDisplayDate(task.CreatedAt)
@@ -264,8 +276,8 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	}
 	_, err = s.db.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive"},
 	),
 		task.ID,
 		task.Title,
@@ -286,12 +298,14 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		task.Version,
 		task.CreatedAt,
 		task.UpdatedAt,
+		string(desiredState),
+		pendingDirective,
 	)
 	return err
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -303,7 +317,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,7 +1023,9 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var preCommands string
 	var postCommands string
 	var agentConfig string
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt); err != nil {
+	var desiredState sql.NullString
+	var pendingDirective sql.NullString
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt, &desiredState, &pendingDirective); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)
@@ -1039,6 +1055,18 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	}
 	if err := decodeJSON(agentConfig, &task.AgentConfig); err != nil {
 		return nil, err
+	}
+	if desiredState.Valid && strings.TrimSpace(desiredState.String) != "" {
+		task.DesiredState = domain.TaskDesiredState(desiredState.String)
+	} else {
+		task.DesiredState = domain.TaskDesiredRun
+	}
+	if pendingDirective.Valid && strings.TrimSpace(pendingDirective.String) != "" {
+		var directive domain.TaskDirective
+		if err := decodeJSON(pendingDirective.String, &directive); err != nil {
+			return nil, err
+		}
+		task.PendingDirective = &directive
 	}
 	return &task, nil
 }

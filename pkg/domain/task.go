@@ -21,6 +21,30 @@ const (
 	TaskArchived     TaskStatus = "ARCHIVED"
 )
 
+type TaskDesiredState string
+
+const (
+	TaskDesiredRun       TaskDesiredState = "RUN"
+	TaskDesiredInterrupt TaskDesiredState = "INTERRUPT"
+)
+
+type TaskDirectiveKind string
+
+const (
+	TaskDirectiveContinue    TaskDirectiveKind = "CONTINUE"
+	TaskDirectiveInteraction TaskDirectiveKind = "INTERACTION_RESPONSE"
+)
+
+type TaskDirective struct {
+	ID            string                  `json:"id"`
+	Kind          TaskDirectiveKind       `json:"kind"`
+	Message       string                  `json:"message,omitempty"`
+	InteractionID string                  `json:"interactionId,omitempty"`
+	Decision      TaskInteractionDecision `json:"decision,omitempty"`
+	Payload       string                  `json:"payload,omitempty"`
+	IssuedAt      time.Time               `json:"issuedAt"`
+}
+
 type AgentWorkMode string
 
 const (
@@ -214,25 +238,27 @@ func (c ClaudeExecutionConfig) validate() error {
 }
 
 type Task struct {
-	ID             string               `json:"id"`
-	Title          string               `json:"title"`
-	Description    string               `json:"description"`
-	Status         TaskStatus           `json:"status"`
-	ProjectID      string               `json:"projectId"`
-	WorkerID       string               `json:"workerId,omitempty"`
-	AgentType      AgentType            `json:"agentType"`
-	AgentConfig    AgentExecutionConfig `json:"agentConfig"`
-	BaseBranch     string               `json:"baseBranch"`
-	WorktreePath   string               `json:"worktreePath,omitempty"`
-	AgentSessionID string               `json:"agentSessionId,omitempty"`
-	PreCommands    []string             `json:"preCommands"`
-	PostCommands   []string             `json:"postCommands"`
-	Result         string               `json:"result,omitempty"`
-	StartDate      time.Time            `json:"startDate"`
-	EndDate        time.Time            `json:"endDate"`
-	Version        int                  `json:"version"`
-	CreatedAt      time.Time            `json:"createdAt"`
-	UpdatedAt      time.Time            `json:"updatedAt"`
+	ID                string               `json:"id"`
+	Title             string               `json:"title"`
+	Description       string               `json:"description"`
+	Status            TaskStatus           `json:"status"`
+	DesiredState      TaskDesiredState     `json:"desiredState"`
+	PendingDirective  *TaskDirective       `json:"pendingDirective,omitempty"`
+	ProjectID         string               `json:"projectId"`
+	WorkerID          string               `json:"workerId,omitempty"`
+	AgentType         AgentType            `json:"agentType"`
+	AgentConfig       AgentExecutionConfig `json:"agentConfig"`
+	BaseBranch        string               `json:"baseBranch"`
+	WorktreePath      string               `json:"worktreePath,omitempty"`
+	AgentSessionID    string               `json:"agentSessionId,omitempty"`
+	PreCommands       []string             `json:"preCommands"`
+	PostCommands      []string             `json:"postCommands"`
+	Result            string               `json:"result,omitempty"`
+	StartDate         time.Time            `json:"startDate"`
+	EndDate           time.Time            `json:"endDate"`
+	Version           int                  `json:"version"`
+	CreatedAt         time.Time            `json:"createdAt"`
+	UpdatedAt         time.Time            `json:"updatedAt"`
 
 	pendingEvents []DomainEvent
 }
@@ -277,6 +303,7 @@ func NewTask(input NewTaskInput) (*Task, error) {
 		Title:        input.Title,
 		Description:  input.Description,
 		Status:       TaskCreated,
+		DesiredState: TaskDesiredRun,
 		ProjectID:    input.ProjectID,
 		AgentType:    input.AgentType,
 		BaseBranch:   input.BaseBranch,
@@ -421,6 +448,7 @@ func (t *Task) Continue(now time.Time) error {
 		return fmt.Errorf("%w: continue task %s without agent session", ErrConflict, t.ID)
 	}
 	t.Result = ""
+	t.DesiredState = TaskDesiredRun
 	t.transition(TaskStarting, now, "TaskContinueRequested", map[string]any{"workerId": t.WorkerID, "agentSessionId": t.AgentSessionID})
 	return nil
 }
@@ -518,7 +546,72 @@ func (t *Task) RequestInterrupt(now time.Time) error {
 	if t.Status != TaskRunning && t.Status != TaskWaitingInput && t.Status != TaskStarting {
 		return fmt.Errorf("%w: interrupt from %s", ErrInvalidTransition, t.Status)
 	}
+	t.DesiredState = TaskDesiredInterrupt
 	t.transition(TaskInterrupting, now, "TaskInterruptRequested", nil)
+	return nil
+}
+
+func (t *Task) QueueContinueDirective(directiveID, message string, now time.Time) error {
+	if t.Status != TaskStarting {
+		return fmt.Errorf("%w: queue continue directive from %s", ErrInvalidTransition, t.Status)
+	}
+	if err := requireNonBlank("directive id", directiveID); err != nil {
+		return err
+	}
+	t.PendingDirective = &TaskDirective{
+		ID:       directiveID,
+		Kind:     TaskDirectiveContinue,
+		Message:  message,
+		IssuedAt: now,
+	}
+	t.touch(now)
+	t.addEvent("TaskDirectiveQueued", map[string]any{
+		"directiveId": directiveID,
+		"kind":        TaskDirectiveContinue,
+	}, now)
+	return nil
+}
+
+func (t *Task) QueueInteractionDirective(directiveID, interactionID string, decision TaskInteractionDecision, message, payload string, now time.Time) error {
+	if !t.canReceiveRuntimeEvent() {
+		return fmt.Errorf("%w: queue interaction directive from %s", ErrInvalidTransition, t.Status)
+	}
+	if err := requireNonBlank("directive id", directiveID); err != nil {
+		return err
+	}
+	if err := requireNonBlank("interaction id", interactionID); err != nil {
+		return err
+	}
+	t.PendingDirective = &TaskDirective{
+		ID:            directiveID,
+		Kind:          TaskDirectiveInteraction,
+		InteractionID: interactionID,
+		Decision:      decision,
+		Message:       message,
+		Payload:       payload,
+		IssuedAt:      now,
+	}
+	t.touch(now)
+	t.addEvent("TaskDirectiveQueued", map[string]any{
+		"directiveId":   directiveID,
+		"kind":          TaskDirectiveInteraction,
+		"interactionId": interactionID,
+		"decision":      decision,
+	}, now)
+	return nil
+}
+
+func (t *Task) AckDirective(directiveID string, now time.Time) error {
+	if t.PendingDirective == nil || t.PendingDirective.ID != directiveID {
+		return nil
+	}
+	kind := t.PendingDirective.Kind
+	t.PendingDirective = nil
+	t.touch(now)
+	t.addEvent("TaskDirectiveAcked", map[string]any{
+		"directiveId": directiveID,
+		"kind":        kind,
+	}, now)
 	return nil
 }
 

@@ -232,11 +232,9 @@ type WorkerGateway struct {
 	logger      *slog.Logger
 	workerToken string
 
-	mu                 sync.RWMutex
-	connections        map[string]*workerConnection
-	proxyByName        map[string]*workerProxyTunnel
-	interactionMu      sync.Mutex
-	interactionWaiters map[string]chan error
+	mu          sync.RWMutex
+	connections map[string]*workerConnection
+	proxyByName map[string]*workerProxyTunnel
 }
 
 type workerConnection struct {
@@ -272,12 +270,11 @@ func (t *workerProxyTunnel) close() {
 
 func NewWorkerGateway(service *app.Service, logger *slog.Logger, workerToken string) *WorkerGateway {
 	return &WorkerGateway{
-		service:            service,
-		logger:             logger,
-		workerToken:        workerToken,
-		connections:        map[string]*workerConnection{},
-		proxyByName:        map[string]*workerProxyTunnel{},
-		interactionWaiters: map[string]chan error{},
+		service:     service,
+		logger:      logger,
+		workerToken: workerToken,
+		connections: map[string]*workerConnection{},
+		proxyByName: map[string]*workerProxyTunnel{},
 	}
 }
 
@@ -292,8 +289,20 @@ func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	wsConn := &workerConnection{conn: conn}
 	workerID := r.URL.Query().Get("worker_id")
+	var pumpCancel context.CancelFunc
+	defer func() {
+		if pumpCancel != nil {
+			pumpCancel()
+		}
+	}()
+	startPump := func(id string) {
+		pumpCtx, cancel := context.WithCancel(r.Context())
+		pumpCancel = cancel
+		go g.runWatchPump(pumpCtx, id, wsConn)
+	}
 	if workerID != "" {
 		g.trackConnection(workerID, wsConn)
+		startPump(workerID)
 	}
 	defer func() {
 		removed := g.untrackConnection(workerID, wsConn)
@@ -302,6 +311,9 @@ func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if _, err := g.service.WorkerDisconnected(ctx, workerID); err != nil && !errors.Is(err, domain.ErrNotFound) {
 				g.logger.Warn("mark worker offline failed", "workerId", workerID, "error", err)
+			}
+			if _, err := g.service.MarkWorkerLost(ctx, workerID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+				g.logger.Warn("mark worker lost failed", "workerId", workerID, "error", err)
 			}
 		}
 		_ = conn.Close()
@@ -312,11 +324,16 @@ func (g *WorkerGateway) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if envelope.WorkerID != "" && envelope.WorkerID != workerID {
+			if pumpCancel != nil {
+				pumpCancel()
+				pumpCancel = nil
+			}
 			if workerID != "" {
 				g.untrackConnection(workerID, wsConn)
 			}
 			workerID = envelope.WorkerID
 			g.trackConnection(workerID, wsConn)
+			startPump(workerID)
 		}
 		if err := g.apply(r.Context(), envelope, workerID); err != nil {
 			_ = wsConn.writeJSON(protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskFailed, WorkerID: workerID, Timestamp: time.Now().UTC(), Payload: map[string]string{"error": err.Error()}})
@@ -989,7 +1006,6 @@ func (g *WorkerGateway) apply(ctx context.Context, envelope rawEnvelope, fallbac
 			Message:       payload.Message,
 			Payload:       payload.Payload,
 		})
-		g.resolveInteractionWaiter(payload.InteractionID, err)
 		return err
 	case protocol.MessageTaskResult:
 		var event protocol.WorkerEvent
@@ -1031,130 +1047,125 @@ func taskIDFromEnvelope(envelope rawEnvelope, event protocol.WorkerEvent) string
 	return event.TaskID
 }
 
-func (g *WorkerGateway) SendTaskStart(workerID, taskID string, payload protocol.TaskStartPayload) error {
-	return g.send(workerID, protocol.Envelope{
-		MessageID: "msg_" + uuid.NewString(),
-		Type:      protocol.MessageTaskStart,
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		Timestamp: time.Now().UTC(),
-		Payload:   payload,
-	})
-}
-
-func (g *WorkerGateway) SendTaskContinue(workerID, taskID string, payload protocol.TaskContinuePayload) error {
-	return g.send(workerID, protocol.Envelope{
-		MessageID: "msg_" + uuid.NewString(),
-		Type:      protocol.MessageTaskContinue,
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		Timestamp: time.Now().UTC(),
-		Payload:   payload,
-	})
-}
-
-func (g *WorkerGateway) SendTaskInteractionResponse(workerID, taskID string, payload protocol.TaskInteractionResponsePayload) error {
-	if workerID == "" {
-		return fmt.Errorf("worker id is required")
-	}
-	if payload.TaskID == "" {
-		payload.TaskID = taskID
-	}
-	waiter := g.registerInteractionWaiter(payload.InteractionID)
-	if err := g.send(workerID, protocol.Envelope{
-		MessageID: "msg_" + uuid.NewString(),
-		Type:      protocol.MessageTaskInteractionResponse,
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		Timestamp: time.Now().UTC(),
-		Payload:   payload,
-	}); err != nil {
-		g.removeInteractionWaiter(payload.InteractionID)
-		return err
-	}
-	select {
-	case err := <-waiter:
-		return err
-	case <-time.After(10 * time.Second):
-		g.removeInteractionWaiter(payload.InteractionID)
-		return fmt.Errorf("worker %s did not resolve interaction %s", workerID, payload.InteractionID)
-	}
-}
-
-func (g *WorkerGateway) SendTaskInterrupt(workerID, taskID string) error {
-	if workerID == "" {
-		return nil
-	}
-	return g.send(workerID, protocol.Envelope{
-		MessageID: "msg_" + uuid.NewString(),
-		Type:      protocol.MessageTaskInterrupt,
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		Timestamp: time.Now().UTC(),
-	})
-}
-
-func (g *WorkerGateway) SendTaskCancel(workerID, taskID string) error {
-	if workerID == "" {
-		return nil
-	}
-	return g.send(workerID, protocol.Envelope{
-		MessageID: "msg_" + uuid.NewString(),
-		Type:      protocol.MessageTaskCancel,
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		Timestamp: time.Now().UTC(),
-	})
-}
-
-func (g *WorkerGateway) send(workerID string, envelope protocol.Envelope) error {
-	g.mu.RLock()
-	conn := g.connections[workerID]
-	g.mu.RUnlock()
-	if conn == nil {
-		return fmt.Errorf("worker %s is not connected", workerID)
-	}
-	return conn.writeJSON(envelope)
-}
-
-func (g *WorkerGateway) registerInteractionWaiter(interactionID string) chan error {
-	waiter := make(chan error, 1)
-	if interactionID == "" {
-		waiter <- nil
-		return waiter
-	}
-	g.interactionMu.Lock()
-	g.interactionWaiters[interactionID] = waiter
-	g.interactionMu.Unlock()
-	return waiter
-}
-
-func (g *WorkerGateway) resolveInteractionWaiter(interactionID string, err error) {
-	if interactionID == "" {
-		return
-	}
-	g.interactionMu.Lock()
-	waiter := g.interactionWaiters[interactionID]
-	delete(g.interactionWaiters, interactionID)
-	g.interactionMu.Unlock()
-	if waiter != nil {
-		waiter <- err
-	}
-}
-
-func (g *WorkerGateway) removeInteractionWaiter(interactionID string) {
-	if interactionID == "" {
-		return
-	}
-	g.interactionMu.Lock()
-	delete(g.interactionWaiters, interactionID)
-	g.interactionMu.Unlock()
-}
-
 func cloneMetadata(metadata map[string]string) map[string]string {
 	out := map[string]string{}
 	for key, value := range metadata {
 		out[key] = value
 	}
 	return out
+}
+
+func (g *WorkerGateway) runWatchPump(ctx context.Context, workerID string, wsConn *workerConnection) {
+	if workerID == "" {
+		return
+	}
+	events, unsubscribe := g.service.SubscribeDomainEvents(ctx, domain.EventFilter{})
+	defer unsubscribe()
+	tasks, err := g.service.AssignedTasks(ctx, workerID)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		g.logger.Warn("watch pump list failed", "workerId", workerID, "error", err)
+	}
+	for _, task := range tasks {
+		if err := g.dispatchTaskState(ctx, wsConn, task.ID); err != nil {
+			g.logger.Warn("watch pump initial dispatch failed", "workerId", workerID, "taskId", task.ID, "error", err)
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if !watchEventForWorker(event, workerID) {
+				continue
+			}
+			taskID := event.AggregateID
+			if event.AggregateType != "Task" || taskID == "" {
+				continue
+			}
+			if err := g.dispatchTaskState(ctx, wsConn, taskID); err != nil {
+				if !errors.Is(err, domain.ErrNotFound) {
+					g.logger.Warn("watch pump dispatch failed", "workerId", workerID, "taskId", taskID, "error", err)
+				}
+			}
+		}
+	}
+}
+
+func watchEventForWorker(event domain.DomainEvent, workerID string) bool {
+	if event.AggregateType != "Task" {
+		return false
+	}
+	switch event.EventType {
+	case "TaskAssigned", "TaskStartRequested", "TaskContinueRequested", "TaskInterruptRequested", "TaskDirectiveQueued", "TaskDirectiveAcked":
+	default:
+		return false
+	}
+	var payload map[string]any
+	if len(event.Payload) > 0 {
+		_ = json.Unmarshal(event.Payload, &payload)
+	}
+	if id, ok := payload["workerId"].(string); ok && id != "" {
+		return id == workerID
+	}
+	return true
+}
+
+func (g *WorkerGateway) dispatchTaskState(ctx context.Context, wsConn *workerConnection, taskID string) error {
+	task, project, worker, err := g.service.AssignedTaskBundle(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	switch task.Status {
+	case domain.TaskStarting:
+		if task.PendingDirective != nil && task.PendingDirective.Kind == domain.TaskDirectiveContinue {
+			payload := g.service.BuildContinuePayload(task, project, worker, task.PendingDirective.Message)
+			return wsConn.writeJSON(protocol.Envelope{
+				MessageID: "msg_" + uuid.NewString(),
+				Type:      protocol.MessageTaskContinue,
+				WorkerID:  worker.ID,
+				TaskID:    task.ID,
+				Timestamp: time.Now().UTC(),
+				Payload:   payload,
+			})
+		}
+		payload := g.service.BuildStartPayload(task, project, worker)
+		return wsConn.writeJSON(protocol.Envelope{
+			MessageID: "msg_" + uuid.NewString(),
+			Type:      protocol.MessageTaskStart,
+			WorkerID:  worker.ID,
+			TaskID:    task.ID,
+			Timestamp: time.Now().UTC(),
+			Payload:   payload,
+		})
+	case domain.TaskInterrupting:
+		return wsConn.writeJSON(protocol.Envelope{
+			MessageID: "msg_" + uuid.NewString(),
+			Type:      protocol.MessageTaskInterrupt,
+			WorkerID:  worker.ID,
+			TaskID:    task.ID,
+			Timestamp: time.Now().UTC(),
+		})
+	case domain.TaskRunning, domain.TaskWaitingInput:
+		if task.PendingDirective != nil && task.PendingDirective.Kind == domain.TaskDirectiveInteraction {
+			payload := protocol.TaskInteractionResponsePayload{
+				InteractionID: task.PendingDirective.InteractionID,
+				TaskID:        task.ID,
+				Decision:      task.PendingDirective.Decision,
+				Message:       task.PendingDirective.Message,
+				Payload:       task.PendingDirective.Payload,
+			}
+			return wsConn.writeJSON(protocol.Envelope{
+				MessageID: "msg_" + uuid.NewString(),
+				Type:      protocol.MessageTaskInteractionResponse,
+				WorkerID:  worker.ID,
+				TaskID:    task.ID,
+				Timestamp: time.Now().UTC(),
+				Payload:   payload,
+			})
+		}
+	}
+	return nil
 }

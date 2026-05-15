@@ -12,8 +12,6 @@ const (
 	MessageTaskStart               MessageType = "TASK_START"
 	MessageTaskContinue            MessageType = "TASK_CONTINUE"
 	MessageTaskInterrupt           MessageType = "TASK_INTERRUPT"
-	MessageTaskCancel              MessageType = "TASK_CANCEL"
-	MessageWorkerConfigUpdate      MessageType = "WORKER_CONFIG_UPDATE"
 	MessageWorkerRegister          MessageType = "WORKER_REGISTER"
 	MessageWorkerHeartbeat         MessageType = "WORKER_HEARTBEAT"
 	MessageTaskAccepted            MessageType = "TASK_ACCEPTED"

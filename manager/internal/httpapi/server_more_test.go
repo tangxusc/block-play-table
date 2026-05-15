@@ -802,9 +802,9 @@ func TestWorkerGatewayRoutesTaskInteractionResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := service.Task(ctx, task.ID)
+	loaded, err := waitForTaskStatus(ctx, service, task.ID, domain.TaskRunning, 2*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("task after resolved: %v", err)
 	}
 	if loaded.Status != domain.TaskRunning {
 		t.Fatalf("task after resolved = %+v", loaded)
@@ -885,28 +885,6 @@ func TestWorkerGatewayApplyTaskTerminalEvents(t *testing.T) {
 	}
 	if loadedInterrupted.Status != domain.TaskInterrupted || loadedInterrupted.Result != "partial result" {
 		t.Fatalf("interrupted task = %+v, want INTERRUPTED with result", loadedInterrupted)
-	}
-}
-
-func TestWorkerGatewaySendTaskInteractionResponseCleansWaiterOnSendFailure(t *testing.T) {
-	gateway := NewServer(app.NewService(store.NewMemoryStore())).gateway
-
-	if err := gateway.SendTaskInteractionResponse("", "task-1", protocol.TaskInteractionResponsePayload{InteractionID: "interaction-empty-worker"}); err == nil || !strings.Contains(err.Error(), "worker id is required") {
-		t.Fatalf("empty worker SendTaskInteractionResponse error = %v, want worker id error", err)
-	}
-
-	err := gateway.SendTaskInteractionResponse("missing-worker", "task-1", protocol.TaskInteractionResponsePayload{
-		InteractionID: "interaction-send-fails",
-		Decision:      domain.TaskInteractionApprove,
-	})
-	if err == nil || !strings.Contains(err.Error(), "worker missing-worker is not connected") {
-		t.Fatalf("missing worker SendTaskInteractionResponse error = %v, want not connected", err)
-	}
-	gateway.interactionMu.Lock()
-	_, exists := gateway.interactionWaiters["interaction-send-fails"]
-	gateway.interactionMu.Unlock()
-	if exists {
-		t.Fatal("interaction waiter was not removed after send failure")
 	}
 }
 
@@ -1041,62 +1019,125 @@ func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
 	}
 }
 
-func TestWorkerGatewaySendsTaskCancelAndHeartbeatOption(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore())
-	api := NewServer(service, WithWorkerHeartbeatTimeout(7*time.Second))
-	if api.heartbeatTimeout != 7*time.Second {
-		t.Fatalf("heartbeat timeout = %s, want 7s", api.heartbeatTimeout)
-	}
+func TestWorkerGatewayWatchPumpDeliversListAndInterrupt(t *testing.T) {
+	ctx := context.Background()
+	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	api := NewServer(service)
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-cancel", nil)
+	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
+		ID:              "worker-watch",
+		Name:            "watch",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		WorkDir:         "/tmp/worker",
+		BindingMode:     domain.WorkerAllProjects,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.CreateTask(ctx, app.CreateTaskInput{
+		Title:     "T",
+		ProjectID: project.ID,
+		WorkerID:  worker.ID,
+		AgentType: domain.AgentCodex,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Move the task into STARTING before the worker connects so the list step has work to do.
+	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-watch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, "worker-cancel")
+	waitForWorkerGatewayConnection(t, api.gateway, "worker-watch")
 
-	if err := api.gateway.SendTaskCancel("", "task-1"); err != nil {
-		t.Fatalf("SendTaskCancel with empty worker id returned error: %v", err)
-	}
-	if err := api.gateway.SendTaskCancel("missing-worker", "task-1"); err == nil {
-		t.Fatal("SendTaskCancel to missing worker should fail")
-	}
-	if err := api.gateway.SendTaskInterrupt("", "task-1"); err != nil {
-		t.Fatalf("SendTaskInterrupt with empty worker id returned error: %v", err)
-	}
-	if err := api.gateway.SendTaskInterrupt("missing-worker", "task-1"); err == nil {
-		t.Fatal("SendTaskInterrupt to missing worker should fail")
-	}
-	if err := api.gateway.SendTaskInterrupt("worker-cancel", "task-2"); err != nil {
-		t.Fatalf("SendTaskInterrupt returned error: %v", err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	var interrupt protocol.Envelope
+	var listed rawEnvelope
+	if err := conn.ReadJSON(&listed); err != nil {
+		t.Fatalf("expected list envelope: %v", err)
+	}
+	if listed.Type != protocol.MessageTaskStart || listed.TaskID != task.ID {
+		t.Fatalf("list envelope = %+v", listed)
+	}
+
+	// Mark task RUNNING so InterruptTask is allowed.
+	sendWS(t, conn, protocol.Envelope{MessageID: "started-watch", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
+	if _, err := waitForTaskStatus(ctx, service, task.ID, domain.TaskRunning, 2*time.Second); err != nil {
+		t.Fatalf("task did not reach RUNNING: %v", err)
+	}
+
+	if _, _, err := service.InterruptTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var interrupt rawEnvelope
 	if err := conn.ReadJSON(&interrupt); err != nil {
-		t.Fatal(err)
+		t.Fatalf("expected interrupt envelope: %v", err)
 	}
-	if interrupt.Type != protocol.MessageTaskInterrupt || interrupt.WorkerID != "worker-cancel" || interrupt.TaskID != "task-2" {
+	if interrupt.Type != protocol.MessageTaskInterrupt || interrupt.TaskID != task.ID {
 		t.Fatalf("interrupt envelope = %+v", interrupt)
 	}
-	if err := api.gateway.SendTaskCancel("worker-cancel", "task-1"); err != nil {
-		t.Fatalf("SendTaskCancel returned error: %v", err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+}
+
+func TestWorkerGatewayWatchPumpFiltersOtherWorkers(t *testing.T) {
+	ctx := context.Background()
+	service := app.NewService(store.NewMemoryStore())
+	api := NewServer(service)
+	server := httptest.NewServer(api.Handler())
+	defer server.Close()
+
+	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	var envelope protocol.Envelope
-	if err := conn.ReadJSON(&envelope); err != nil {
+	if _, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
+		ID: "worker-other", Name: "other", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerAllProjects,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Type != protocol.MessageTaskCancel || envelope.WorkerID != "worker-cancel" || envelope.TaskID != "task-1" {
-		t.Fatalf("cancel envelope = %+v", envelope)
+	if _, err := service.WorkerConnected(ctx, "worker-other"); err != nil {
+		t.Fatal(err)
 	}
-	if got := taskIDFromEnvelope(rawEnvelope{}, protocol.WorkerEvent{TaskID: "task-from-event"}); got != "task-from-event" {
-		t.Fatalf("taskIDFromEnvelope fallback = %q", got)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-watch-self", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitForWorkerGatewayConnection(t, api.gateway, "worker-watch-self")
+
+	// Create+assign a task to a different worker; the connected worker should not receive any envelope.
+	task, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "T", ProjectID: project.ID, WorkerID: "worker-other", AgentType: domain.AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var envelope rawEnvelope
+	if err := conn.ReadJSON(&envelope); err == nil {
+		t.Fatalf("worker-watch-self should not receive envelopes targeted at worker-other, got %+v", envelope)
 	}
 }
 
@@ -1193,6 +1234,23 @@ func waitForWorkerGatewayConnection(t *testing.T, gateway *WorkerGateway, worker
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("worker %s gateway connection was not tracked", workerID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForTaskStatus(ctx context.Context, service *app.Service, taskID string, status domain.TaskStatus, timeout time.Duration) (*domain.Task, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		loaded, err := service.Task(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if loaded.Status == status {
+			return loaded, nil
+		}
+		if time.Now().After(deadline) {
+			return loaded, fmt.Errorf("task status = %s, want %s", loaded.Status, status)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

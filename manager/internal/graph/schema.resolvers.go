@@ -105,33 +105,21 @@ func (r *mutationResolver) StartTask(ctx context.Context, input *model.StartTask
 	if resolvedTaskID == "" {
 		return nil, fmt.Errorf("taskId is required")
 	}
-	task, payload, err := r.Service.StartTask(ctx, resolvedTaskID)
+	task, _, err := r.Service.StartTask(ctx, resolvedTaskID)
 	if err != nil {
 		return nil, err
-	}
-	if r.WorkerSender != nil {
-		if err := r.WorkerSender.SendTaskStart(task.WorkerID, task.ID, payload); err != nil {
-			_, _ = r.Service.ApplyWorkerTaskFailed(ctx, "delivery-failed-"+task.ID, task.ID, "task start delivery failed: "+err.Error())
-			return nil, err
-		}
 	}
 	return toModelTask(task), nil
 }
 
 // ContinueTask is the resolver for the continueTask field.
 func (r *mutationResolver) ContinueTask(ctx context.Context, input model.ContinueTaskInput) (*model.Task, error) {
-	task, payload, err := r.Service.ContinueTask(ctx, app.ContinueTaskInput{
+	task, _, err := r.Service.ContinueTask(ctx, app.ContinueTaskInput{
 		TaskID:  input.TaskID,
 		Message: input.Message,
 	})
 	if err != nil {
 		return nil, err
-	}
-	if r.WorkerSender != nil {
-		if err := r.WorkerSender.SendTaskContinue(task.WorkerID, task.ID, payload); err != nil {
-			_, _ = r.Service.ApplyWorkerTaskFailed(ctx, "continue-delivery-failed-"+task.ID, task.ID, "task continue delivery failed: "+err.Error())
-			return nil, err
-		}
 	}
 	return toModelTask(task), nil
 }
@@ -142,22 +130,7 @@ func (r *mutationResolver) RespondTaskInteraction(ctx context.Context, input mod
 	if input.Decision != nil {
 		decision = domain.TaskInteractionDecision(*input.Decision)
 	}
-	task, _, payload, err := r.Service.PrepareTaskInteractionResponse(ctx, app.RespondTaskInteractionInput{
-		InteractionID: input.InteractionID,
-		Decision:      decision,
-		Message:       valueOrEmpty(input.Message),
-		Payload:       valueOrEmpty(input.Payload),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if r.WorkerSender == nil {
-		return nil, fmt.Errorf("worker sender is not configured")
-	}
-	if err := r.WorkerSender.SendTaskInteractionResponse(task.WorkerID, task.ID, payload); err != nil {
-		return nil, err
-	}
-	interaction, err := r.Service.MarkTaskInteractionAnswered(ctx, app.RespondTaskInteractionInput{
+	interaction, err := r.Service.RespondTaskInteraction(ctx, app.RespondTaskInteractionInput{
 		InteractionID: input.InteractionID,
 		Decision:      decision,
 		Message:       valueOrEmpty(input.Message),
@@ -175,15 +148,9 @@ func (r *mutationResolver) InterruptTask(ctx context.Context, taskID *string, id
 	if resolvedTaskID == "" {
 		return nil, fmt.Errorf("taskId is required")
 	}
-	task, workerID, err := r.Service.InterruptTask(ctx, resolvedTaskID)
+	task, _, err := r.Service.InterruptTask(ctx, resolvedTaskID)
 	if err != nil {
 		return nil, err
-	}
-	if r.WorkerSender != nil {
-		if err := r.WorkerSender.SendTaskInterrupt(workerID, resolvedTaskID); err != nil {
-			_, _ = r.Service.ApplyWorkerTaskInterrupted(ctx, "interrupt-delivery-failed-"+task.ID, task.ID, "interrupt delivery failed: "+err.Error())
-			return nil, err
-		}
 	}
 	return toModelTask(task), nil
 }
