@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { PlusOutlined, ReloadOutlined } from "@ant-design/icons-vue";
 import { api } from "../api";
 import type {
+  AgentRuntimeEnvVar,
   PageRequest,
   PagedResult,
   ProjectItem,
   SortRequest,
+  WorkerAgentRuntimeEnv,
   WorkerItem,
 } from "../models";
 import { defaultPage, defaultSort } from "../models";
@@ -49,6 +51,7 @@ const draft = reactive<WorkerFormDraft>(newDraft());
 const terminalWorker = ref<WorkerItem | null>(null);
 let unsubscribe: (() => void) | undefined;
 
+
 watch([search, sort], () => {
   pageReq.value = defaultPage();
   void load();
@@ -87,6 +90,98 @@ function openNewWorkerForm() {
 function generateCommand() {
   formDialogOpen.value = false;
   commandDialogOpen.value = true;
+}
+
+// --- Edit worker ---
+const editDialogOpen = ref(false);
+const editDraft = ref<WorkerItem | null>(null);
+const activeAgent = ref<"codex" | "claude">("codex");
+const envDialogOpen = ref(false);
+const envDraft = ref<AgentRuntimeEnvVar>({ key: "", value: "", description: "", enabled: true, sensitive: true });
+const editingEnvKey = ref("");
+
+const activeEnvVars = computed(() => {
+  if (!editDraft.value) return [];
+  return envGroup(editDraft.value.agentRuntimeEnv, activeAgent.value).vars;
+});
+
+const envColumns = [
+  { title: "Key", dataIndex: "key", key: "key" },
+  { title: "Value", key: "value" },
+  { title: "Description", dataIndex: "description", key: "description" },
+  { title: "Status", key: "status" },
+  { title: "Actions", key: "actions", width: 160 },
+];
+
+function openEditWorker(worker: WorkerItem) {
+  editDraft.value = cloneWorker(worker);
+  activeAgent.value = "codex";
+  editDialogOpen.value = true;
+}
+
+async function saveEditWorker() {
+  if (!editDraft.value) return;
+  await api.updateWorker(editDraft.value);
+  editDialogOpen.value = false;
+  await load(false);
+}
+
+function openEnvDialog() {
+  editingEnvKey.value = "";
+  envDraft.value = { key: "", value: "", description: "", enabled: true, sensitive: true };
+  envDialogOpen.value = true;
+}
+
+function editEnvVar(item: AgentRuntimeEnvVar) {
+  editingEnvKey.value = item.key;
+  envDraft.value = {
+    key: item.key,
+    value: item.sensitive ? "" : item.value ?? item.valueMasked ?? "",
+    valueMasked: item.valueMasked,
+    description: item.description ?? "",
+    enabled: item.enabled,
+    sensitive: item.sensitive,
+  };
+  envDialogOpen.value = true;
+}
+
+function saveEnvVar() {
+  if (!editDraft.value || !envDraft.value.key.trim()) return;
+  const group = envGroup(editDraft.value.agentRuntimeEnv, activeAgent.value);
+  const next = {
+    ...envDraft.value,
+    key: envDraft.value.key.trim(),
+    description: envDraft.value.description?.trim() || "",
+  };
+  if (!next.value?.trim()) delete next.value;
+  group.vars = [
+    ...group.vars.filter((item) => item.key !== editingEnvKey.value && item.key !== next.key),
+    next,
+  ];
+  envDialogOpen.value = false;
+}
+
+function removeEnvVar(item: AgentRuntimeEnvVar) {
+  if (!editDraft.value) return;
+  const group = envGroup(editDraft.value.agentRuntimeEnv, activeAgent.value);
+  group.vars = group.vars.filter((existing) => existing.key !== item.key);
+}
+
+function cloneWorker(worker: WorkerItem): WorkerItem {
+  const cloned: WorkerItem = JSON.parse(JSON.stringify(worker));
+  for (const agent of ["codex", "claude"] as const) envGroup(cloned.agentRuntimeEnv, agent);
+  cloned.supportedAgents = [...worker.supportedAgents];
+  cloned.boundProjectIds = [...worker.boundProjectIds];
+  return cloned;
+}
+
+function envGroup(groups: WorkerAgentRuntimeEnv[], agentType: "codex" | "claude"): WorkerAgentRuntimeEnv {
+  let group = groups.find((item) => item.agentType === agentType);
+  if (!group) {
+    group = { agentType, vars: [] };
+    groups.push(group);
+  }
+  return group;
 }
 </script>
 
@@ -131,6 +226,9 @@ function generateCommand() {
                 <a-tag>{{ worker.status }}</a-tag>
                 <span>{{ worker.currentTaskIds.length ? `${worker.currentTaskIds.length} running` : "No running tasks" }}</span>
                 <a-button aria-label="Open worker terminal" @click="terminalWorker = worker">Open worker terminal</a-button>
+                <a-button aria-label="Edit worker" @click="openEditWorker(worker)">Edit worker</a-button>
+                <a-button aria-label="Enable worker" @click="api.enableWorker(worker.id).then(() => load(false))">Enable worker</a-button>
+                <a-button aria-label="Disable worker" @click="api.disableWorker(worker.id).then(() => load(false))">Disable worker</a-button>
               </a-space>
             </div>
           </div>
@@ -173,6 +271,76 @@ function generateCommand() {
       v-model:open="commandDialogOpen"
       :worker-input="draft"
     />
+
+    <a-modal v-model:open="editDialogOpen" title="Edit worker" ok-text="Save" width="860px" @ok="saveEditWorker">
+      <a-form v-if="editDraft" layout="vertical">
+        <a-form-item label="Name"><a-input v-model:value="editDraft.name" aria-label="Name" /></a-form-item>
+        <a-form-item label="Work directory"><a-input v-model:value="editDraft.workDir" aria-label="Work directory" /></a-form-item>
+        <a-form-item label="Supported agents">
+          <a-checkbox-group v-model:value="editDraft.supportedAgents" :options="['codex', 'claude']" />
+        </a-form-item>
+        <a-form-item label="Project binding">
+          <a-radio-group v-model:value="editDraft.projectBindingMode">
+            <a-radio-button value="ALL_PROJECTS">All projects</a-radio-button>
+            <a-radio-button value="SPECIFIC_PROJECTS">Specific projects</a-radio-button>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item v-if="editDraft.projectBindingMode === 'SPECIFIC_PROJECTS'" label="Bound projects">
+          <a-select v-model:value="editDraft.boundProjectIds" mode="multiple" aria-label="Bound projects">
+            <a-select-option v-for="project in projects" :key="project.id" :value="project.id">
+              {{ project.name }}
+            </a-select-option>
+          </a-select>
+        </a-form-item>
+        <!-- Runtime environment section -->
+        <a-divider>Runtime environment</a-divider>
+        <a-tabs v-model:activeKey="activeAgent" style="margin-bottom: 12px">
+          <a-tab-pane key="codex" tab="Codex" />
+          <a-tab-pane key="claude" tab="Claude" />
+        </a-tabs>
+        <a-button style="margin-bottom: 12px" @click="openEnvDialog">New env var</a-button>
+        <a-table :data-source="activeEnvVars" :columns="envColumns" row-key="key" size="small" :pagination="false">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'value'">{{ record.sensitive ? '********' : (record.value || record.valueMasked || '') }}</template>
+            <template v-if="column.key === 'status'">
+              <a-tag :color="record.enabled ? 'green' : 'default'">{{ record.enabled ? 'enabled' : 'disabled' }}</a-tag>
+              <a-tag v-if="record.sensitive" color="orange">sensitive</a-tag>
+            </template>
+            <template v-if="column.key === 'actions'">
+              <a-space>
+                <a-button size="small" @click="editEnvVar(record)">Edit</a-button>
+                <a-button size="small" danger @click="removeEnvVar(record)">Remove</a-button>
+              </a-space>
+            </template>
+          </template>
+        </a-table>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="envDialogOpen"
+      :title="editingEnvKey ? 'Edit env var' : 'Create env var'"
+      ok-text="Save"
+      @ok="saveEnvVar"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="Key"><a-input v-model:value="envDraft.key" aria-label="Key" /></a-form-item>
+        <a-form-item label="Value">
+          <a-input-password
+            v-if="envDraft.sensitive"
+            v-model:value="envDraft.value"
+            aria-label="Value"
+            :placeholder="editingEnvKey ? 'Leave blank to keep current value' : ''"
+          />
+          <a-input v-else v-model:value="envDraft.value" aria-label="Value" />
+        </a-form-item>
+        <a-form-item label="Description"><a-input v-model:value="envDraft.description" aria-label="Description" /></a-form-item>
+        <a-form-item>
+          <a-checkbox v-model:checked="envDraft.enabled">Enabled</a-checkbox>
+          <a-checkbox v-model:checked="envDraft.sensitive" style="margin-left: 12px">Sensitive</a-checkbox>
+        </a-form-item>
+      </a-form>
+    </a-modal>
 
     <a-modal :open="!!terminalWorker" :footer="null" width="960px" @cancel="terminalWorker = null">
       <div v-if="terminalWorker" role="alertdialog" aria-modal="true">

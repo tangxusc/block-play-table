@@ -2856,3 +2856,135 @@ test("worker startup command dialog generates docker and command-line commands w
   expect(afterIds).not.toContain(workerId);
   expect(afterNames).not.toContain(workerName);
 });
+
+test("worker edit dialog manages agent runtime environment variables", async ({
+  page,
+  request,
+}) => {
+  const suffix = Date.now().toString(36).slice(-6);
+  const workerId = `worker-env-${suffix}`;
+  const workerName = `Env Worker ${suffix}`;
+
+  await graphQL(
+    request,
+    "mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id } }",
+    {
+      input: {
+        id: workerId,
+        name: workerName,
+        supportedAgents: ["codex", "claude"],
+        workDir: "/tmp/e2e-env-worker",
+        agentRuntimeEnv: [
+          {
+            agentType: "codex",
+            vars: [
+              {
+                key: "INITIAL_VAR",
+                value: "initial-value",
+                description: "initial desc",
+                enabled: true,
+                sensitive: false,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  );
+
+  await openVueApp(page);
+  await page.getByText("Workers").click();
+  await page.waitForTimeout(500);
+
+  // PLACEHOLDER_E2E_TEST_CONTINUE
+
+  const workerCard = page.locator(".record-card", { hasText: workerName });
+  await expect(workerCard).toBeVisible({ timeout: 10000 });
+  await workerCard.getByRole("button", { name: "Edit worker" }).click();
+
+  const editDialog = page.getByRole("dialog", { name: /Edit worker/ });
+  await expect(editDialog).toBeVisible();
+  await expect(editDialog.getByLabel("Name")).toHaveValue(workerName);
+  await expect(editDialog.getByLabel("Work directory")).toHaveValue(
+    "/tmp/e2e-env-worker",
+  );
+
+  const codexTab = editDialog.getByRole("tab", { name: "Codex" });
+  await codexTab.click();
+  await expect(editDialog.locator("td").filter({ hasText: "INITIAL_VAR" })).toBeVisible();
+  await expect(editDialog.locator("td").filter({ hasText: "initial-value" })).toBeVisible();
+
+  await editDialog.getByRole("button", { name: "New env var" }).click();
+  const envDialog = page.getByRole("dialog", { name: /Create env var/ });
+  await expect(envDialog).toBeVisible();
+  await fillTextField(page, envDialog.getByLabel("Key"), "NEW_VAR");
+  await fillTextField(page, envDialog.getByLabel("Value"), "new-value");
+  await fillTextField(page, envDialog.getByLabel("Description"), "new desc");
+
+  // PLACEHOLDER_E2E_TEST_PART2
+
+  const enabledCheckbox = envDialog.getByRole("checkbox", { name: "Enabled" });
+  if (!(await enabledCheckbox.isChecked())) await enabledCheckbox.check();
+  const sensitiveCheckbox = envDialog.getByRole("checkbox", { name: "Sensitive" });
+  if (await sensitiveCheckbox.isChecked()) await sensitiveCheckbox.uncheck();
+  await envDialog.getByRole("button", { name: "Save" }).click();
+  await expect(envDialog).toBeHidden();
+
+  await expect(editDialog.locator("td").filter({ hasText: "NEW_VAR" })).toBeVisible();
+  await expect(editDialog.locator("td").filter({ hasText: "new-value" })).toBeVisible();
+
+  await editDialog.getByRole("button", { name: "Save" }).click();
+  await expect(editDialog).toBeHidden();
+
+  const workerData = await graphQL(
+    request,
+    `query Worker($id: ID!) { worker(id: $id) { agentRuntimeEnv { agentType vars { key valueMasked description enabled sensitive } } } }`,
+    { id: workerId },
+  );
+  const codexVars = workerData.worker.agentRuntimeEnv.find(
+    (g: { agentType: string }) => g.agentType === "codex",
+  )?.vars;
+  expect(codexVars).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ key: "INITIAL_VAR", enabled: true }),
+      expect.objectContaining({ key: "NEW_VAR", description: "new desc", enabled: true, sensitive: false }),
+    ]),
+  );
+
+  // PLACEHOLDER_E2E_TEST_PART3
+
+  // Test remove env var
+  await workerCard.getByRole("button", { name: "Edit worker" }).click();
+  await expect(editDialog).toBeVisible();
+  await codexTab.click();
+  const removeBtn = editDialog
+    .locator("tr", { hasText: "NEW_VAR" })
+    .getByRole("button", { name: "Remove" });
+  await removeBtn.click();
+  await expect(editDialog.locator("td").filter({ hasText: "NEW_VAR" })).toBeHidden();
+  await editDialog.getByRole("button", { name: "Save" }).click();
+  await expect(editDialog).toBeHidden();
+
+  const afterRemove = await graphQL(
+    request,
+    `query Worker($id: ID!) { worker(id: $id) { agentRuntimeEnv { agentType vars { key } } } }`,
+    { id: workerId },
+  );
+  const codexVarsAfter = afterRemove.worker.agentRuntimeEnv.find(
+    (g: { agentType: string }) => g.agentType === "codex",
+  )?.vars;
+  expect(codexVarsAfter?.map((v: { key: string }) => v.key)).not.toContain("NEW_VAR");
+  expect(codexVarsAfter?.map((v: { key: string }) => v.key)).toContain("INITIAL_VAR");
+
+  // Test enable/disable worker
+  await workerCard.getByRole("button", { name: "Disable worker" }).click();
+  await page.waitForTimeout(500);
+  await expect(workerCard.locator("text=DISABLED")).toBeVisible({ timeout: 5000 });
+
+  await workerCard.getByRole("button", { name: "Enable worker" }).click();
+  await page.waitForTimeout(500);
+  await expect(workerCard.locator("text=REGISTERED")).toBeVisible({ timeout: 5000 });
+
+  // Cleanup
+  await graphQL(request, "mutation DeleteWorker($id: ID!) { deleteWorker(id: $id) }", { id: workerId });
+});
