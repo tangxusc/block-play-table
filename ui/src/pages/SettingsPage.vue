@@ -8,6 +8,8 @@ import PageHeader from "../components/PageHeader.vue";
 const loading = ref(false);
 const error = ref("");
 const settings = ref<SettingsData>({ workerHeartbeatTimeout: "90s", securityPolicy: "" });
+const currentUser = ref<{ id: string; trustMode: boolean } | null>(null);
+const employeeName = ref<string | null>(null);
 let unsubscribe: (() => void) | undefined;
 
 void load();
@@ -21,6 +23,9 @@ async function load(showSpinner = true) {
   error.value = "";
   try {
     settings.value = await api.fetchSettings();
+    currentUser.value = await api.fetchCurrentUser();
+    const emp = await api.fetchEmployeeByID(currentUser.value.id);
+    employeeName.value = emp?.name ?? null;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -45,6 +50,14 @@ async function save() {
     <main class="content">
       <a-alert v-if="error" type="error" show-icon :message="error" style="margin-bottom: 12px" />
       <a-spin :spinning="loading">
+        <section class="detail-section">
+          <h2>User Identity</h2>
+          <a-descriptions :column="1" bordered size="small" style="max-width: 480px">
+            <a-descriptions-item label="User ID">{{ currentUser?.id || '-' }}</a-descriptions-item>
+            <a-descriptions-item label="Name">{{ employeeName || '(unavailable)' }}</a-descriptions-item>
+            <a-descriptions-item label="Trust Mode">{{ currentUser?.trustMode ? 'Enabled' : 'Disabled' }}</a-descriptions-item>
+          </a-descriptions>
+        </section>
         <section class="detail-section">
           <h2>Trusted mode</h2>
           <p>

@@ -243,6 +243,7 @@ type CreateTaskInput struct {
 	BaseBranch   string                       `json:"baseBranch"`
 	PreCommands  []string                     `json:"preCommands"`
 	PostCommands []string                     `json:"postCommands"`
+	OwnerUserID  string                       `json:"ownerUserId"`
 	StartDate    time.Time                    `json:"startDate"`
 	EndDate      time.Time                    `json:"endDate"`
 }
@@ -296,6 +297,7 @@ type TaskFilter struct {
 	ProjectID       string
 	WorkerID        string
 	AgentType       domain.AgentType
+	OwnerUserID     string
 	IncludeArchived bool
 	Search          string
 }
@@ -594,6 +596,7 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*domai
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
+		OwnerUserID:  input.OwnerUserID,
 		StartDate:    input.StartDate,
 		EndDate:      input.EndDate,
 		Now:          now,
@@ -648,6 +651,9 @@ func (s *Service) TasksFilteredSorted(ctx context.Context, filter TaskFilter, so
 			continue
 		}
 		if filter.AgentType != "" && task.AgentType != filter.AgentType {
+			continue
+		}
+		if filter.OwnerUserID != "" && task.OwnerUserID != filter.OwnerUserID {
 			continue
 		}
 		if !filter.IncludeArchived && task.Status == domain.TaskArchived {

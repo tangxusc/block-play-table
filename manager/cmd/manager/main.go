@@ -39,6 +39,7 @@ func main() {
 	apiServer := httpapi.NewServer(
 		service,
 		httpapi.WithWorkerToken(os.Getenv("WORKER_TOKEN")),
+		httpapi.WithTrustModeUserID(getenv("TRUST_MODE_USER_ID", "trust-mode-user-id")),
 		httpapi.WithWorkerHeartbeatTimeout(heartbeatTimeout),
 	)
 	server := &http.Server{

@@ -1,3 +1,13 @@
+export interface CurrentUser {
+  id: string;
+  trustMode: boolean;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+}
+
 export type SortDirection = "ASC" | "DESC";
 export type BoardView = "KANBAN" | "LIST" | "CALENDAR" | "ARCHIVED";
 
@@ -95,6 +105,7 @@ export interface TaskItem {
   preCommands: string[];
   postCommands: string[];
   result?: string;
+  ownerUserId: string;
   startDate: string;
   endDate: string;
   createdAt: string;

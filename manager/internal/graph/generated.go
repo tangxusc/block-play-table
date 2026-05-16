@@ -100,6 +100,11 @@ type ComplexityRoot struct {
 		TaskID    func(childComplexity int) int
 	}
 
+	CurrentUser struct {
+		ID        func(childComplexity int) int
+		TrustMode func(childComplexity int) int
+	}
+
 	DomainEvent struct {
 		AggregateID      func(childComplexity int) int
 		AggregateType    func(childComplexity int) int
@@ -178,6 +183,7 @@ type ComplexityRoot struct {
 
 	Query struct {
 		Board                  func(childComplexity int, id *string, filter *model.TaskFilter, sort *model.TaskSortInput, page *model.PageInput) int
+		CurrentUser            func(childComplexity int) int
 		DomainEvents           func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string) int
 		DomainEventsConnection func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) int
 		OutboxMessages         func(childComplexity int, includePublished *bool) int
@@ -226,6 +232,7 @@ type ComplexityRoot struct {
 		Description    func(childComplexity int) int
 		EndDate        func(childComplexity int) int
 		ID             func(childComplexity int) int
+		OwnerUserID    func(childComplexity int) int
 		PostCommands   func(childComplexity int) int
 		PreCommands    func(childComplexity int) int
 		ProjectID      func(childComplexity int) int
@@ -406,6 +413,7 @@ type QueryResolver interface {
 	TaskGitDiff(ctx context.Context, taskID string, scope model.TaskGitDiffScope, staged *bool) (*model.TaskGitDiff, error)
 	TaskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error)
 	TaskGitBackups(ctx context.Context, taskID string) ([]*model.TaskGitBackup, error)
+	CurrentUser(ctx context.Context) (*model.CurrentUser, error)
 }
 type SubscriptionResolver interface {
 	TaskUpdated(ctx context.Context, taskID string) (<-chan *model.DomainEvent, error)
@@ -664,6 +672,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.ConversationMessage.TaskID(childComplexity), true
+
+	case "CurrentUser.id":
+		if e.ComplexityRoot.CurrentUser.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentUser.ID(childComplexity), true
+	case "CurrentUser.trustMode":
+		if e.ComplexityRoot.CurrentUser.TrustMode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentUser.TrustMode(childComplexity), true
 
 	case "DomainEvent.aggregateId":
 		if e.ComplexityRoot.DomainEvent.AggregateID == nil {
@@ -1143,6 +1164,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Board(childComplexity, args["id"].(*string), args["filter"].(*model.TaskFilter), args["sort"].(*model.TaskSortInput), args["page"].(*model.PageInput)), true
+	case "Query.currentUser":
+		if e.ComplexityRoot.Query.CurrentUser == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.CurrentUser(childComplexity), true
 	case "Query.domainEvents":
 		if e.ComplexityRoot.Query.DomainEvents == nil {
 			break
@@ -1501,6 +1528,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Task.ID(childComplexity), true
+	case "Task.ownerUserId":
+		if e.ComplexityRoot.Task.OwnerUserID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Task.OwnerUserID(childComplexity), true
 	case "Task.postCommands":
 		if e.ComplexityRoot.Task.PostCommands == nil {
 			break
@@ -3507,6 +3540,8 @@ func (ec *executionContext) fieldContext_Board_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -3605,6 +3640,8 @@ func (ec *executionContext) fieldContext_BoardCalendarItem_task(_ context.Contex
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -3819,6 +3856,8 @@ func (ec *executionContext) fieldContext_BoardColumn_tasks(_ context.Context, fi
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -4277,6 +4316,64 @@ func (ec *executionContext) fieldContext_ConversationMessage_createdAt(_ context
 	return fc, nil
 }
 
+func (ec *executionContext) _CurrentUser_id(ctx context.Context, field graphql.CollectedField, obj *model.CurrentUser) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CurrentUser_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CurrentUser_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CurrentUser",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CurrentUser_trustMode(ctx context.Context, field graphql.CollectedField, obj *model.CurrentUser) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CurrentUser_trustMode,
+		func(ctx context.Context) (any, error) {
+			return obj.TrustMode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CurrentUser_trustMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CurrentUser",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _DomainEvent_eventId(ctx context.Context, field graphql.CollectedField, obj *model.DomainEvent) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4727,6 +4824,8 @@ func (ec *executionContext) fieldContext_Mutation_createTask(ctx context.Context
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -4808,6 +4907,8 @@ func (ec *executionContext) fieldContext_Mutation_updateTask(ctx context.Context
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -4889,6 +4990,8 @@ func (ec *executionContext) fieldContext_Mutation_assignWorker(ctx context.Conte
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -4970,6 +5073,8 @@ func (ec *executionContext) fieldContext_Mutation_startTask(ctx context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -5051,6 +5156,8 @@ func (ec *executionContext) fieldContext_Mutation_continueTask(ctx context.Conte
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -5201,6 +5308,8 @@ func (ec *executionContext) fieldContext_Mutation_interruptTask(ctx context.Cont
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -5282,6 +5391,8 @@ func (ec *executionContext) fieldContext_Mutation_archiveTask(ctx context.Contex
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -5404,6 +5515,8 @@ func (ec *executionContext) fieldContext_Mutation_retryTask(ctx context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -6957,6 +7070,8 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -7085,6 +7200,8 @@ func (ec *executionContext) fieldContext_Query_taskList(ctx context.Context, fie
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -8151,6 +8268,41 @@ func (ec *executionContext) fieldContext_Query_taskGitBackups(ctx context.Contex
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_currentUser(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_currentUser,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().CurrentUser(ctx)
+		},
+		nil,
+		ec.marshalNCurrentUser2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCurrentUser,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_currentUser(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_CurrentUser_id(ctx, field)
+			case "trustMode":
+				return ec.fieldContext_CurrentUser_trustMode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CurrentUser", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -9138,6 +9290,35 @@ func (ec *executionContext) fieldContext_Task_result(_ context.Context, field gr
 	return fc, nil
 }
 
+func (ec *executionContext) _Task_ownerUserId(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_ownerUserId,
+		func(ctx context.Context) (any, error) {
+			return obj.OwnerUserID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_ownerUserId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Task_startDate(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -9335,6 +9516,8 @@ func (ec *executionContext) fieldContext_TaskConnection_nodes(_ context.Context,
 				return ec.fieldContext_Task_postCommands(ctx, field)
 			case "result":
 				return ec.fieldContext_Task_result(ctx, field)
+			case "ownerUserId":
+				return ec.fieldContext_Task_ownerUserId(ctx, field)
 			case "startDate":
 				return ec.fieldContext_Task_startDate(ctx, field)
 			case "endDate":
@@ -14157,7 +14340,7 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"status", "projectId", "workerId", "agentType", "includeArchived", "search"}
+	fieldsInOrder := [...]string{"status", "projectId", "workerId", "agentType", "ownerUserId", "includeArchived", "search"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -14192,6 +14375,13 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 				return it, err
 			}
 			it.AgentType = data
+		case "ownerUserId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ownerUserId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.OwnerUserID = data
 		case "includeArchived":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("includeArchived"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -15188,6 +15378,50 @@ func (ec *executionContext) _ConversationMessage(ctx context.Context, sel ast.Se
 			}
 		case "createdAt":
 			out.Values[i] = ec._ConversationMessage_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var currentUserImplementors = []string{"CurrentUser"}
+
+func (ec *executionContext) _CurrentUser(ctx context.Context, sel ast.SelectionSet, obj *model.CurrentUser) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, currentUserImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CurrentUser")
+		case "id":
+			out.Values[i] = ec._CurrentUser_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "trustMode":
+			out.Values[i] = ec._CurrentUser_trustMode(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -16250,6 +16484,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "currentUser":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_currentUser(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -16439,6 +16695,11 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			}
 		case "result":
 			out.Values[i] = ec._Task_result(ctx, field, obj)
+		case "ownerUserId":
+			out.Values[i] = ec._Task_ownerUserId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "startDate":
 			out.Values[i] = ec._Task_startDate(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -17822,6 +18083,20 @@ func (ec *executionContext) unmarshalNCreateTaskInput2githubᚗcomᚋtangxuscᚋ
 func (ec *executionContext) unmarshalNCreateWorkerInput2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCreateWorkerInput(ctx context.Context, v any) (model.CreateWorkerInput, error) {
 	res, err := ec.unmarshalInputCreateWorkerInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNCurrentUser2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCurrentUser(ctx context.Context, sel ast.SelectionSet, v model.CurrentUser) graphql.Marshaler {
+	return ec._CurrentUser(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNCurrentUser2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐCurrentUser(ctx context.Context, sel ast.SelectionSet, v *model.CurrentUser) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CurrentUser(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNDomainEvent2githubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐDomainEvent(ctx context.Context, sel ast.SelectionSet, v model.DomainEvent) graphql.Marshaler {

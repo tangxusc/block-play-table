@@ -178,7 +178,7 @@ export function loadManagerToken(): string {
 }
 
 const taskFields = `
-  id title description status projectId agentType baseBranch
+  id title description status projectId agentType baseBranch ownerUserId
   agentConfig {
     workMode
     codex { model reasoningEffort sandboxMode approvalPolicy fullAuto bypassApprovalsAndSandbox }
@@ -320,6 +320,7 @@ export class ApiClient {
     search: string,
     sort: SortRequest,
     projectId: string,
+    ownerUserId?: string,
   ): Promise<BoardData> {
     const archivedView = view === "ARCHIVED";
     const id = view === "CALENDAR" ? "calendar" : view === "LIST" || archivedView ? "list" : null;
@@ -340,6 +341,7 @@ export class ApiClient {
               includeArchived: archivedView,
               ...(archivedView ? { status: "ARCHIVED" } : {}),
               ...(projectId ? { projectId } : {}),
+              ...(ownerUserId ? { ownerUserId } : {}),
             },
             search,
           ),
@@ -426,6 +428,25 @@ export class ApiClient {
       `query Settings { settings { workerHeartbeatTimeout securityPolicy } }`,
     );
     return data.settings;
+  }
+
+  async fetchCurrentUser(): Promise<{ id: string; trustMode: boolean }> {
+    const data = await this.graphQL<{ currentUser: { id: string; trustMode: boolean } }>(
+      `query CurrentUser { currentUser { id trustMode } }`,
+    );
+    return data.currentUser;
+  }
+
+  async fetchEmployeeByID(id: string): Promise<{ id: string; name: string } | null> {
+    try {
+      const data = await this.graphQL<{ employeeByID: { id: string; name: string } | null }>(
+        `query EmployeeByID($id: ID!) { employeeByID(id: $id) { id name } }`,
+        { id },
+      );
+      return data.employeeByID ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async fetchTaskDetail(taskId: string): Promise<TaskDetailData> {

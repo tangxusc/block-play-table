@@ -181,6 +181,7 @@ type Task {
   preCommands: [String!]!
   postCommands: [String!]!
   result: String
+  ownerUserId: String!
   startDate: Time!
   endDate: Time!
   version: Int!
@@ -403,6 +404,11 @@ type Board {
   tasks: [Task!]!
 }
 
+type CurrentUser {
+  id: String!
+  trustMode: Boolean!
+}
+
 type BoardColumn {
   id: ID!
   title: String!
@@ -432,6 +438,7 @@ input TaskFilter {
   projectId: ID
   workerId: ID
   agentType: AgentType
+  ownerUserId: String
   includeArchived: Boolean
   search: String
 }
@@ -660,6 +667,7 @@ type Query {
   taskGitDiff(taskId: ID!, scope: TaskGitDiffScope!, staged: Boolean): TaskGitDiff!
   taskGitStatus(taskId: ID!, remote: String, branch: String): TaskGitStatus!
   taskGitBackups(taskId: ID!): [TaskGitBackup!]!
+  currentUser: CurrentUser!
 }
 
 type Mutation {

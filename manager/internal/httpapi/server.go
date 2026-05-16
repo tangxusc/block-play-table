@@ -35,6 +35,7 @@ type Server struct {
 	gateway          *WorkerGateway
 	logger           *slog.Logger
 	workerToken      string
+	trustModeUserID  string
 	heartbeatTimeout time.Duration
 }
 
@@ -43,6 +44,12 @@ type Option func(*Server)
 func WithWorkerToken(token string) Option {
 	return func(s *Server) {
 		s.workerToken = strings.TrimSpace(token)
+	}
+}
+
+func WithTrustModeUserID(userID string) Option {
+	return func(s *Server) {
+		s.trustModeUserID = strings.TrimSpace(userID)
 	}
 }
 
@@ -86,7 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/proxy", s.gateway.HandleProxy)
 	mux.HandleFunc("/proxy/", s.gateway.HandleProxy)
 	mux.Handle("/subscriptions", gqlHandler)
-	return withCORS(s.withManagerToken(mux))
+	return withCORS(s.withUserIdentity(s.withManagerToken(mux)))
 }
 
 func (s *Server) graphqlHandler() http.Handler {
@@ -213,7 +220,7 @@ func errorResponse(message string) map[string]any {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Manager-Token, X-API-Key, X-User-Role, worker, worker_host, worker_port")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Manager-Token, X-API-Key, X-User-Role, X-User-Id, worker, worker_host, worker_port")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -225,6 +232,19 @@ func withCORS(next http.Handler) http.Handler {
 
 var defaultUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func (s *Server) withUserIdentity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var userID string
+		if s.managerTokenRequired() {
+			userID = s.trustModeUserID
+		} else {
+			userID = strings.TrimSpace(r.Header.Get("X-User-Id"))
+		}
+		ctx := app.WithUserIdentity(r.Context(), userID, s.managerTokenRequired())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 type WorkerGateway struct {

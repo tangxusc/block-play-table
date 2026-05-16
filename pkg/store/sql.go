@@ -276,8 +276,8 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	}
 	_, err = s.db.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive", "owner_user_id"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive", "owner_user_id"},
 	),
 		task.ID,
 		task.Title,
@@ -300,12 +300,13 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		task.UpdatedAt,
 		string(desiredState),
 		pendingDirective,
+		task.OwnerUserID,
 	)
 	return err
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive, owner_user_id FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -317,7 +318,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive, owner_user_id FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1025,7 +1026,7 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var agentConfig string
 	var desiredState sql.NullString
 	var pendingDirective sql.NullString
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt, &desiredState, &pendingDirective); err != nil {
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt, &desiredState, &pendingDirective, &task.OwnerUserID); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)

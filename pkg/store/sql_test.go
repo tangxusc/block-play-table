@@ -59,6 +59,7 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 		{Version: "011_task_review", SQL: migrations.TaskReviewSQL},
 		{Version: "012_drop_task_review", SQL: migrations.DropTaskReviewSQL},
 		{Version: "013_task_desired_state", SQL: migrations.TaskDesiredStateSQL},
+		{Version: "014_task_owner_user_id", SQL: migrations.TaskOwnerUserIDSQL},
 	}
 	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
 		t.Fatalf("MigrateVersioned returned error: %v", err)

@@ -254,6 +254,7 @@ type Task struct {
 	PreCommands       []string             `json:"preCommands"`
 	PostCommands      []string             `json:"postCommands"`
 	Result            string               `json:"result,omitempty"`
+	OwnerUserID       string               `json:"ownerUserId"`
 	StartDate         time.Time            `json:"startDate"`
 	EndDate           time.Time            `json:"endDate"`
 	Version           int                  `json:"version"`
@@ -272,6 +273,7 @@ type NewTaskInput struct {
 	BaseBranch   string
 	PreCommands  []string
 	PostCommands []string
+	OwnerUserID  string
 	StartDate    time.Time
 	EndDate      time.Time
 	Now          time.Time
@@ -309,6 +311,7 @@ func NewTask(input NewTaskInput) (*Task, error) {
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
+		OwnerUserID:  input.OwnerUserID,
 		StartDate:    startDate,
 		EndDate:      endDate,
 		Version:      1,

@@ -41,6 +41,9 @@ var DropTaskReviewSQL string
 //go:embed 013_task_desired_state.sql
 var TaskDesiredStateSQL string
 
+//go:embed 014_task_owner_user_id.sql
+var TaskOwnerUserIDSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -60,4 +63,5 @@ var All = []Migration{
 	{Version: "011_task_review", SQL: TaskReviewSQL},
 	{Version: "012_drop_task_review", SQL: DropTaskReviewSQL},
 	{Version: "013_task_desired_state", SQL: TaskDesiredStateSQL},
+	{Version: "014_task_owner_user_id", SQL: TaskOwnerUserIDSQL},
 }

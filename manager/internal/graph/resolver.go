@@ -62,6 +62,7 @@ func toModelTask(task *domain.Task) *model.Task {
 		PreCommands:    append([]string(nil), task.PreCommands...),
 		PostCommands:   append([]string(nil), task.PostCommands...),
 		Result:         optionalString(task.Result),
+		OwnerUserID:    task.OwnerUserID,
 		StartDate:      startDate,
 		EndDate:        endDate,
 		Version:        task.Version,
@@ -751,6 +752,9 @@ func taskFilter(filter *model.TaskFilter) app.TaskFilter {
 	}
 	if filter.AgentType != nil {
 		out.AgentType = domain.AgentType(*filter.AgentType)
+	}
+	if filter.OwnerUserID != nil {
+		out.OwnerUserID = *filter.OwnerUserID
 	}
 	if filter.IncludeArchived != nil {
 		out.IncludeArchived = *filter.IncludeArchived

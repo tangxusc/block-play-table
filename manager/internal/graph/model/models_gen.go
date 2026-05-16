@@ -146,6 +146,11 @@ type CreateWorkerInput struct {
 	Capabilities       []*KeyValueInput              `json:"capabilities,omitempty"`
 }
 
+type CurrentUser struct {
+	ID        string `json:"id"`
+	TrustMode bool   `json:"trustMode"`
+}
+
 type DomainEvent struct {
 	EventID          string    `json:"eventId"`
 	EventType        string    `json:"eventType"`
@@ -281,6 +286,7 @@ type Task struct {
 	PreCommands    []string              `json:"preCommands"`
 	PostCommands   []string              `json:"postCommands"`
 	Result         *string               `json:"result,omitempty"`
+	OwnerUserID    string                `json:"ownerUserId"`
 	StartDate      time.Time             `json:"startDate"`
 	EndDate        time.Time             `json:"endDate"`
 	Version        int                   `json:"version"`
@@ -298,6 +304,7 @@ type TaskFilter struct {
 	ProjectID       *string     `json:"projectId,omitempty"`
 	WorkerID        *string     `json:"workerId,omitempty"`
 	AgentType       *AgentType  `json:"agentType,omitempty"`
+	OwnerUserID     *string     `json:"ownerUserId,omitempty"`
 	IncludeArchived *bool       `json:"includeArchived,omitempty"`
 	Search          *string     `json:"search,omitempty"`
 }

@@ -40,6 +40,7 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
+		OwnerUserID:  app.UserIDFromContext(ctx),
 		StartDate:    startDate,
 		EndDate:      endDate,
 	})
@@ -542,6 +543,14 @@ func (r *queryResolver) TaskGitBackups(ctx context.Context, taskID string) ([]*m
 		return nil, err
 	}
 	return toModelTaskGitBackups(backups), nil
+}
+
+// CurrentUser is the resolver for the currentUser field.
+func (r *queryResolver) CurrentUser(ctx context.Context) (*model.CurrentUser, error) {
+	return &model.CurrentUser{
+		ID:        app.UserIDFromContext(ctx),
+		TrustMode: app.TrustModeFromContext(ctx),
+	}, nil
 }
 
 // TaskUpdated is the resolver for the taskUpdated field.

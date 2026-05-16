@@ -12,6 +12,8 @@ import PaginationBar from "../components/PaginationBar.vue";
 import TaskDetailModal from "../components/TaskDetailModal.vue";
 import AgentConfigFields from "../components/AgentConfigFields.vue";
 
+const props = defineProps<{ ownerUserId?: string }>();
+
 interface ScheduleRange {
   task: TaskItem;
   start: Date;
@@ -123,6 +125,7 @@ async function load(showSpinner = true) {
       search.value,
       sort.value,
       selectedProjectId.value,
+      props.ownerUserId,
     );
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
