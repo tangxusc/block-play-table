@@ -87,8 +87,8 @@ function onActiveCleared() {
       </a-menu>
     </a-layout-sider>
     <a-layout class="bpt-page">
-      <BoardPage v-if="current === 'myboard'" :owner-user-id="currentUser?.id" />
-      <BoardPage v-else-if="current === 'board'" />
+      <BoardPage v-if="current === 'myboard'" :owner-user-id="currentUser?.id" :current-user-id="currentUser?.id" />
+      <BoardPage v-else-if="current === 'board'" :current-user-id="currentUser?.id" />
       <ProjectsPage v-else-if="current === 'projects'" />
       <WorkersPage v-else-if="current === 'workers'" />
       <EventsPage v-else-if="current === 'events'" />

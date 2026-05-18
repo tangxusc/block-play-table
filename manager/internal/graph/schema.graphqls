@@ -409,6 +409,11 @@ type CurrentUser {
   trustMode: Boolean!
 }
 
+type Employee {
+  id: ID!
+  name: String!
+}
+
 type BoardColumn {
   id: ID!
   title: String!
@@ -495,6 +500,7 @@ input CreateTaskInput {
   postCommands: [String!]
   startDate: Time
   endDate: Time
+  ownerUserId: String
 }
 
 input UpdateTaskInput {
@@ -508,6 +514,7 @@ input UpdateTaskInput {
   postCommands: [String!]
   startDate: Time
   endDate: Time
+  ownerUserId: String
 }
 
 input AssignWorkerInput {
@@ -668,6 +675,8 @@ type Query {
   taskGitStatus(taskId: ID!, remote: String, branch: String): TaskGitStatus!
   taskGitBackups(taskId: ID!): [TaskGitBackup!]!
   currentUser: CurrentUser!
+  employeeByID(id: ID!): Employee
+  employees: [Employee!]!
 }
 
 type Mutation {

@@ -405,6 +405,9 @@ func (t *Task) Update(input NewTaskInput) error {
 	t.BaseBranch = input.BaseBranch
 	t.PreCommands = append([]string(nil), input.PreCommands...)
 	t.PostCommands = append([]string(nil), input.PostCommands...)
+	if input.OwnerUserID != "" {
+		t.OwnerUserID = input.OwnerUserID
+	}
 	t.StartDate = startDate
 	t.EndDate = endDate
 	t.touch(input.Now)

@@ -57,6 +57,8 @@ const editOpen = ref(false);
 const editDraft = ref<TaskItem | null>(null);
 const editStartDate = ref("");
 const editEndDate = ref("");
+const editEmployees = ref<{ id: string; name: string }[]>([]);
+const employeeName = ref("");
 const assignWorkerId = ref("");
 const assignAgentType = ref("");
 const assignAgentConfig = ref<AgentConfigDraft>(emptyAgentConfigDraft());
@@ -156,6 +158,12 @@ async function load(showSpinner = true) {
       loaded.reviewDiff?.files.find((file) => file.path === selectedFile.value?.path) ||
       loaded.reviewDiff?.files[0] ||
       null;
+    if (loaded.task.ownerUserId) {
+      const emp = await api.fetchEmployeeByID(loaded.task.ownerUserId);
+      employeeName.value = emp?.name || loaded.task.ownerUserId;
+    } else {
+      employeeName.value = "";
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -195,11 +203,12 @@ async function retryCurrentTask() {
   await run(() => api.retryTask(task.value!.id));
 }
 
-function openEditDialog() {
+async function openEditDialog() {
   if (!task.value) return;
   editDraft.value = { ...task.value };
   editStartDate.value = pickerDate(task.value.startDate);
   editEndDate.value = pickerDate(task.value.endDate);
+  editEmployees.value = await api.fetchEmployees();
   editOpen.value = true;
 }
 
@@ -782,6 +791,7 @@ function parseDiffHunks(patch: string): DiffHunk[] {
               <section class="detail-section">
                 <h3>Task</h3>
                 <p>{{ task.description || "No description" }}</p>
+                <p><strong>Employee:</strong> {{ employeeName || "Unassigned" }}</p>
                 <p><strong>Agent:</strong> {{ task.agentType || "None" }}</p>
                 <p><strong>Base branch:</strong> {{ task.baseBranch }}</p>
                 <p v-if="task.worktreePath"><strong>Worktree:</strong> <span class="mono">{{ task.worktreePath }}</span></p>
@@ -1089,6 +1099,20 @@ function parseDiffHunks(patch: string): DiffHunk[] {
         <a-select v-model:value="editDraft.projectId" aria-label="Edit project">
           <a-select-option v-for="project in board.projects" :key="project.id" :value="project.id">
             {{ project.name }}
+          </a-select-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item label="Employee">
+        <a-select
+          v-model:value="editDraft.ownerUserId"
+          aria-label="Edit employee"
+          show-search
+          allow-clear
+          option-filter-prop="label"
+          placeholder="Select employee"
+        >
+          <a-select-option v-for="emp in editEmployees" :key="emp.id" :value="emp.id" :label="emp.name">
+            {{ emp.name }}
           </a-select-option>
         </a-select>
       </a-form-item>

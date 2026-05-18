@@ -132,6 +132,7 @@ type CreateTaskInput struct {
 	PostCommands []string                   `json:"postCommands,omitempty"`
 	StartDate    *time.Time                 `json:"startDate,omitempty"`
 	EndDate      *time.Time                 `json:"endDate,omitempty"`
+	OwnerUserID  *string                    `json:"ownerUserId,omitempty"`
 }
 
 type CreateWorkerInput struct {
@@ -178,6 +179,11 @@ type DomainEventFilter struct {
 type DomainEventSortInput struct {
 	Field     *DomainEventSortField `json:"field,omitempty"`
 	Direction *SortDirection        `json:"direction,omitempty"`
+}
+
+type Employee struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type KeyValue struct {
@@ -432,6 +438,7 @@ type UpdateTaskInput struct {
 	PostCommands []string   `json:"postCommands,omitempty"`
 	StartDate    *time.Time `json:"startDate,omitempty"`
 	EndDate      *time.Time `json:"endDate,omitempty"`
+	OwnerUserID  *string    `json:"ownerUserId,omitempty"`
 }
 
 type UpdateWorkerInput struct {

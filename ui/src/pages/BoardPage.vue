@@ -12,7 +12,7 @@ import PaginationBar from "../components/PaginationBar.vue";
 import TaskDetailModal from "../components/TaskDetailModal.vue";
 import AgentConfigFields from "../components/AgentConfigFields.vue";
 
-const props = defineProps<{ ownerUserId?: string }>();
+const props = defineProps<{ ownerUserId?: string; currentUserId?: string }>();
 
 interface ScheduleRange {
   task: TaskItem;
@@ -41,6 +41,7 @@ const draftTask = ref<Record<string, unknown>>({});
 const draftStartDate = ref("");
 const draftEndDate = ref("");
 const draftAgentConfig = ref<AgentConfigDraft>(emptyAgentConfigDraft());
+const employees = ref<{ id: string; name: string }[]>([]);
 const calendarMode = ref<"Month" | "Week" | "Day" | "Year">("Month");
 const draftCalendarFocus = ref("");
 let unsubscribe: (() => void) | undefined;
@@ -153,7 +154,7 @@ async function deleteTask(task: TaskItem) {
   await load(false);
 }
 
-function openNewTask() {
+async function openNewTask() {
   draftTask.value = {
     title: "",
     description: "",
@@ -161,11 +162,13 @@ function openNewTask() {
     workerId: "",
     agentType: "",
     baseBranch: "main",
+    ownerUserId: props.currentUserId || "",
   };
   draftStartDate.value = "";
   draftEndDate.value = "";
   draftAgentConfig.value = emptyAgentConfigDraft();
   reconcileDraftTaskSelection();
+  employees.value = await api.fetchEmployees();
   taskDialogOpen.value = true;
 }
 
@@ -173,6 +176,7 @@ async function saveTask() {
   const input = { ...draftTask.value };
   if (!input.workerId) delete input.workerId;
   if (!input.agentType) delete input.agentType;
+  if (!input.ownerUserId) delete input.ownerUserId;
   if (draftStartDate.value) input.startDate = taskDateInput(draftStartDate.value);
   if (draftEndDate.value) input.endDate = taskDateInput(draftEndDate.value);
   if (draftAgentType.value) {
@@ -570,6 +574,21 @@ function moveCalendar(delta: number) {
           <a-select :value="draftTask.projectId" aria-label="Project" @change="updateDraftProject">
             <a-select-option v-for="project in board.projects" :key="project.id" :value="project.id">
               {{ project.name }}
+            </a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="Employee">
+          <a-select
+            :value="draftTask.ownerUserId || undefined"
+            aria-label="Employee"
+            show-search
+            allow-clear
+            option-filter-prop="label"
+            placeholder="Select employee"
+            @change="(v: unknown) => { draftTask.ownerUserId = String(v || '') }"
+          >
+            <a-select-option v-for="emp in employees" :key="emp.id" :value="emp.id" :label="emp.name">
+              {{ emp.name }}
             </a-select-option>
           </a-select>
         </a-form-item>

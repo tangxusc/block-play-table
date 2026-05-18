@@ -449,6 +449,17 @@ export class ApiClient {
     }
   }
 
+  async fetchEmployees(): Promise<{ id: string; name: string }[]> {
+    try {
+      const data = await this.graphQL<{ employees: { id: string; name: string }[] }>(
+        `query Employees { employees { id name } }`,
+      );
+      return data.employees;
+    } catch {
+      return [];
+    }
+  }
+
   async fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
     const [taskData, logData, conversationData, interactionData, eventData] = await Promise.all([
       this.graphQL<{ task: TaskItem }>(`query Task($id: ID!) { task(id: $id) { ${taskFields} } }`, { id: taskId }),
@@ -596,6 +607,7 @@ export class ApiClient {
           postCommands: task.postCommands,
           startDate: task.startDate,
           endDate: task.endDate,
+          ownerUserId: task.ownerUserId || undefined,
         },
       },
     );

@@ -40,7 +40,7 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 		BaseBranch:   valueOrEmpty(input.BaseBranch),
 		PreCommands:  append([]string(nil), input.PreCommands...),
 		PostCommands: append([]string(nil), input.PostCommands...),
-		OwnerUserID:  app.UserIDFromContext(ctx),
+		OwnerUserID:  ownerUserIDFromInputOrContext(input.OwnerUserID, ctx),
 		StartDate:    startDate,
 		EndDate:      endDate,
 	})
@@ -72,6 +72,7 @@ func (r *mutationResolver) UpdateTask(ctx context.Context, input model.UpdateTas
 		PostCommands: append([]string(nil), input.PostCommands...),
 		StartDate:    startDate,
 		EndDate:      endDate,
+		OwnerUserID:  valueOrEmpty(input.OwnerUserID),
 	})
 	return toModelTask(task), err
 }
@@ -551,6 +552,29 @@ func (r *queryResolver) CurrentUser(ctx context.Context) (*model.CurrentUser, er
 		ID:        app.UserIDFromContext(ctx),
 		TrustMode: app.TrustModeFromContext(ctx),
 	}, nil
+}
+
+// EmployeeByID is the resolver for the employeeByID field.
+func (r *queryResolver) EmployeeByID(ctx context.Context, id string) (*model.Employee, error) {
+	emp, err := r.Service.EmployeeProvider().EmployeeByID(ctx, id)
+	if err != nil || emp == nil {
+		return nil, err
+	}
+	return &model.Employee{ID: emp.ID, Name: emp.Name}, nil
+}
+
+// Employees is the resolver for the employees field.
+func (r *queryResolver) Employees(ctx context.Context) ([]*model.Employee, error) {
+	userID := app.UserIDFromContext(ctx)
+	employees, err := r.Service.EmployeeProvider().Employees(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*model.Employee, len(employees))
+	for i, emp := range employees {
+		result[i] = &model.Employee{ID: emp.ID, Name: emp.Name}
+	}
+	return result, nil
 }
 
 // TaskUpdated is the resolver for the taskUpdated field.

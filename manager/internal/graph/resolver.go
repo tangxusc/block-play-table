@@ -514,6 +514,13 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
+func ownerUserIDFromInputOrContext(inputID *string, ctx context.Context) string {
+	if inputID != nil && *inputID != "" {
+		return *inputID
+	}
+	return app.UserIDFromContext(ctx)
+}
+
 func toModelAgentWorkMode(value domain.AgentWorkMode) model.AgentWorkMode {
 	switch value {
 	case domain.AgentWorkModePlan:

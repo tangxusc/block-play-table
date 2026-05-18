@@ -17,10 +17,11 @@ import (
 type Clock func() time.Time
 
 type Service struct {
-	store         store.Store
-	clock         Clock
-	subscribersMu sync.RWMutex
-	subscribers   map[chan domain.DomainEvent]domain.EventFilter
+	store            store.Store
+	clock            Clock
+	employeeProvider EmployeeProvider
+	subscribersMu    sync.RWMutex
+	subscribers      map[chan domain.DomainEvent]domain.EventFilter
 }
 
 type Option func(*Service)
@@ -28,6 +29,12 @@ type Option func(*Service)
 func WithClock(clock Clock) Option {
 	return func(service *Service) {
 		service.clock = clock
+	}
+}
+
+func WithEmployeeProvider(provider EmployeeProvider) Option {
+	return func(service *Service) {
+		service.employeeProvider = provider
 	}
 }
 
@@ -40,11 +47,18 @@ func NewService(st store.Store, options ...Option) *Service {
 	for _, option := range options {
 		option(service)
 	}
+	if service.employeeProvider == nil {
+		service.employeeProvider = &LocalEmployeeProvider{}
+	}
 	return service
 }
 
 func (s *Service) Store() store.Store {
 	return s.store
+}
+
+func (s *Service) EmployeeProvider() EmployeeProvider {
+	return s.employeeProvider
 }
 
 func (s *Service) DomainEvents(ctx context.Context, filter domain.EventFilter) ([]domain.DomainEvent, error) {
@@ -259,6 +273,7 @@ type UpdateTaskInput struct {
 	PostCommands []string         `json:"postCommands"`
 	StartDate    time.Time        `json:"startDate"`
 	EndDate      time.Time        `json:"endDate"`
+	OwnerUserID  string           `json:"ownerUserId"`
 }
 
 type ContinueTaskInput struct {
@@ -717,6 +732,7 @@ func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*domai
 		BaseBranch:   input.BaseBranch,
 		PreCommands:  input.PreCommands,
 		PostCommands: input.PostCommands,
+		OwnerUserID:  input.OwnerUserID,
 		StartDate:    input.StartDate,
 		EndDate:      input.EndDate,
 		Now:          now,

@@ -30,7 +30,7 @@ func main() {
 	}
 	defer closeStore()
 
-	service := app.NewService(st)
+	service := app.NewService(st, employeeProviderOption()...)
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	defer stopMonitor()
 	reconciler := app.NewReconciler(service, heartbeatTimeout, heartbeatTimeout/3, app.WithReconcilerLogger(logger))
@@ -125,4 +125,11 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func employeeProviderOption() []app.Option {
+	if url := strings.TrimSpace(os.Getenv("EMPLOYEE_SERVICE_URL")); url != "" {
+		return []app.Option{app.WithEmployeeProvider(app.NewRemoteEmployeeProvider(url))}
+	}
+	return nil
 }

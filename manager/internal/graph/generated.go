@@ -122,6 +122,11 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	Employee struct {
+		ID   func(childComplexity int) int
+		Name func(childComplexity int) int
+	}
+
 	KeyValue struct {
 		Key   func(childComplexity int) int
 		Value func(childComplexity int) int
@@ -186,6 +191,8 @@ type ComplexityRoot struct {
 		CurrentUser            func(childComplexity int) int
 		DomainEvents           func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string) int
 		DomainEventsConnection func(childComplexity int, filter *model.DomainEventFilter, sort *model.DomainEventSortInput, aggregateID *string, aggregateType *string, eventType *string, page *model.PageInput) int
+		EmployeeByID           func(childComplexity int, id string) int
+		Employees              func(childComplexity int) int
 		OutboxMessages         func(childComplexity int, includePublished *bool) int
 		Project                func(childComplexity int, id string) int
 		Projects               func(childComplexity int, filter *model.ProjectFilter, sort *model.ProjectSortInput) int
@@ -414,6 +421,8 @@ type QueryResolver interface {
 	TaskGitStatus(ctx context.Context, taskID string, remote *string, branch *string) (*model.TaskGitStatus, error)
 	TaskGitBackups(ctx context.Context, taskID string) ([]*model.TaskGitBackup, error)
 	CurrentUser(ctx context.Context) (*model.CurrentUser, error)
+	EmployeeByID(ctx context.Context, id string) (*model.Employee, error)
+	Employees(ctx context.Context) ([]*model.Employee, error)
 }
 type SubscriptionResolver interface {
 	TaskUpdated(ctx context.Context, taskID string) (<-chan *model.DomainEvent, error)
@@ -753,6 +762,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.DomainEventConnection.TotalCount(childComplexity), true
+
+	case "Employee.id":
+		if e.ComplexityRoot.Employee.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Employee.ID(childComplexity), true
+	case "Employee.name":
+		if e.ComplexityRoot.Employee.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Employee.Name(childComplexity), true
 
 	case "KeyValue.key":
 		if e.ComplexityRoot.KeyValue.Key == nil {
@@ -1192,6 +1214,23 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.DomainEventsConnection(childComplexity, args["filter"].(*model.DomainEventFilter), args["sort"].(*model.DomainEventSortInput), args["aggregateId"].(*string), args["aggregateType"].(*string), args["eventType"].(*string), args["page"].(*model.PageInput)), true
+	case "Query.employeeByID":
+		if e.ComplexityRoot.Query.EmployeeByID == nil {
+			break
+		}
+
+		args, err := ec.field_Query_employeeByID_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.EmployeeByID(childComplexity, args["id"].(string)), true
+	case "Query.employees":
+		if e.ComplexityRoot.Query.Employees == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.Employees(childComplexity), true
 
 	case "Query.outboxMessages":
 		if e.ComplexityRoot.Query.OutboxMessages == nil {
@@ -2668,6 +2707,17 @@ func (ec *executionContext) field_Query_domainEvents_args(ctx context.Context, r
 		return nil, err
 	}
 	args["eventType"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_employeeByID_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
 	return args, nil
 }
 
@@ -4708,6 +4758,64 @@ func (ec *executionContext) fieldContext_DomainEventConnection_totalCount(_ cont
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Employee_id(ctx context.Context, field graphql.CollectedField, obj *model.Employee) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Employee_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Employee_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Employee",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Employee_name(ctx context.Context, field graphql.CollectedField, obj *model.Employee) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Employee_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Employee_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Employee",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -8298,6 +8406,88 @@ func (ec *executionContext) fieldContext_Query_currentUser(_ context.Context, fi
 				return ec.fieldContext_CurrentUser_trustMode(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type CurrentUser", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_employeeByID(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_employeeByID,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().EmployeeByID(ctx, fc.Args["id"].(string))
+		},
+		nil,
+		ec.marshalOEmployee2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployee,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_employeeByID(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Employee_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Employee_name(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Employee", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_employeeByID_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_employees(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_employees,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().Employees(ctx)
+		},
+		nil,
+		ec.marshalNEmployee2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployeeᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_employees(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Employee_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Employee_name(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Employee", field.Name)
 		},
 	}
 	return fc, nil
@@ -13751,7 +13941,7 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "agentConfig", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
+	fieldsInOrder := [...]string{"title", "description", "projectId", "workerId", "agentType", "agentConfig", "baseBranch", "preCommands", "postCommands", "startDate", "endDate", "ownerUserId"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -13835,6 +14025,13 @@ func (ec *executionContext) unmarshalInputCreateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.EndDate = data
+		case "ownerUserId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ownerUserId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.OwnerUserID = data
 		}
 	}
 	return it, nil
@@ -14623,7 +14820,7 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "preCommands", "postCommands", "startDate", "endDate"}
+	fieldsInOrder := [...]string{"id", "title", "description", "projectId", "agentType", "baseBranch", "preCommands", "postCommands", "startDate", "endDate", "ownerUserId"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -14700,6 +14897,13 @@ func (ec *executionContext) unmarshalInputUpdateTaskInput(ctx context.Context, o
 				return it, err
 			}
 			it.EndDate = data
+		case "ownerUserId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ownerUserId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.OwnerUserID = data
 		}
 	}
 	return it, nil
@@ -15539,6 +15743,50 @@ func (ec *executionContext) _DomainEventConnection(ctx context.Context, sel ast.
 			}
 		case "totalCount":
 			out.Values[i] = ec._DomainEventConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var employeeImplementors = []string{"Employee"}
+
+func (ec *executionContext) _Employee(ctx context.Context, sel ast.SelectionSet, obj *model.Employee) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, employeeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Employee")
+		case "id":
+			out.Values[i] = ec._Employee_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._Employee_name(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -16494,6 +16742,47 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_currentUser(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "employeeByID":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_employeeByID(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "employees":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_employees(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -18143,6 +18432,32 @@ func (ec *executionContext) marshalNDomainEventConnection2ᚖgithubᚗcomᚋtang
 	return ec._DomainEventConnection(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNEmployee2ᚕᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployeeᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Employee) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNEmployee2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployee(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNEmployee2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployee(ctx context.Context, sel ast.SelectionSet, v *model.Employee) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Employee(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
 	res, err := graphql.UnmarshalID(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -19138,6 +19453,13 @@ func (ec *executionContext) unmarshalODomainEventSortInput2ᚖgithubᚗcomᚋtan
 	}
 	res, err := ec.unmarshalInputDomainEventSortInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOEmployee2ᚖgithubᚗcomᚋtangxuscᚋblockᚑplayᚑtableᚋmanagerᚋinternalᚋgraphᚋmodelᚐEmployee(ctx context.Context, sel ast.SelectionSet, v *model.Employee) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Employee(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOID2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
