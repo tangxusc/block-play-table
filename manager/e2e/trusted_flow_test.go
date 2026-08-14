@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
@@ -16,10 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/internal/httpapi"
+	"github.com/tangxusc/block-play-table/manager/migrations"
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
@@ -27,72 +31,146 @@ import (
 )
 
 func TestTrustedManagerWorkerFlow(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	server := httptest.NewServer(httpapi.NewServer(service).Handler())
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/ws?worker_id=worker-e2e"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	root := repositoryRoot(t)
+	runtimeDir := t.TempDir()
+	managerStore, err := store.OpenSQLStore(ctx, store.SQLDriverSQLite, filepath.Join(runtimeDir, "manager.db"))
 	if err != nil {
-		t.Fatalf("dial worker ws: %v", err)
+		t.Fatalf("open manager sqlite: %v", err)
 	}
-	defer conn.Close()
-	if err := conn.WriteJSON(protocol.Envelope{
-		MessageID: "register-1",
-		Type:      protocol.MessageWorkerRegister,
-		WorkerID:  "worker-e2e",
-		Timestamp: time.Now().UTC(),
-		Payload: app.RegisterWorkerInput{
-			ID:              "worker-e2e",
-			Name:            "e2e worker",
-			SupportedAgents: []domain.AgentType{domain.AgentCodex},
-			WorkDir:         t.TempDir(),
-			BindingMode:     domain.WorkerAllProjects,
-		},
-	}); err != nil {
-		t.Fatalf("register worker: %v", err)
+	t.Cleanup(func() { _ = managerStore.Close() })
+	storeMigrations := make([]store.Migration, 0, len(migrations.All))
+	for _, migration := range migrations.All {
+		storeMigrations = append(storeMigrations, store.Migration{Version: migration.Version, SQL: migration.SQL})
+	}
+	if err := managerStore.MigrateVersioned(ctx, storeMigrations); err != nil {
+		t.Fatalf("migrate manager sqlite: %v", err)
+	}
+	service := app.NewService(managerStore)
+	apiServer := httpapi.NewServer(service)
+	server := httptest.NewServer(apiServer.Handler())
+	defer server.Close()
+	reconciler := app.NewReconciler(service, 0, 10*time.Millisecond, app.WithA2ATransport(apiServer.A2ATransport()))
+	go reconciler.Run(ctx)
+
+	workerBinary := filepath.Join(runtimeDir, "worker")
+	codexBinary := filepath.Join(runtimeDir, "fake-codex")
+	claudeBinary := filepath.Join(runtimeDir, "fake-claude")
+	buildE2EBinary(t, root, workerBinary, "./worker/cmd/worker")
+	buildE2EBinary(t, root, codexBinary, "./e2e/fixtures/fake_agent")
+	buildE2EBinary(t, root, claudeBinary, "./e2e/fixtures/fake_agent")
+	workerDir := filepath.Join(runtimeDir, "worker-data")
+	if err := os.MkdirAll(workerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workerLogPath := filepath.Join(runtimeDir, "worker.log")
+	workerLog, err := os.Create(workerLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerCommand := exec.CommandContext(ctx, workerBinary)
+	workerCommand.Dir = root
+	workerCommand.Env = append(os.Environ(),
+		"MANAGER_WS_URL=ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws",
+		"WORKER_ID=worker-e2e", "WORKER_NAME=e2e-worker", "WORKER_WORK_DIR="+workerDir,
+		"WORKER_A2A_DB_PATH="+filepath.Join(workerDir, "a2a.db"),
+		"WORKER_A2A_HOST=127.0.0.1", "WORKER_A2A_PORT=0",
+		"WORKER_TERMINAL_ENABLED=false", "WORKER_REVIEW_ENABLED=false",
+		"CODEX_BINARY="+codexBinary, "CLAUDE_BINARY="+claudeBinary,
+	)
+	workerCommand.Stdout = workerLog
+	workerCommand.Stderr = workerLog
+	if err := workerCommand.Start(); err != nil {
+		_ = workerLog.Close()
+		t.Fatalf("start worker: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if workerCommand.Process != nil {
+			_ = workerCommand.Process.Kill()
+		}
+		_ = workerCommand.Wait()
+		_ = workerLog.Close()
+	})
+	if ready := eventuallyGraphQL(t, server.URL, `query Workers { workers { id status capabilities { key value } } }`, nil, func(body map[string]any) bool {
+		data, _ := body["data"].(map[string]any)
+		workers, _ := data["workers"].([]any)
+		for _, item := range workers {
+			worker := item.(map[string]any)
+			if worker["id"] != "worker-e2e" || worker["status"] != "ONLINE" {
+				continue
+			}
+			capabilities := worker["capabilities"].([]any)
+			for _, raw := range capabilities {
+				capability := raw.(map[string]any)
+				if capability["key"] == "a2a_version" && capability["value"] == "1.0" {
+					return true
+				}
+			}
+		}
+		return false
+	}); ready == nil {
+		t.Fatalf("worker did not register A2A capability:\n%s", readE2ELog(workerLogPath))
 	}
 
+	repository := filepath.Join(runtimeDir, "repository")
+	initReviewGitRepo(t, repository)
 	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
-		"input": map[string]any{"name": "Repo", "gitUrl": t.TempDir(), "defaultBranch": "main", "worktreeNamePrefix": "repo"},
+		"input": map[string]any{"name": "Repo", "gitUrl": repository, "defaultBranch": "main", "worktreeNamePrefix": "repo"},
 	})
 	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
-		"input": map[string]any{"title": "E2E", "projectId": projectID, "agentType": "codex", "baseBranch": "main"},
+		"input": map[string]any{
+			"title": "E2E", "description": "BPT_RESULT_B64=" + base64.StdEncoding.EncodeToString([]byte("done")),
+			"projectId": projectID, "workerId": "worker-e2e", "agentType": "codex", "baseBranch": "main",
+		},
 	})
 	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
-	postGraphQL(t, server.URL, `mutation AssignWorker($taskId: ID!, $workerId: ID!) { assignWorker(taskId: $taskId, workerId: $workerId) { id } }`, map[string]any{"taskId": taskID, "workerId": "worker-e2e"})
 	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
 
-	var start rawEnvelope
-	if err := conn.ReadJSON(&start); err != nil {
-		t.Fatalf("read task start: %v", err)
-	}
-	if start.Type != protocol.MessageTaskStart || start.TaskID != taskID {
-		t.Fatalf("start envelope = %+v", start)
-	}
-	for _, event := range []protocol.WorkerEvent{
-		{MessageID: "started-1", Type: protocol.MessageTaskStarted, TaskID: taskID, Content: "/tmp/worktree"},
-		{MessageID: "log-1", Type: protocol.MessageTaskLog, TaskID: taskID, Stream: "stdout", Content: "hello from worker"},
-		{MessageID: "done-1", Type: protocol.MessageTaskCompleted, TaskID: taskID, Result: "done"},
-	} {
-		if err := conn.WriteJSON(protocol.Envelope{MessageID: event.MessageID, Type: event.Type, WorkerID: "worker-e2e", TaskID: taskID, Timestamp: time.Now().UTC(), Payload: event}); err != nil {
-			t.Fatalf("write worker event %s: %v", event.Type, err)
-		}
-	}
-
-	loaded := eventuallyGraphQL(t, server.URL, `query Task($id: ID!) { task(id: $id) { id status } }`, map[string]any{"id": taskID}, func(body map[string]any) bool {
+	loaded := eventuallyGraphQL(t, server.URL, `query Task($id: ID!) {
+		task(id: $id) { id status result agentSessionId worktreePath }
+		taskLogs(taskId: $id) { stream content }
+		taskConversations(taskId: $id) { role content }
+		taskA2AExecutions(taskId: $id) { turn operation a2aTaskId contextId remoteStatus lastSequence }
+	}`, map[string]any{"id": taskID}, func(body map[string]any) bool {
 		task := body["data"].(map[string]any)["task"].(map[string]any)
 		return task["status"] == string(domain.TaskCompleted)
 	})
 	if loaded == nil {
-		t.Fatal("task did not complete")
+		persistedTask, taskErr := service.Store().Task(ctx, taskID)
+		rounds, roundsErr := service.Store().TaskA2ARounds(ctx, taskID)
+		var intent *domain.TaskA2ADispatchIntent
+		var intentErr error
+		if len(rounds) > 0 {
+			intent, intentErr = service.Store().A2ADispatchIntent(ctx, "dispatch_"+rounds[len(rounds)-1].CommandID)
+		}
+		persistedWorker, workerErr := service.Store().Worker(ctx, "worker-e2e")
+		t.Fatalf("任务未完成：task=%+v taskErr=%v rounds=%+v roundsErr=%v intent=%+v intentErr=%v worker=%+v workerErr=%v\nWorker 日志：\n%s",
+			persistedTask, taskErr, rounds, roundsErr, intent, intentErr, persistedWorker, workerErr, readE2ELog(workerLogPath))
 	}
-	logs := postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { content } }`, map[string]any{"taskId": taskID})
-	if got := len(logs["data"].(map[string]any)["taskLogs"].([]any)); got != 1 {
-		t.Fatalf("logs count = %d, want 1", got)
+	data := loaded["data"].(map[string]any)
+	loadedTask := data["task"].(map[string]any)
+	if loadedTask["result"] != "done" || loadedTask["agentSessionId"] == "" || loadedTask["worktreePath"] == "" {
+		t.Fatalf("projected task = %#v", loadedTask)
+	}
+	logs := data["taskLogs"].([]any)
+	if !containsE2ERecord(logs, "stream", "stderr", "content", "fake codex turn started") {
+		t.Fatalf("projected logs = %#v", logs)
+	}
+	conversations := data["taskConversations"].([]any)
+	if !containsE2ERecord(conversations, "role", "assistant", "content", "done") {
+		t.Fatalf("projected conversations = %#v", conversations)
+	}
+	executions := data["taskA2AExecutions"].([]any)
+	if len(executions) != 1 {
+		t.Fatalf("A2A executions = %#v", executions)
+	}
+	execution := executions[0].(map[string]any)
+	if execution["turn"] != float64(1) || execution["operation"] != "START" || execution["a2aTaskId"] == "" ||
+		execution["contextId"] == "" || execution["remoteStatus"] != "COMPLETED" || execution["lastSequence"].(float64) < 1 {
+		t.Fatalf("A2A execution = %#v", execution)
 	}
 }
 
@@ -241,9 +319,7 @@ func TestTrustedManagerWorkerReviewFRPFlow(t *testing.T) {
 	})
 	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
 	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "review-started", taskID, repo); err != nil {
-		t.Fatal(err)
-	}
+	applyReviewWorkspaceReady(t, ctx, service, taskID, repo)
 
 	diff := postGraphQL(t, server.URL, `query ReviewDiff($taskId: ID!) {
 		taskGitDiff(taskId: $taskId, scope: UNCOMMITTED) {
@@ -290,6 +366,56 @@ func TestTrustedManagerWorkerReviewFRPFlow(t *testing.T) {
 	}
 	if string(restored) != "base\nreview change\n" {
 		t.Fatalf("tracked after restore = %q", restored)
+	}
+}
+
+func applyReviewWorkspaceReady(t *testing.T, ctx context.Context, service *app.Service, taskID, worktreePath string) {
+	t.Helper()
+	round, err := service.Store().LatestTaskA2ARound(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intents, err := service.Store().A2ADispatchIntentsDue(ctx, time.Now().Add(100*365*24*time.Hour), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intentID string
+	for _, intent := range intents {
+		if intent.RoundID == round.ID {
+			intentID = intent.ID
+			break
+		}
+	}
+	if intentID == "" {
+		t.Fatalf("任务 %s 缺少待发送的 A2A intent", taskID)
+	}
+	event := &a2aext.ExecutionEvent{
+		Kind:    a2aext.EventKind,
+		Version: a2aext.Version,
+		Event: a2aext.EventHeader{
+			ID:         uuid.Must(uuid.NewV7()).String(),
+			Sequence:   round.LastSequence + 1,
+			Type:       a2aext.EventWorkspaceReady,
+			OccurredAt: time.Now().UTC(),
+		},
+		Scope: a2aext.EventScope{
+			LocalTaskID: taskID,
+			ExecutionID: round.ExecutionID,
+			Attempt:     round.Attempt,
+			Turn:        round.Turn,
+			WorkerID:    round.WorkerID,
+		},
+		Runtime: &a2aext.RuntimeInfo{WorktreePath: worktreePath},
+		Payload: map[string]any{},
+	}
+	if err := service.ApplyA2ADispatchUpdate(ctx, intentID, app.A2ARemoteUpdate{
+		TaskID:    "a2a-review-" + round.ID,
+		ContextID: "context-review-" + round.ExecutionID,
+		Status:    domain.TaskA2ARemoteStatusWorking,
+		Sequence:  event.Event.Sequence,
+		Event:     event,
+	}); err != nil {
+		t.Fatalf("投影 review workspace.ready: %v", err)
 	}
 }
 
@@ -435,17 +561,49 @@ func runGitE2E(t *testing.T, dir string, args ...string) {
 	}
 }
 
-type rawEnvelope struct {
-	MessageID string               `json:"messageId"`
-	Type      protocol.MessageType `json:"type"`
-	WorkerID  string               `json:"workerId"`
-	TaskID    string               `json:"taskId"`
-	Payload   json.RawMessage      `json:"payload"`
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func buildE2EBinary(t *testing.T, root, output, packagePath string) {
+	t.Helper()
+	command := exec.Command("go", "build", "-o", output, packagePath)
+	command.Dir = root
+	command.Env = os.Environ()
+	if raw, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build %s: %v\n%s", packagePath, err, raw)
+	}
+}
+
+func readE2ELog(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err.Error()
+	}
+	return string(raw)
+}
+
+func containsE2ERecord(records []any, key, value, contentKey, content string) bool {
+	for _, raw := range records {
+		record, ok := raw.(map[string]any)
+		if !ok || record[key] != value {
+			continue
+		}
+		if text, ok := record[contentKey].(string); ok && strings.Contains(text, content) {
+			return true
+		}
+	}
+	return false
 }
 
 func eventuallyGraphQL(t *testing.T, baseURL, query string, variables map[string]any, ok func(map[string]any) bool) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		body := postGraphQL(t, baseURL, query, variables)
 		if ok(body) {

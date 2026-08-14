@@ -91,6 +91,15 @@ func TestWorkerLifecycleControlsAvailability(t *testing.T) {
 	if worker.Status != WorkerOffline {
 		t.Fatalf("status = %s, want offline", worker.Status)
 	}
+	worker.Heartbeat(now.Add(time.Second))
+	if worker.Status != WorkerOnline {
+		t.Fatalf("heartbeat status = %s, want online", worker.Status)
+	}
+	worker.Disable(now.Add(2 * time.Second))
+	worker.Heartbeat(now.Add(3 * time.Second))
+	if worker.Status != WorkerDisabled {
+		t.Fatalf("disabled heartbeat status = %s, want disabled", worker.Status)
+	}
 	if len(worker.PullEvents()) == 0 {
 		t.Fatal("expected worker events")
 	}
@@ -292,6 +301,24 @@ func TestTaskContinueFromCompletedRequiresPersistedAgentSession(t *testing.T) {
 		if err := tt.task.Continue(now); !errors.Is(err, ErrInvalidTransition) && !errors.Is(err, ErrConflict) {
 			t.Fatalf("%s Continue err = %v, want invalid transition or conflict", tt.name, err)
 		}
+	}
+}
+
+func TestTaskRecordsA2ARoundPresentationEventWithoutChangingTaskVersion(t *testing.T) {
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	task := Task{ID: "task-a2a", Version: 7}
+	if err := task.RecordA2ARoundUpdated("round-1", TaskA2ARemoteStatusInputRequired, 4, now); err != nil {
+		t.Fatal(err)
+	}
+	events := task.PullEvents()
+	if task.Version != 7 || len(events) != 1 || events[0].EventType != "TaskA2AExecutionUpdated" || events[0].AggregateVersion != 7 {
+		t.Fatalf("A2A round event task=%+v events=%+v", task, events)
+	}
+	if err := (&Task{}).RecordA2ARoundUpdated("", TaskA2ARemoteStatusWorking, -1, now); err == nil {
+		t.Fatal("空身份应被拒绝")
+	}
+	if err := task.RecordA2ARoundUpdated("round-1", TaskA2ARemoteStatusWorking, -1, now); err == nil {
+		t.Fatal("负 sequence 应被拒绝")
 	}
 }
 

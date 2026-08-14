@@ -30,6 +30,7 @@ import {
 } from "../format";
 import TerminalPanel from "./TerminalPanel.vue";
 import AgentConfigFields from "./AgentConfigFields.vue";
+import TaskA2AExecutionRounds from "./TaskA2AExecutionRounds.vue";
 
 const props = defineProps<{
   taskId: string;
@@ -68,6 +69,7 @@ const previewAddress = ref("");
 const previewUrl = ref("");
 const previewError = ref("");
 let unsubscribe: (() => void) | undefined;
+let loadGeneration = 0;
 
 const task = computed(() => detail.value?.task);
 const isArchived = computed(() => task.value?.status === "ARCHIVED");
@@ -148,26 +150,31 @@ onBeforeUnmount(() => {
 });
 
 async function load(showSpinner = true) {
+  const generation = ++loadGeneration;
   if (showSpinner) loading.value = true;
   error.value = "";
   try {
     const loaded = await api.fetchTaskDetail(props.taskId);
+    if (generation !== loadGeneration) return;
+    let loadedEmployeeName = "";
+    if (loaded.task.ownerUserId) {
+      const emp = await api.fetchEmployeeByID(loaded.task.ownerUserId);
+      if (generation !== loadGeneration) return;
+      loadedEmployeeName = emp?.name || loaded.task.ownerUserId;
+    }
     detail.value = loaded;
     ensurePreviewWorker(loaded.task.workerId);
     selectedFile.value =
       loaded.reviewDiff?.files.find((file) => file.path === selectedFile.value?.path) ||
       loaded.reviewDiff?.files[0] ||
       null;
-    if (loaded.task.ownerUserId) {
-      const emp = await api.fetchEmployeeByID(loaded.task.ownerUserId);
-      employeeName.value = emp?.name || loaded.task.ownerUserId;
-    } else {
-      employeeName.value = "";
-    }
+    employeeName.value = loadedEmployeeName;
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    if (generation === loadGeneration) {
+      error.value = cause instanceof Error ? cause.message : String(cause);
+    }
   } finally {
-    loading.value = false;
+    if (generation === loadGeneration) loading.value = false;
   }
 }
 
@@ -802,6 +809,7 @@ function parseDiffHunks(patch: string): DiffHunk[] {
                 <p class="mono">{{ task.result || "No result yet" }}</p>
               </section>
             </div>
+            <TaskA2AExecutionRounds :executions="detail?.a2aExecutions || []" />
             <section
               v-if="planBlocks.length"
               class="detail-section plan-section"

@@ -155,7 +155,7 @@ func TestTerminalWebSocketRunsShellInRequestedCwd(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1"})
+	server := NewServer(Config{Enabled: true, WorkDir: root, Host: "127.0.0.1", Shell: "/bin/sh"})
 	if err := server.Start(ctx); err != nil {
 		t.Fatalf("start terminal server: %v", err)
 	}

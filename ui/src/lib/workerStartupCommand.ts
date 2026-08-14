@@ -4,7 +4,6 @@ export interface WorkerStartupCommandInput {
   workerId: string;
   workerName: string;
   workDir: string;
-  supportedAgents: string[];
   projectBindingMode: string;
   boundProjectIds: string[];
 }
@@ -34,7 +33,6 @@ function envEntries(input: WorkerStartupCommandInput): Array<[string, string]> {
   entries.push(["WORKER_ID", input.workerId]);
   entries.push(["WORKER_NAME", input.workerName]);
   entries.push(["WORKER_WORK_DIR", input.workDir]);
-  entries.push(["WORKER_SUPPORTED_AGENTS", input.supportedAgents.join(",")]);
   entries.push(["WORKER_PROJECT_BINDING_MODE", input.projectBindingMode]);
   if (
     input.projectBindingMode === "SPECIFIC_PROJECTS" &&

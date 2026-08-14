@@ -4,17 +4,16 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import WebSocket from "ws";
 
+import {
+  e2eGitURL,
+  fakeAgentPrompt,
+  startFakeA2AWorker,
+} from "./support/fake_a2a_worker";
+
 const managerGraphQL =
   process.env.BPT_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
 const managerBaseURL =
   process.env.BPT_MANAGER_URL || managerGraphQL.replace(/\/graphql$/, "");
-const managerWorkerWs =
-  process.env.BPT_MANAGER_WS_URL ||
-  managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
-const managerWorkerToken =
-  process.env.BPT_MANAGER_WS_TOKEN ||
-  process.env.WORKER_TOKEN ||
-  "dev-worker-token";
 const managerAccessToken =
   process.env.BPT_MANAGER_TOKEN ||
   process.env.WORKER_TOKEN ||
@@ -174,7 +173,12 @@ async function fillTextField(page, input, value: string) {
 }
 
 async function selectFieldOption(page, field, optionName: string) {
-  await field.click();
+  const nestedTrigger = field.locator('[role="combobox"], .ant-select-selector').first();
+  if ((await nestedTrigger.count()) > 0) {
+    await nestedTrigger.click();
+  } else {
+    await field.click();
+  }
   const roleOption = page.getByRole("option", { name: optionName });
   if (await roleOption.isVisible({ timeout: 1000 }).catch(() => false)) {
     await roleOption.click();
@@ -529,443 +533,47 @@ async function openWorkerTerminal(page, workerName: string) {
 function connectWorkerEvents(
   workerId: string,
   taskId: string,
-  expectedEnv: Record<string, string> = {},
-  expectedAgentConfig: Record<string, unknown> = {},
 ) {
-  const url = new URL(managerWorkerWs);
-  url.searchParams.set("worker_id", workerId);
-  if (managerWorkerToken) {
-    url.searchParams.set("token", managerWorkerToken);
-  }
-  const ws = new WebSocket(url.toString());
-  const now = () => new Date().toISOString();
-  const send = (
-    messageId: string,
-    type: string,
-    payload: Record<string, unknown> = {},
-  ) => {
-    ws.send(
-      JSON.stringify({
-        messageId,
-        type,
-        workerId,
-        taskId,
-        timestamp: now(),
-        payload,
-      }),
-    );
-  };
-  const ready = new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener(
-      "error",
-      () => reject(new Error("worker websocket failed")),
-      { once: true },
-    );
+  return startFakeA2AWorker({
+    workerId,
+    workerName: workerId,
+    taskId,
   });
-  const done = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error("timed out waiting for TASK_START"));
-    }, 5000);
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_START") {
-        return;
-      }
-      if (Object.keys(expectedAgentConfig).length > 0) {
-        expect(envelope.payload?.task?.agentConfig).toMatchObject(
-          expectedAgentConfig,
-        );
-      }
-      const runtimeEnv = envelope.payload?.agentRuntimeEnv || [];
-      for (const [key, value] of Object.entries(expectedEnv)) {
-        expect(
-          runtimeEnv.some(
-            (item: { key: string; value: string }) =>
-              item.key === key && item.value === value,
-          ),
-        ).toBeTruthy();
-      }
-      expect(
-        runtimeEnv.some(
-          (item: { key: string }) => item.key === "BPT_E2E_CLAUDE_ENV",
-        ),
-      ).toBeFalsy();
-      send(`accepted-${taskId}`, "TASK_ACCEPTED");
-      send(`started-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-worktree",
-      });
-      send(`log-${taskId}`, "TASK_LOG", {
-        taskId,
-        stream: "stdout",
-        content: `hello from e2e worker ${"x".repeat(240)}`,
-      });
-      send(`conversation-${taskId}`, "TASK_CONVERSATION", {
-        taskId,
-        content: "agent response from e2e",
-        metadata: { role: "assistant" },
-      });
-      send(`result-${taskId}`, "TASK_RESULT", {
-        taskId,
-        result: "e2e completed",
-      });
-      send(`completed-${taskId}`, "TASK_COMPLETED", {
-        taskId,
-        result: "e2e completed",
-      });
-      setTimeout(() => {
-        clearTimeout(timeout);
-        ws.close();
-        resolve();
-      }, 250);
-    });
-    ws.addEventListener(
-      "error",
-      () => {
-        clearTimeout(timeout);
-        reject(new Error("worker websocket failed"));
-      },
-      { once: true },
-    );
-  });
-  return { ready, done };
 }
 
 function connectWorkerConversationOnly(
   workerId: string,
   taskId: string,
-  conversation: string,
 ) {
-  const url = new URL(managerWorkerWs);
-  url.searchParams.set("worker_id", workerId);
-  if (managerWorkerToken) {
-    url.searchParams.set("token", managerWorkerToken);
-  }
-  const ws = new WebSocket(url.toString());
-  const now = () => new Date().toISOString();
-  const send = (
-    messageId: string,
-    type: string,
-    payload: Record<string, unknown> = {},
-  ) => {
-    ws.send(
-      JSON.stringify({
-        messageId,
-        type,
-        workerId,
-        taskId,
-        timestamp: now(),
-        payload,
-      }),
-    );
-  };
-  const ready = new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener(
-      "error",
-      () => reject(new Error("worker websocket failed")),
-      { once: true },
-    );
+  return startFakeA2AWorker({
+    workerId,
+    workerName: workerId,
+    taskId,
   });
-  const done = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error("timed out waiting for TASK_START"));
-    }, 5000);
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_START") {
-        return;
-      }
-      send(`accepted-conversation-${taskId}`, "TASK_ACCEPTED");
-      send(`started-conversation-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-conversation-worktree",
-      });
-      send(`conversation-only-${taskId}`, "TASK_CONVERSATION", {
-        taskId,
-        content: conversation,
-        metadata: { role: "assistant" },
-      });
-      send(`result-conversation-${taskId}`, "TASK_RESULT", {
-        taskId,
-        result: conversation,
-      });
-      send(`completed-conversation-${taskId}`, "TASK_COMPLETED", {
-        taskId,
-        result: conversation,
-      });
-      setTimeout(() => {
-        clearTimeout(timeout);
-        ws.close();
-        resolve();
-      }, 250);
-    });
-    ws.addEventListener(
-      "error",
-      () => {
-        clearTimeout(timeout);
-        reject(new Error("worker websocket failed"));
-      },
-      { once: true },
-    );
-  });
-  return { ready, done };
 }
 
 function connectWorkerForContinuation(
   workerId: string,
   taskId: string,
-  expectedAgentConfig: Record<string, unknown> = {},
 ) {
-  const url = new URL(managerWorkerWs);
-  url.searchParams.set("worker_id", workerId);
-  if (managerWorkerToken) {
-    url.searchParams.set("token", managerWorkerToken);
-  }
-  const ws = new WebSocket(url.toString());
-  const now = () => new Date().toISOString();
-  const send = (
-    messageId: string,
-    type: string,
-    payload: Record<string, unknown> = {},
-  ) => {
-    ws.send(
-      JSON.stringify({
-        messageId,
-        type,
-        workerId,
-        taskId,
-        timestamp: now(),
-        payload,
-      }),
-    );
-  };
-  const ready = new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener(
-      "error",
-      () => reject(new Error("worker websocket failed")),
-      { once: true },
-    );
+  return startFakeA2AWorker({
+    workerId,
+    workerName: workerId,
+    taskId,
+    expectContinuation: true,
   });
-  const firstDone = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("timed out waiting for TASK_START")),
-      5000,
-    );
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_START") {
-        return;
-      }
-      if (Object.keys(expectedAgentConfig).length > 0) {
-        expect(envelope.payload?.task?.agentConfig).toMatchObject(
-          expectedAgentConfig,
-        );
-      }
-      send(`accepted-first-${taskId}`, "TASK_ACCEPTED");
-      send(`started-first-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-continuation-worktree",
-      });
-      send(`conversation-first-${taskId}`, "TASK_CONVERSATION", {
-        taskId,
-        content: "first agent response",
-        agentSessionId: "session-1",
-        metadata: { role: "assistant" },
-      });
-      send(`completed-first-${taskId}`, "TASK_COMPLETED", {
-        taskId,
-        result: "first result",
-        agentSessionId: "session-1",
-      });
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
-  const continued = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("timed out waiting for TASK_CONTINUE")),
-      30000,
-    );
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_CONTINUE") {
-        return;
-      }
-      if (Object.keys(expectedAgentConfig).length > 0) {
-        expect(envelope.payload?.task?.agentConfig).toMatchObject(
-          expectedAgentConfig,
-        );
-      }
-      expect(envelope.payload.agentSessionId).toBe("session-1");
-      expect(envelope.payload.message).toBe("follow up from ui");
-      expect(envelope.payload.worktreePath).toBe(
-        "/tmp/e2e-continuation-worktree",
-      );
-      send(`accepted-continue-${taskId}`, "TASK_ACCEPTED");
-      send(`started-continue-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-continuation-worktree",
-        agentSessionId: "session-1",
-      });
-      send(`conversation-continue-${taskId}`, "TASK_CONVERSATION", {
-        taskId,
-        content: "second agent response",
-        agentSessionId: "session-1",
-        metadata: { role: "assistant" },
-      });
-      send(`completed-continue-${taskId}`, "TASK_COMPLETED", {
-        taskId,
-        result: "second result",
-        agentSessionId: "session-1",
-      });
-      clearTimeout(timeout);
-      setTimeout(() => {
-        ws.close();
-        resolve();
-      }, 250);
-    });
-  });
-  return { ready, firstDone, continued, close: () => ws.close() };
 }
 
 function connectWorkerForInteraction(
   workerId: string,
   taskId: string,
-  options: {
-    kind?: string;
-    title?: string;
-    body?: string;
-    rawPayload?: string;
-    agentSessionId?: string;
-    result?: string;
-    log?: string;
-    conversation?: string;
-  } = {},
 ) {
-  const url = new URL(managerWorkerWs);
-  url.searchParams.set("worker_id", workerId);
-  if (managerWorkerToken) {
-    url.searchParams.set("token", managerWorkerToken);
-  }
-  const ws = new WebSocket(url.toString());
-  const now = () => new Date().toISOString();
-  const send = (
-    messageId: string,
-    type: string,
-    payload: Record<string, unknown> = {},
-  ) => {
-    ws.send(
-      JSON.stringify({
-        messageId,
-        type,
-        workerId,
-        taskId,
-        timestamp: now(),
-        payload,
-      }),
-    );
-  };
-  const interactionKind = options.kind || "COMMAND_APPROVAL";
-  const interactionTitle = options.title || "Approve command";
-  const interactionBody = options.body || "Run make test before completing";
-  const interactionRawPayload =
-    options.rawPayload ||
-    JSON.stringify({
-      reason: "Need to run verification",
-      cwd: "/tmp/e2e-interaction-worktree",
-      command: "make test",
-    });
-  const agentSessionId = options.agentSessionId || "codex-thread-e2e";
-  const resultText = options.result || "interaction e2e completed";
-  const logText = options.log || "approved command executed";
-  const conversationText =
-    options.conversation || "interaction approved and task completed";
-  const ready = new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener(
-      "error",
-      () => reject(new Error("worker websocket failed")),
-      { once: true },
-    );
+  return startFakeA2AWorker({
+    workerId,
+    workerName: workerId,
+    taskId,
+    expectInteraction: true,
   });
-  const requested = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("timed out waiting for interaction request")),
-      8000,
-    );
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_START") {
-        return;
-      }
-      send(`accepted-interaction-${taskId}`, "TASK_ACCEPTED");
-      send(`started-interaction-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-interaction-worktree",
-      });
-      send(`interaction-request-${taskId}`, "TASK_INTERACTION_REQUEST", {
-        interactionId: `interaction-${taskId}`,
-        taskId,
-        kind: interactionKind,
-        title: interactionTitle,
-        body: interactionBody,
-        rawPayload: interactionRawPayload,
-        agentSessionId,
-      });
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
-  const completed = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("timed out waiting for interaction response")),
-      15000,
-    );
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_INTERACTION_RESPONSE") {
-        return;
-      }
-      expect(envelope.payload.interactionId).toBe(`interaction-${taskId}`);
-      expect(envelope.payload.decision).toBe("APPROVE");
-      send(`interaction-resolved-${taskId}`, "TASK_INTERACTION_RESOLVED", {
-        interactionId: `interaction-${taskId}`,
-        taskId,
-      });
-      send(`interaction-log-${taskId}`, "TASK_LOG", {
-        taskId,
-        stream: "stdout",
-        content: logText,
-      });
-      send(`interaction-conversation-${taskId}`, "TASK_CONVERSATION", {
-        taskId,
-        content: conversationText,
-        agentSessionId,
-        metadata: { role: "assistant" },
-      });
-      send(`interaction-result-${taskId}`, "TASK_RESULT", {
-        taskId,
-        result: resultText,
-        agentSessionId,
-      });
-      send(`interaction-completed-${taskId}`, "TASK_COMPLETED", {
-        taskId,
-        result: resultText,
-        agentSessionId,
-      });
-      clearTimeout(timeout);
-      setTimeout(() => {
-        ws.close();
-        resolve();
-      }, 250);
-    });
-  });
-  return { ready, requested, completed };
 }
 
 test("trusted Vue web UI paginates board projects workers and events", async ({
@@ -981,7 +589,7 @@ test("trusted Vue web UI paginates board projects workers and events", async ({
     {
       input: {
         name: `Pagination Base Project ${suffix}`,
-        gitUrl: "pagination-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "pagination",
       },
@@ -996,7 +604,7 @@ test("trusted Vue web UI paginates board projects workers and events", async ({
     {
       input: {
         name: `Pagination Other Project ${suffix}`,
-        gitUrl: "pagination-other-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "pagination-other",
       },
@@ -1023,7 +631,7 @@ test("trusted Vue web UI paginates board projects workers and events", async ({
       {
         input: {
           name: `Pagination Project ${suffix}-${index}`,
-          gitUrl: `pagination-project-${index}`,
+          gitUrl: e2eGitURL(),
           defaultBranch: "main",
           worktreeNamePrefix: `pagination-project-${index}`,
         },
@@ -1281,7 +889,7 @@ test("task create and detail assignment expose worker controls", async ({
     {
       input: {
         name: projectName,
-        gitUrl: "assign-ui-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "assign-ui",
       },
@@ -1456,24 +1064,13 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
   const workerName = `E2E Worker ${suffix}`;
   const taskStartDate = "2026-05-01T00:00:00Z";
   const taskEndDate = "2026-05-03T00:00:00Z";
-  const expectedCodexPayloadConfig = {
-    workMode: "implement",
-    codex: {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-      sandboxMode: "workspace-write",
-      approvalPolicy: "never",
-      fullAuto: true,
-    },
-  };
-
   const createdProject = await graphQL(
     request,
     "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id name } }",
     {
       input: {
         name: projectName,
-        gitUrl: "e2e-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "e2e",
       },
@@ -1601,6 +1198,9 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
     {
       input: {
         title: taskTitle,
+        description: fakeAgentPrompt("e2e completed", {
+          expectedEnv: { BPT_E2E_AGENT_ENV: "codex-value" },
+        }),
         projectId: project.id,
         workerId,
         agentType: "codex",
@@ -1669,14 +1269,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
   );
   expect(task).toBeTruthy();
 
-  const workerSocket = connectWorkerEvents(
-    workerId,
-    task.id,
-    {
-      BPT_E2E_AGENT_ENV: "codex-value",
-    },
-    expectedCodexPayloadConfig,
-  );
+  const workerSocket = connectWorkerEvents(workerId, task.id);
   await workerSocket.ready;
   await graphQL(
     request,
@@ -1689,7 +1282,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
 
   await expect
     .poll(async () => {
-      const [taskData, logData, conversationData, eventData] =
+      const [taskData, logData, conversationData, eventData, executionData] =
         await Promise.all([
           graphQL(
             request,
@@ -1713,26 +1306,52 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
             "query TaskEvents($taskId: ID!) { taskEvents(taskId: $taskId) { eventType } }",
             { taskId: task.id },
           ),
+          graphQL(
+            request,
+            `query TaskA2AExecutions($taskId: ID!) {
+              taskA2AExecutions(taskId: $taskId) {
+                turn operation a2aTaskId contextId remoteStatus lastSequence completedAt
+              }
+            }`,
+            { taskId: task.id },
+          ),
         ]);
       const eventTypes = eventData.taskEvents.map(
         (event: { eventType: string }) => event.eventType,
       );
-      return (
-        taskData.task.status === "COMPLETED" &&
-        taskData.task.result === "e2e completed" &&
-        logData.taskLogs.some((log: { content: string }) =>
-          log.content.includes("hello from e2e worker"),
-        ) &&
-        conversationData.taskConversations.some(
-          (message: { content: string }) =>
-            message.content.includes("agent response from e2e"),
-        ) &&
-        eventTypes.includes("TaskCreated") &&
-        eventTypes.includes("TaskStartRequested") &&
-        eventTypes.includes("TaskCompleted")
-      );
+      return {
+        task: taskData.task,
+        hasAdapterLog: logData.taskLogs.some((log: { content: string }) =>
+          log.content.includes("fake codex turn started"),
+        ),
+        hasConversation: conversationData.taskConversations.some(
+          (message: { content: string }) => message.content === "e2e completed",
+        ),
+        eventTypes,
+        executions: executionData.taskA2AExecutions,
+      };
     }, { timeout: 15000 })
-    .toBeTruthy();
+    .toMatchObject({
+      task: { status: "COMPLETED", result: "e2e completed" },
+      hasAdapterLog: true,
+      hasConversation: true,
+      eventTypes: expect.arrayContaining([
+        "TaskCreated",
+        "TaskStartRequested",
+        "TaskCompleted",
+      ]),
+      executions: [
+        expect.objectContaining({
+          turn: 1,
+          operation: "START",
+          a2aTaskId: expect.any(String),
+          contextId: expect.any(String),
+          remoteStatus: "COMPLETED",
+          lastSequence: expect.any(Number),
+          completedAt: expect.any(String),
+        }),
+      ],
+    });
 
   await openVueApp(page);
   await page.getByRole("button", { name: "Calendar" }).click();
@@ -1780,7 +1399,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
   await expect(page.getByText(project.id, { exact: true })).toHaveCount(0);
   await expect(page.getByText("2026-05-01 - 2026-05-03")).toBeVisible();
   await selectTaskDetailTab(page, "Logs");
-  await expect(page.getByText(/hello from e2e worker/)).toBeVisible();
+  await expect(page.getByText(/fake codex turn started/)).toBeVisible();
   await expectDetailCardsDoNotOverflow(page);
   await selectTaskDetailTab(page, "Domain events");
   await expect(page.getByText(/TaskLogAppended/)).toBeVisible();
@@ -1789,7 +1408,7 @@ test("trusted Vue web UI covers DDD event-backed task flow", async ({
   await expect(page.locator("#app")).toBeVisible();
 });
 
-test("task detail logs show conversation-only agent output", async ({
+test("task detail separates adapter logs from conversation output", async ({
   page,
   request,
 }) => {
@@ -1808,7 +1427,7 @@ test("task detail logs show conversation-only agent output", async ({
       {
         input: {
           name: projectName,
-          gitUrl: "conversation-log-fixture",
+          gitUrl: e2eGitURL(),
           defaultBranch: "main",
           worktreeNamePrefix: "conversation-log",
         },
@@ -1836,6 +1455,7 @@ test("task detail logs show conversation-only agent output", async ({
       {
         input: {
           title: taskTitle,
+          description: fakeAgentPrompt(conversation),
           projectId: project.id,
           workerId,
           agentType: "codex",
@@ -1845,7 +1465,7 @@ test("task detail logs show conversation-only agent output", async ({
     )
   ).createTask;
 
-  const workerSocket = connectWorkerConversationOnly(workerId, task.id, conversation);
+  const workerSocket = connectWorkerConversationOnly(workerId, task.id);
   await workerSocket.ready;
   await graphQL(
     request,
@@ -1856,19 +1476,45 @@ test("task detail logs show conversation-only agent output", async ({
 
   await expect
     .poll(async () => {
-      const data = await graphQL(
-        request,
-        "query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { stream content } }",
-        { taskId: task.id },
-      );
-      return data.taskLogs;
+      const [logData, conversationData] = await Promise.all([
+        graphQL(
+          request,
+          "query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { stream content } }",
+          { taskId: task.id },
+        ),
+        graphQL(
+          request,
+          "query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { role content } }",
+          { taskId: task.id },
+        ),
+      ]);
+      return {
+        hasAdapterLog: logData.taskLogs.some(
+          (log: { stream: string; content: string }) =>
+            log.stream === "stderr" &&
+            log.content.includes("fake codex turn started"),
+        ),
+        conversations: conversationData.taskConversations,
+      };
     }, { timeout: 15000 })
-    .toEqual([{ stream: "assistant", content: conversation }]);
+    .toMatchObject({
+      hasAdapterLog: true,
+      conversations: [
+        expect.objectContaining({ role: "assistant", content: conversation }),
+      ],
+    });
 
   await openVueApp(page);
   await openTaskFromList(page, taskTitle);
+  await selectTaskDetailTab(page, "Conversation");
+  const activeDetailPane = page
+    .getByRole("dialog")
+    .locator(".ant-tabs-tabpane-active");
+  await expect(
+    activeDetailPane.getByText(conversation, { exact: true }),
+  ).toBeVisible();
   await selectTaskDetailTab(page, "Logs");
-  await expect(page.getByLabel("Logs").getByText(conversation)).toBeVisible();
+  await expect(page.getByText(/fake codex turn started/)).toBeVisible();
   await expectDetailCardsDoNotOverflow(page);
 });
 
@@ -1889,7 +1535,7 @@ test("task detail terminal runs commands in task worktree", async ({
       {
         input: {
           name: `Terminal Project ${suffix}`,
-          gitUrl: "terminal-e2e-fixture",
+          gitUrl: e2eGitURL(),
           defaultBranch: "main",
           worktreeNamePrefix: `terminal-e2e-${suffix}`,
         },
@@ -2213,7 +1859,7 @@ test("task detail approves a live agent interaction and refreshes results", asyn
     {
       input: {
         name: projectName,
-        gitUrl: "e2e-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "e2e-interaction",
       },
@@ -2239,6 +1885,9 @@ test("task detail approves a live agent interaction and refreshes results", asyn
     {
       input: {
         title: taskTitle,
+        description: fakeAgentPrompt("interaction e2e completed", {
+          approval: true,
+        }),
         projectId: project.id,
         workerId,
         agentType: "codex",
@@ -2255,26 +1904,37 @@ test("task detail approves a live agent interaction and refreshes results", asyn
     { taskId },
   );
   await workerSocket.requested;
+  let codexSessionId = "";
   await expect
     .poll(async () => {
       const data = await graphQL(
         request,
         `query TaskInteraction($taskId: ID!) {
-          task(id: $taskId) { status }
-          taskInteractions(taskId: $taskId, status: PENDING) { id title kind }
+          task(id: $taskId) { status agentSessionId }
+          taskInteractions(taskId: $taskId, status: PENDING) {
+            id title body rawPayload kind agentSessionId
+          }
         }`,
         { taskId },
       );
+      codexSessionId =
+        data.task.agentSessionId ||
+        data.taskInteractions[0]?.agentSessionId ||
+        "";
       return {
         status: data.task.status,
+        sessionId: codexSessionId,
         interactions: data.taskInteractions,
       };
     }, { timeout: 15000 })
     .toMatchObject({
       status: "WAITING_INPUT",
+      sessionId: expect.stringMatching(/^fake-codex-/),
       interactions: [
         expect.objectContaining({
-          title: "Approve command",
+          title: "Command approval",
+          body: "端到端测试审批",
+          rawPayload: expect.stringContaining("printf approved"),
           kind: "COMMAND_APPROVAL",
         }),
       ],
@@ -2283,15 +1943,26 @@ test("task detail approves a live agent interaction and refreshes results", asyn
   await openVueApp(page);
   await openTaskFromList(page, taskTitle);
   await expect(
-    page.getByRole("textbox", { name: /Approve command/ }),
+    page.getByRole("textbox", { name: /Command approval/ }),
   ).toBeVisible();
-  await expect(page.getByRole("textbox", { name: /make test/ })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /printf approved/ })).toBeVisible();
   await page.getByRole("button", { name: "Approve", exact: true }).click();
 
   await workerSocket.completed;
+  let codexExecution: {
+    a2aTaskId: string;
+    contextId: string;
+  } | null = null;
   await expect
     .poll(async () => {
-      const [taskData, logData, conversationData, interactionData, eventData] =
+      const [
+        taskData,
+        logData,
+        conversationData,
+        interactionData,
+        eventData,
+        executionData,
+      ] =
         await Promise.all([
           graphQL(
             request,
@@ -2318,27 +1989,38 @@ test("task detail approves a live agent interaction and refreshes results", asyn
             "query TaskEvents($taskId: ID!) { taskEvents(taskId: $taskId) { eventType } }",
             { taskId },
           ),
+          graphQL(
+            request,
+            `query TaskA2AExecutions($taskId: ID!) {
+              taskA2AExecutions(taskId: $taskId) {
+                turn operation a2aTaskId contextId remoteStatus lastSequence
+              }
+            }`,
+            { taskId },
+          ),
         ]);
+      codexExecution = executionData.taskA2AExecutions[0] || null;
       return {
         task: taskData.task,
         hasLog: logData.taskLogs.some((log: { content: string }) =>
-          log.content.includes("approved command executed"),
+          log.content.includes("fake codex turn started"),
         ),
         hasConversation: conversationData.taskConversations.some(
           (message: { content: string }) =>
-            message.content.includes("interaction approved"),
+            message.content === "interaction e2e completed",
         ),
         interactions: interactionData.taskInteractions,
         eventTypes: eventData.taskEvents.map(
           (event: { eventType: string }) => event.eventType,
         ),
+        executions: executionData.taskA2AExecutions,
       };
     }, { timeout: 15000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
         result: "interaction e2e completed",
-        agentSessionId: "codex-thread-e2e",
+        agentSessionId: codexSessionId,
       },
       hasLog: true,
       hasConversation: true,
@@ -2353,7 +2035,45 @@ test("task detail approves a live agent interaction and refreshes results", asyn
         "TaskResumed",
         "TaskCompleted",
       ]),
+      executions: [
+        expect.objectContaining({
+          turn: 1,
+          operation: "START",
+          a2aTaskId: expect.any(String),
+          contextId: expect.any(String),
+          remoteStatus: "COMPLETED",
+          lastSequence: expect.any(Number),
+        }),
+      ],
     });
+
+  expect(codexExecution).not.toBeNull();
+  const codexRound = codexExecution as {
+    a2aTaskId: string;
+    contextId: string;
+  };
+  const detailDialog = page.getByRole("dialog");
+  const activeDetailPane = detailDialog.locator(".ant-tabs-tabpane-active");
+  await expect(
+    detailDialog.getByText("COMPLETED", { exact: true }).first(),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(
+    detailDialog.getByRole("textbox", { name: /Command approval/ }),
+  ).toBeHidden();
+  await expect(
+    activeDetailPane.getByText("interaction e2e completed", { exact: true }),
+  ).toBeVisible();
+  const codexRoundRow = detailDialog.getByTestId("a2a-execution-round");
+  await expect(codexRoundRow).toContainText("START");
+  await expect(codexRoundRow).toContainText("COMPLETED");
+  await expect(codexRoundRow.getByTitle(codexRound.a2aTaskId)).toBeVisible();
+  await expect(codexRoundRow.getByTitle(codexRound.contextId)).toBeVisible();
+  await selectTaskDetailTab(page, "Conversation");
+  await expect(
+    activeDetailPane.getByText("interaction e2e completed", { exact: true }),
+  ).toBeVisible();
+  await selectTaskDetailTab(page, "Logs");
+  await expect(activeDetailPane.getByText(/fake codex turn started/)).toBeVisible();
 });
 test("claude task detail waits for permission interaction before completion", async ({
   page,
@@ -2372,7 +2092,7 @@ test("claude task detail waits for permission interaction before completion", as
       {
         input: {
           name: `E2E Claude Interaction Project ${suffix}`,
-          gitUrl: "e2e-fixture",
+          gitUrl: e2eGitURL(),
           defaultBranch: "main",
           worktreeNamePrefix: "e2e-claude-interaction",
         },
@@ -2399,6 +2119,10 @@ test("claude task detail waits for permission interaction before completion", as
       {
         input: {
           title: taskTitle,
+          description: fakeAgentPrompt("claude interaction e2e completed", {
+            approval: true,
+            claudeFile: true,
+          }),
           projectId: project.id,
           workerId,
           agentType: "claude",
@@ -2407,24 +2131,7 @@ test("claude task detail waits for permission interaction before completion", as
       },
     )
   ).createTask.id;
-  const workerSocket = connectWorkerForInteraction(workerId, taskId, {
-    kind: "FILE_APPROVAL",
-    title: "Approve Claude file change",
-    body: "Claude needs permission to edit README.md",
-    rawPayload: JSON.stringify({
-      tool_name: "Edit",
-      tool_use_id: "toolu_e2e",
-      tool_input: {
-        file_path: "/tmp/e2e-claude-interaction-worktree/README.md",
-        old_string: "old",
-        new_string: "new",
-      },
-    }),
-    agentSessionId: "claude-session-e2e",
-    result: "claude interaction e2e completed",
-    log: "approved claude edit executed",
-    conversation: "claude interaction approved",
-  });
+  const workerSocket = connectWorkerForInteraction(workerId, taskId);
   await workerSocket.ready;
   await graphQL(
     request,
@@ -2433,23 +2140,32 @@ test("claude task detail waits for permission interaction before completion", as
   );
   await workerSocket.requested;
 
+  let claudeSessionId = "";
   await expect
     .poll(async () => {
       const data = await graphQL(
         request,
         `query TaskInteraction($taskId: ID!) {
-          task(id: $taskId) { status agentType }
-          taskInteractions(taskId: $taskId, status: PENDING) { title kind rawPayload }
+          task(id: $taskId) { status agentType agentSessionId }
+          taskInteractions(taskId: $taskId, status: PENDING) {
+            title kind rawPayload agentSessionId
+          }
         }`,
         { taskId },
       );
+      claudeSessionId =
+        data.task.agentSessionId ||
+        data.taskInteractions[0]?.agentSessionId ||
+        "";
       return {
         task: data.task,
+        sessionId: claudeSessionId,
         interactions: data.taskInteractions,
       };
     }, { timeout: 15000 })
     .toMatchObject({
       task: { status: "WAITING_INPUT", agentType: "claude" },
+      sessionId: expect.any(String),
       interactions: [
         expect.objectContaining({
           title: "Approve Claude file change",
@@ -2468,6 +2184,10 @@ test("claude task detail waits for permission interaction before completion", as
   await page.getByRole("button", { name: "Approve", exact: true }).click();
 
   await workerSocket.completed;
+  let claudeExecution: {
+    a2aTaskId: string;
+    contextId: string;
+  } | null = null;
   await expect
     .poll(async () => {
       const data = await graphQL(
@@ -2475,16 +2195,20 @@ test("claude task detail waits for permission interaction before completion", as
         `query Verify($id: ID!, $taskId: ID!) {
           task(id: $id) { status result agentSessionId }
           taskInteractions(taskId: $taskId) { status responseDecision }
+          taskA2AExecutions(taskId: $taskId) {
+            turn operation a2aTaskId contextId remoteStatus lastSequence
+          }
         }`,
         { id: taskId, taskId },
       );
+      claudeExecution = data.taskA2AExecutions[0] || null;
       return data;
     }, { timeout: 30000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
-        result: "claude interaction e2e completed",
-        agentSessionId: "claude-session-e2e",
+        result: "fake claude completed",
+        agentSessionId: claudeSessionId,
       },
       taskInteractions: [
         expect.objectContaining({
@@ -2492,7 +2216,47 @@ test("claude task detail waits for permission interaction before completion", as
           responseDecision: "APPROVE",
         }),
       ],
+      taskA2AExecutions: [
+        expect.objectContaining({
+          turn: 1,
+          operation: "START",
+          a2aTaskId: expect.any(String),
+          contextId: expect.any(String),
+          remoteStatus: "COMPLETED",
+          lastSequence: expect.any(Number),
+        }),
+      ],
     });
+
+  expect(claudeExecution).not.toBeNull();
+  const claudeRound = claudeExecution as {
+    a2aTaskId: string;
+    contextId: string;
+  };
+  const detailDialog = page.getByRole("dialog");
+  const activeDetailPane = detailDialog.locator(".ant-tabs-tabpane-active");
+  await expect(
+    detailDialog.getByText("COMPLETED", { exact: true }).first(),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(
+    detailDialog.getByRole("textbox", { name: /Approve Claude file change/ }),
+  ).toBeHidden();
+  await expect(
+    activeDetailPane.getByText("fake claude completed", { exact: true }),
+  ).toBeVisible();
+  const claudeRoundRow = detailDialog.getByTestId("a2a-execution-round");
+  await expect(claudeRoundRow).toContainText("START");
+  await expect(claudeRoundRow).toContainText("COMPLETED");
+  await expect(claudeRoundRow.getByTitle(claudeRound.a2aTaskId)).toBeVisible();
+  await expect(claudeRoundRow.getByTitle(claudeRound.contextId)).toBeVisible();
+  await selectTaskDetailTab(page, "Conversation");
+  await expect(
+    activeDetailPane.getByText("fake claude completed", { exact: true }),
+  ).toBeVisible();
+  await selectTaskDetailTab(page, "Logs");
+  await expect(
+    activeDetailPane.getByText(/fake claude completed/).first(),
+  ).toBeVisible();
 });
 
 test("task detail shows Claude plan markdown from plan mode interaction", async ({
@@ -2524,7 +2288,7 @@ test("task detail shows Claude plan markdown from plan mode interaction", async 
       {
         input: {
           name: `E2E Claude Plan Project ${suffix}`,
-          gitUrl: "e2e-fixture",
+          gitUrl: e2eGitURL(),
           defaultBranch: "main",
           worktreeNamePrefix: "e2e-claude-plan",
         },
@@ -2551,6 +2315,10 @@ test("task detail shows Claude plan markdown from plan mode interaction", async 
       {
         input: {
           title: taskTitle,
+          description: fakeAgentPrompt("claude plan e2e completed", {
+            approval: true,
+            plan: planMarkdown,
+          }),
           projectId: project.id,
           workerId,
           agentType: "claude",
@@ -2560,22 +2328,7 @@ test("task detail shows Claude plan markdown from plan mode interaction", async 
       },
     )
   ).createTask.id;
-  const workerSocket = connectWorkerForInteraction(workerId, taskId, {
-    kind: "PERMISSION_APPROVAL",
-    title: "Approve Claude ExitPlanMode",
-    body: "Exit plan mode?",
-    rawPayload: JSON.stringify({
-      tool_name: "ExitPlanMode",
-      tool_use_id: "toolu_plan_e2e",
-      tool_input: {
-        plan: planMarkdown,
-        planFilePath: "C:\\Users\\56205\\.claude\\plans\\e2e-plan.md",
-      },
-    }),
-    agentSessionId: "claude-plan-session-e2e",
-    result: "claude plan e2e completed",
-    conversation: "claude plan approved",
-  });
+  const workerSocket = connectWorkerForInteraction(workerId, taskId);
   await workerSocket.ready;
   await graphQL(
     request,
@@ -2607,22 +2360,13 @@ test("task detail continues a completed task with the same agent session", async
   const projectName = `E2E Continue Project ${suffix}`;
   const taskTitle = `E2E Continue Task ${suffix}`;
   const workerId = `worker-e2e-continue-${suffix}`;
-  const expectedContinuationConfig = {
-    workMode: "review",
-    codex: {
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      approvalPolicy: "on-request",
-    },
-  };
-
   const createdProject = await graphQL(
     request,
     "mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }",
     {
       input: {
         name: projectName,
-        gitUrl: "e2e-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "e2e-continue",
       },
@@ -2650,6 +2394,7 @@ test("task detail continues a completed task with the same agent session", async
     {
       input: {
         title: taskTitle,
+        description: fakeAgentPrompt("first result"),
         projectId: project.id,
         workerId,
         agentType: "codex",
@@ -2667,11 +2412,7 @@ test("task detail continues a completed task with the same agent session", async
   );
   const taskId = createdTask.createTask.id;
 
-  const workerSocket = connectWorkerForContinuation(
-    workerId,
-    taskId,
-    expectedContinuationConfig,
-  );
+  const workerSocket = connectWorkerForContinuation(workerId, taskId);
   await workerSocket.ready;
   await graphQL(
     request,
@@ -2680,23 +2421,62 @@ test("task detail continues a completed task with the same agent session", async
   );
   await workerSocket.firstDone;
 
+  let initialSessionId = "";
+  let initialExecution: {
+    executionId: string;
+    a2aTaskId: string;
+    contextId: string;
+  } | null = null;
   await expect
     .poll(async () => {
       const data = await graphQL(
         request,
-        "query Task($id: ID!) { task(id: $id) { status result agentSessionId } }",
+        `query Task($id: ID!) {
+          task(id: $id) { status result agentSessionId }
+          taskA2AExecutions(taskId: $id) {
+            executionId turn operation a2aTaskId contextId remoteStatus lastSequence
+          }
+        }`,
         { id: taskId },
       );
-      return data.task;
+      initialSessionId = data.task.agentSessionId || "";
+      initialExecution = data.taskA2AExecutions[0] || null;
+      return { task: data.task, executions: data.taskA2AExecutions };
     }, { timeout: 30000 })
     .toMatchObject({
-      status: "COMPLETED",
-      result: "first result",
-      agentSessionId: "session-1",
+      task: {
+        status: "COMPLETED",
+        result: "first result",
+        agentSessionId: expect.stringMatching(/^fake-codex-/),
+      },
+      executions: [
+        expect.objectContaining({
+          turn: 1,
+          operation: "START",
+          a2aTaskId: expect.any(String),
+          contextId: expect.any(String),
+          remoteStatus: "COMPLETED",
+          lastSequence: expect.any(Number),
+        }),
+      ],
     });
 
+  expect(initialExecution).not.toBeNull();
+  const initialRound = initialExecution as {
+    executionId: string;
+    a2aTaskId: string;
+    contextId: string;
+  };
   await openVueApp(page);
   await openTaskFromList(page, taskTitle);
+  const detailDialog = page.getByRole("dialog");
+  const activeDetailPane = detailDialog.locator(".ant-tabs-tabpane-active");
+  const roundRows = detailDialog.getByTestId("a2a-execution-round");
+  await expect(roundRows).toHaveCount(1);
+  const startRoundRow = roundRows.filter({ hasText: "START" });
+  await expect(startRoundRow).toContainText("COMPLETED");
+  await expect(startRoundRow.getByTitle(initialRound.a2aTaskId)).toBeVisible();
+  await expect(startRoundRow.getByTitle(initialRound.contextId)).toBeVisible();
   await expect(
     page.getByRole("tab", { name: /^Conversation$/ }),
   ).toBeVisible();
@@ -2707,9 +2487,14 @@ test("task detail continues a completed task with the same agent session", async
   await page.getByRole("button", { name: /Send continuation/ }).click();
 
   await workerSocket.continued;
+  let continuedExecution: {
+    executionId: string;
+    a2aTaskId: string;
+    contextId: string;
+  } | null = null;
   await expect
     .poll(async () => {
-      const [taskData, conversationData] = await Promise.all([
+      const [taskData, conversationData, executionData] = await Promise.all([
         graphQL(
           request,
           "query Task($id: ID!) { task(id: $id) { status result agentSessionId } }",
@@ -2720,30 +2505,84 @@ test("task detail continues a completed task with the same agent session", async
           "query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { role content } }",
           { taskId },
         ),
+        graphQL(
+          request,
+          `query TaskA2AExecutions($taskId: ID!) {
+            taskA2AExecutions(taskId: $taskId) {
+              executionId turn operation a2aTaskId contextId remoteStatus lastSequence
+            }
+          }`,
+          { taskId },
+        ),
       ]);
+      continuedExecution =
+        executionData.taskA2AExecutions.find(
+          (execution: { turn: number }) => execution.turn === 2,
+        ) || null;
       return {
         task: taskData.task,
         messages: conversationData.taskConversations,
+        executions: executionData.taskA2AExecutions,
       };
     }, { timeout: 15000 })
     .toMatchObject({
       task: {
         status: "COMPLETED",
-        result: "second result",
-        agentSessionId: "session-1",
+        result: "fake codex continued",
+        agentSessionId: initialSessionId,
       },
       messages: expect.arrayContaining([
         expect.objectContaining({
           role: "assistant",
-          content: "first agent response",
+          content: "first result",
         }),
         expect.objectContaining({ role: "user", content: "follow up from ui" }),
         expect.objectContaining({
           role: "assistant",
-          content: "second agent response",
+          content: "fake codex continued",
         }),
       ]),
+      executions: [
+        expect.objectContaining({
+          executionId: initialExecution?.executionId,
+          turn: 1,
+          operation: "START",
+          a2aTaskId: initialExecution?.a2aTaskId,
+          contextId: initialExecution?.contextId,
+          remoteStatus: "COMPLETED",
+        }),
+        expect.objectContaining({
+          executionId: initialExecution?.executionId,
+          turn: 2,
+          operation: "CONTINUE",
+          a2aTaskId: expect.any(String),
+          contextId: initialExecution?.contextId,
+          remoteStatus: "COMPLETED",
+          lastSequence: expect.any(Number),
+        }),
+      ],
     });
+
+  expect(continuedExecution).not.toBeNull();
+  const continuedRound = continuedExecution as {
+    executionId: string;
+    a2aTaskId: string;
+    contextId: string;
+  };
+  await selectTaskDetailTab(page, "Overview");
+  await expect(roundRows).toHaveCount(2, { timeout: 15000 });
+  await expect(startRoundRow).toContainText("COMPLETED");
+  const continueRoundRow = roundRows.filter({ hasText: "CONTINUE" });
+  await expect(continueRoundRow).toContainText("COMPLETED");
+  await expect(continueRoundRow.getByTitle(continuedRound.a2aTaskId)).toBeVisible();
+  await expect(continueRoundRow.getByTitle(continuedRound.contextId)).toBeVisible();
+  await expect(
+    activeDetailPane.getByText("fake codex continued", { exact: true }),
+  ).toBeVisible();
+  await selectTaskDetailTab(page, "Conversation");
+  for (const content of ["first result", "follow up from ui", "fake codex continued"]) {
+    await expect(activeDetailPane.getByText(content, { exact: true })).toBeVisible();
+  }
 });
 
 test("worker startup command dialog generates docker and command-line commands without writing data", async ({
@@ -2783,10 +2622,11 @@ test("worker startup command dialog generates docker and command-line commands w
     formDialog.getByLabel("Work directory"),
     workDir,
   );
-  const claudeCheckbox = formDialog.getByRole("checkbox", { name: "claude" });
-  if (!(await claudeCheckbox.isChecked())) {
-    await claudeCheckbox.check();
-  }
+  const supportedAgents = formDialog.locator(".ant-form-item").filter({
+    hasText: "Supported agents",
+  });
+  await expect(supportedAgents.getByText("codex", { exact: true })).toBeVisible();
+  await expect(supportedAgents.getByText("claude", { exact: true })).toBeVisible();
 
   await formDialog
     .getByRole("button", { name: "Generate command" })
@@ -2809,9 +2649,7 @@ test("worker startup command dialog generates docker and command-line commands w
   await expect(dockerPre).toContainText(`WORKER_ID=${workerId}`);
   await expect(dockerPre).toContainText(`WORKER_NAME=${workerName}`);
   await expect(dockerPre).toContainText(`WORKER_WORK_DIR=${workDir}`);
-  await expect(dockerPre).toContainText(
-    "WORKER_SUPPORTED_AGENTS=codex,claude",
-  );
+  await expect(dockerPre).not.toContainText("WORKER_SUPPORTED_AGENTS");
   await expect(dockerPre).toContainText(
     "MANAGER_WS_URL=ws://localhost:8080/worker/ws",
   );
@@ -2833,9 +2671,7 @@ test("worker startup command dialog generates docker and command-line commands w
   await expect(shellPre).toContainText(`WORKER_ID=${workerId}`);
   await expect(shellPre).toContainText(`WORKER_NAME=${workerName}`);
   await expect(shellPre).toContainText(`WORKER_WORK_DIR=${workDir}`);
-  await expect(shellPre).toContainText(
-    "WORKER_SUPPORTED_AGENTS=codex,claude",
-  );
+  await expect(shellPre).not.toContainText("WORKER_SUPPORTED_AGENTS");
   await expect(
     commandDialog.getByRole("button", { name: /Copy command line/i }),
   ).toBeVisible();
@@ -2896,8 +2732,6 @@ test("worker edit dialog manages agent runtime environment variables", async ({
   await page.getByText("Workers").click();
   await page.waitForTimeout(500);
 
-  // PLACEHOLDER_E2E_TEST_CONTINUE
-
   const workerCard = page.locator(".record-card", { hasText: workerName });
   await expect(workerCard).toBeVisible({ timeout: 10000 });
   await workerCard.getByRole("button", { name: "Edit worker" }).click();
@@ -2920,8 +2754,6 @@ test("worker edit dialog manages agent runtime environment variables", async ({
   await fillTextField(page, envDialog.getByLabel("Key"), "NEW_VAR");
   await fillTextField(page, envDialog.getByLabel("Value"), "new-value");
   await fillTextField(page, envDialog.getByLabel("Description"), "new desc");
-
-  // PLACEHOLDER_E2E_TEST_PART2
 
   const enabledCheckbox = envDialog.getByRole("checkbox", { name: "Enabled" });
   if (!(await enabledCheckbox.isChecked())) await enabledCheckbox.check();
@@ -2951,9 +2783,7 @@ test("worker edit dialog manages agent runtime environment variables", async ({
     ]),
   );
 
-  // PLACEHOLDER_E2E_TEST_PART3
-
-  // Test remove env var
+  // 验证删除环境变量后持久化结果同步更新。
   await workerCard.getByRole("button", { name: "Edit worker" }).click();
   await expect(editDialog).toBeVisible();
   await codexTab.click();
@@ -2976,7 +2806,7 @@ test("worker edit dialog manages agent runtime environment variables", async ({
   expect(codexVarsAfter?.map((v: { key: string }) => v.key)).not.toContain("NEW_VAR");
   expect(codexVarsAfter?.map((v: { key: string }) => v.key)).toContain("INITIAL_VAR");
 
-  // Test enable/disable worker
+  // 验证 Worker 启停状态可通过同一卡片切换。
   await workerCard.getByRole("button", { name: "Disable worker" }).click();
   await page.waitForTimeout(500);
   await expect(workerCard.locator("text=DISABLED")).toBeVisible({ timeout: 5000 });
@@ -2985,6 +2815,6 @@ test("worker edit dialog manages agent runtime environment variables", async ({
   await page.waitForTimeout(500);
   await expect(workerCard.locator("text=REGISTERED")).toBeVisible({ timeout: 5000 });
 
-  // Cleanup
+  // 清理本用例创建的 Worker，避免污染后续分页断言。
   await graphQL(request, "mutation DeleteWorker($id: ID!) { deleteWorker(id: $id) }", { id: workerId });
 });

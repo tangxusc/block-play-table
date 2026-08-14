@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -50,23 +51,23 @@ func TestServiceCreatesAssignsStartsAndCompletesTask(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatalf("AssignWorker returned error: %v", err)
 	}
-	started, command, err := service.StartTask(ctx, task.ID)
+	started, err := service.StartTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("StartTask returned error: %v", err)
 	}
 	if started.Status != domain.TaskStarting {
 		t.Fatalf("status = %s, want %s", started.Status, domain.TaskStarting)
 	}
-	if command.Task.ID != task.ID || command.Project.ID != project.ID {
-		t.Fatalf("start command should include task and project")
+	request := preparedA2ARequestForTask(t, ctx, service, task.ID)
+	if request.Request.Scope.LocalTaskID != task.ID || request.Request.Project.ID != project.ID {
+		t.Fatalf("A2A request should include task and project")
 	}
-	if len(command.AgentRuntimeEnv) != 0 {
+	if len(request.Request.Environment.Variables) != 0 {
 		t.Fatalf("default settings should not send env vars")
 	}
-	completed, err := service.ApplyWorkerTaskCompleted(ctx, "msg-1", task.ID, "done")
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
-	}
+	bindTestA2ARound(t, ctx, service, task.ID)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
+	completed := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
 	if completed.Status != domain.TaskCompleted {
 		t.Fatalf("status = %s, want completed", completed.Status)
 	}
@@ -112,30 +113,30 @@ func TestServiceContinuesCompletedTaskOnOriginalWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, startPayload, err := service.StartTask(ctx, task.ID); err != nil {
-		t.Fatal(err)
-	} else if startPayload.Task.AgentConfig.Codex.Model != "gpt-5.4" {
-		t.Fatalf("start payload agent config = %+v", startPayload.Task.AgentConfig)
-	}
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-continue", task.ID, "/tmp/worktree"); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "completed-continue", task.ID, "first result", "session-1"); err != nil {
-		t.Fatal(err)
+	startRequest := preparedA2ARequestForTask(t, ctx, service, task.ID)
+	if startRequest.Request.Agent.Config.Model != "gpt-5.4" {
+		t.Fatalf("start request agent config = %+v", startRequest.Request.Agent.Config)
 	}
+	bindTestA2ARound(t, ctx, service, task.ID)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, &a2aext.RuntimeInfo{AgentSessionID: "session-1", WorktreePath: "/tmp/worktree"}, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "first result"})
 
-	continued, payload, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"})
+	continued, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"})
 	if err != nil {
 		t.Fatalf("ContinueTask returned error: %v", err)
 	}
 	if continued.Status != domain.TaskStarting || continued.Result != "" || continued.AgentSessionID != "session-1" {
 		t.Fatalf("continued task = %+v", continued)
 	}
-	if payload.Task.ID != task.ID || payload.Message != "follow up" || payload.AgentSessionID != "session-1" || payload.WorktreePath != "/tmp/worktree" {
-		t.Fatalf("continue payload = %+v", payload)
+	continueRequest := preparedA2ARequestForTask(t, ctx, service, task.ID)
+	if continueRequest.Request.Scope.LocalTaskID != task.ID || continueRequest.Text != "follow up" || continueRequest.Request.Resume.AgentSessionID != "session-1" || continueRequest.Request.Resume.WorktreePath != "/tmp/worktree" {
+		t.Fatalf("continue request = %+v", continueRequest)
 	}
-	if payload.Task.AgentConfig.Codex.Model != "gpt-5.4" || payload.Task.AgentConfig.Codex.ReasoningEffort != domain.CodexReasoningHigh {
-		t.Fatalf("continue payload agent config = %+v", payload.Task.AgentConfig)
+	if continueRequest.Request.Agent.Config.Model != "gpt-5.4" || continueRequest.Request.Agent.Config.ReasoningEffort != string(domain.CodexReasoningHigh) {
+		t.Fatalf("continue request agent config = %+v", continueRequest.Request.Agent.Config)
 	}
 	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
 	if err != nil {
@@ -160,11 +161,12 @@ func TestServiceDeduplicatesWorkerMessages(t *testing.T) {
 	}))
 	task := seedRunningTask(t, ctx, service)
 
-	if _, err := service.ApplyWorkerTaskLog(ctx, "msg-1", task.ID, "stdout", "first"); err != nil {
-		t.Fatalf("first ApplyWorkerTaskLog returned error: %v", err)
+	round, event := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventLogChunk, nil, map[string]any{"stream": string(a2aext.LogStdout), "content": "first"})
+	if err := applyTestA2ARawEvent(ctx, service, round, event, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("首次 A2A log.chunk 返回错误: %v", err)
 	}
-	if _, err := service.ApplyWorkerTaskLog(ctx, "msg-1", task.ID, "stdout", "duplicate"); err != nil {
-		t.Fatalf("duplicate ApplyWorkerTaskLog returned error: %v", err)
+	if err := applyTestA2ARawEvent(ctx, service, round, event, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("重复 A2A log.chunk 返回错误: %v", err)
 	}
 	logs, err := service.Store().TaskLogs(ctx, task.ID)
 	if err != nil {
@@ -212,7 +214,7 @@ func TestServiceStartTaskAutoAssignsAvailableWorker(t *testing.T) {
 		t.Fatalf("CreateTask returned error: %v", err)
 	}
 
-	started, command, err := service.StartTask(ctx, task.ID)
+	started, err := service.StartTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("StartTask returned error: %v", err)
 	}
@@ -222,8 +224,8 @@ func TestServiceStartTaskAutoAssignsAvailableWorker(t *testing.T) {
 	if started.WorkerID != worker.ID {
 		t.Fatalf("worker id = %q, want %q", started.WorkerID, worker.ID)
 	}
-	if command.Task.ID != task.ID {
-		t.Fatalf("start command task id = %q, want %q", command.Task.ID, task.ID)
+	if request := preparedA2ARequestForTask(t, ctx, service, task.ID); request.Request.Scope.LocalTaskID != task.ID {
+		t.Fatalf("A2A request task id = %q, want %q", request.Request.Scope.LocalTaskID, task.ID)
 	}
 }
 
@@ -310,12 +312,13 @@ func TestServiceCreateTaskWithWorkerAssignsImmediately(t *testing.T) {
 	if task.AgentConfig.Codex.Model != "gpt-5.4" || task.AgentConfig.Codex.ReasoningEffort != domain.CodexReasoningHigh {
 		t.Fatalf("task agent config = %+v", task.AgentConfig)
 	}
-	_, payload, err := service.StartTask(ctx, task.ID)
+	_, err = service.StartTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("StartTask returned error: %v", err)
 	}
-	if payload.Task.AgentConfig.Codex.Model != "gpt-5.4" || payload.Task.AgentConfig.WorkMode != domain.AgentWorkModeImplement {
-		t.Fatalf("start payload agent config = %+v", payload.Task.AgentConfig)
+	request := preparedA2ARequestForTask(t, ctx, service, task.ID)
+	if request.Request.Agent.Config.Model != "gpt-5.4" || request.Request.Agent.WorkMode != a2aext.WorkModeImplement {
+		t.Fatalf("start request agent config = %+v", request.Request.Agent)
 	}
 	loadedWorker, err := service.Store().Worker(ctx, worker.ID)
 	if err != nil {
@@ -439,7 +442,7 @@ func TestServiceRejectsAgentlessTaskStart(t *testing.T) {
 		t.Fatalf("CreateTask returned error: %v", err)
 	}
 
-	if _, _, err := service.StartTask(ctx, task.ID); err == nil {
+	if _, err := service.StartTask(ctx, task.ID); err == nil {
 		t.Fatal("StartTask should reject agentless task")
 	}
 }
@@ -451,20 +454,15 @@ func TestServiceInterruptsTaskAndReleasesWorkerWhenWorkerConfirms(t *testing.T) 
 	}))
 	task := seedRunningTask(t, ctx, service)
 
-	interrupting, workerID, err := service.InterruptTask(ctx, task.ID)
+	interrupting, err := service.InterruptTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("InterruptTask returned error: %v", err)
 	}
 	if interrupting.Status != domain.TaskInterrupting {
 		t.Fatalf("status = %s, want INTERRUPTING", interrupting.Status)
 	}
-	if workerID != task.WorkerID {
-		t.Fatalf("worker id = %q, want %q", workerID, task.WorkerID)
-	}
-	interrupted, err := service.ApplyWorkerTaskInterrupted(ctx, "interrupted-1", task.ID, "interrupted")
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskInterrupted returned error: %v", err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventResultUpdated, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"result": "interrupted"})
+	interrupted := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCanceled, nil, map[string]any{"status": string(a2aext.TerminalCanceled), "result": "interrupted"})
 	if interrupted.Status != domain.TaskInterrupted || interrupted.Result != "interrupted" {
 		t.Fatalf("interrupted task = %+v", interrupted)
 	}
@@ -484,17 +482,11 @@ func TestServiceRecordsTaskResultBeforeCompletion(t *testing.T) {
 	}))
 	task := seedRunningTask(t, ctx, service)
 
-	withResult, err := service.ApplyWorkerTaskResult(ctx, "result-1", task.ID, "agent result")
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskResult returned error: %v", err)
-	}
+	withResult := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventResultUpdated, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"result": "agent result"})
 	if withResult.Status != domain.TaskRunning || withResult.Result != "agent result" {
 		t.Fatalf("task after result = %+v", withResult)
 	}
-	completed, err := service.ApplyWorkerTaskCompleted(ctx, "completed-1", task.ID, "")
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
-	}
+	completed := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, nil, map[string]any{"status": string(a2aext.TerminalCompleted)})
 	if completed.Result != "agent result" {
 		t.Fatalf("completion should preserve prior result, got %q", completed.Result)
 	}
@@ -520,22 +512,15 @@ func seedRunningTask(t *testing.T, ctx context.Context, service *Service) *domai
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	running, err := service.ApplyWorkerTaskStarted(ctx, "started-1", task.ID, "/tmp/worktree")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return running
+	bindTestA2ARound(t, ctx, service, task.ID)
+	return applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
 }
 
 func seedCompletedTaskWithSession(t *testing.T, ctx context.Context, service *Service) *domain.Task {
 	t.Helper()
 	running := seedRunningTask(t, ctx, service)
-	completed, err := service.ApplyWorkerTaskCompleted(ctx, "completed-session-"+running.ID, running.ID, "done", "session-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return completed
+	return applyTestA2AEvent(t, ctx, service, running.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, &a2aext.RuntimeInfo{AgentSessionID: "session-1", WorktreePath: running.WorktreePath}, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
 }

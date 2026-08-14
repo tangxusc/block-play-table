@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tangxusc.github.io/block-play-table/a2a/extensions/execution/v1/request.schema.json",
+  "title": "Block Play Table A2A execution request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "version", "command", "scope", "task", "agent", "project", "worktree", "commands", "environment"],
+  "properties": {
+    "kind": { "const": "bpt.execution.request" },
+    "version": { "const": "1.0" },
+    "command": { "$ref": "#/$defs/command" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "task": { "$ref": "#/$defs/task" },
+    "agent": { "$ref": "#/$defs/agent" },
+    "project": { "$ref": "#/$defs/project" },
+    "worktree": { "$ref": "#/$defs/worktree" },
+    "commands": { "$ref": "#/$defs/commands" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "resume": { "$ref": "#/$defs/resume" },
+    "interaction": { "$ref": "#/$defs/interaction" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "command": { "properties": { "operation": { "const": "START" } }, "required": ["operation"] } } },
+      "then": { "properties": { "worktree": { "properties": { "mode": { "const": "CREATE" } } } } }
+    },
+    {
+      "if": { "properties": { "command": { "properties": { "operation": { "const": "RETRY" } }, "required": ["operation"] } } },
+      "then": { "properties": { "worktree": { "properties": { "mode": { "const": "RECREATE" } } } } }
+    },
+    {
+      "if": { "properties": { "command": { "properties": { "operation": { "const": "CONTINUE" } }, "required": ["operation"] } } },
+      "then": {
+        "required": ["resume"],
+        "properties": { "worktree": { "properties": { "mode": { "const": "RESUME" } } } }
+      }
+    },
+    {
+      "if": { "properties": { "command": { "properties": { "operation": { "const": "INTERACTION_RESPONSE" } }, "required": ["operation"] } } },
+      "then": {
+        "required": ["interaction", "resume"],
+        "properties": { "worktree": { "properties": { "mode": { "const": "RESUME" } } } }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "issuedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "operation": { "enum": ["START", "RETRY", "CONTINUE", "INTERACTION_RESPONSE"] },
+        "issuedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["localTaskId", "executionId", "attempt", "turn", "expectedWorkerId"],
+      "properties": {
+        "localTaskId": { "$ref": "#/$defs/identifier" },
+        "executionId": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "turn": { "type": "integer", "minimum": 1 },
+        "expectedWorkerId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "description", "baseBranch"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "description": { "type": "string", "maxLength": 16777216 },
+        "baseBranch": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "workMode", "config"],
+      "properties": {
+        "type": { "enum": ["codex", "claude"] },
+        "workMode": { "enum": ["plan", "implement", "review"] },
+        "config": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "codex" } }, "required": ["type"] },
+          "then": { "properties": { "config": { "$ref": "#/$defs/codexConfig" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "claude" } }, "required": ["type"] },
+          "then": { "properties": { "config": { "$ref": "#/$defs/claudeConfig" } } }
+        }
+      ]
+    },
+    "codexConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "maxLength": 1024 },
+        "reasoningEffort": { "enum": ["minimal", "low", "medium", "high", "xhigh"] },
+        "sandboxMode": { "enum": ["read-only", "workspace-write", "danger-full-access"] },
+        "approvalPolicy": { "enum": ["untrusted", "on-failure", "on-request", "never"] },
+        "fullAuto": { "type": "boolean" },
+        "bypassApprovalsAndSandbox": { "type": "boolean" }
+      }
+    },
+    "claudeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "maxLength": 1024 },
+        "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+        "permissionMode": { "enum": ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"] }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "gitUrl", "defaultBranch", "worktreeNamePrefix"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "gitUrl": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "worktreeNamePrefix": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["CREATE", "RECREATE", "RESUME"] }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pre", "post"],
+      "properties": {
+        "pre": { "type": "array", "maxItems": 1024, "items": { "type": "string", "maxLength": 1048576 } },
+        "post": { "type": "array", "maxItems": 1024, "items": { "type": "string", "maxLength": 1048576 } }
+      }
+    },
+    "environmentVariable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value", "sensitive"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "maxLength": 1024 },
+        "value": { "type": "string", "maxLength": 16777216, "x-bpt-persist": false },
+        "sensitive": { "type": "boolean" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variables"],
+      "properties": {
+        "variables": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/environmentVariable" } }
+      }
+    },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentSessionId", "worktreePath"],
+      "properties": {
+        "agentSessionId": { "$ref": "#/$defs/identifier" },
+        "worktreePath": { "type": "string", "minLength": 1, "maxLength": 8192 }
+      }
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "decision", "message", "payload"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "decision": { "enum": ["APPROVE", "APPROVE_FOR_SESSION", "DENY", "CANCEL", "RESPOND"] },
+        "message": { "type": "string", "maxLength": 16777216 },
+        "payload": { "type": "string", "maxLength": 16777216 }
+      }
+    }
+  }
+}

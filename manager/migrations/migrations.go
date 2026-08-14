@@ -44,6 +44,16 @@ var TaskDesiredStateSQL string
 //go:embed 014_task_owner_user_id.sql
 var TaskOwnerUserIDSQL string
 
+// A2AManagerControlSQL 包含 Manager A2A 控制面表结构。
+//
+//go:embed 015_a2a_manager_control.sql
+var A2AManagerControlSQL string
+
+// DropLegacyTaskControlSQL 删除旧 WebSocket 任务控制状态。
+//
+//go:embed 016_drop_legacy_task_control.sql
+var DropLegacyTaskControlSQL string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -64,4 +74,6 @@ var All = []Migration{
 	{Version: "012_drop_task_review", SQL: DropTaskReviewSQL},
 	{Version: "013_task_desired_state", SQL: TaskDesiredStateSQL},
 	{Version: "014_task_owner_user_id", SQL: TaskOwnerUserIDSQL},
+	{Version: "015_a2a_manager_control", SQL: A2AManagerControlSQL},
+	{Version: "016_drop_legacy_task_control", SQL: DropLegacyTaskControlSQL},
 }

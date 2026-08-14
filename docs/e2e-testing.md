@@ -1,382 +1,178 @@
-# 端到端测试文档
+# 端到端测试与质量门禁
 
-本文档定义 Block Play Table 的端到端测试策略、运行入口、覆盖矩阵、发布准入和排障方法。端到端测试用于验证 Manager、Worker、Vue Web UI、GraphQL、Worker WebSocket、持久化、领域事件和真实 Agent CLI 在可信模式下可以形成完整闭环。
+本文档定义 Block Play Table 的端到端验证、覆盖率、模糊测试和发布准入。任务主流程必须经过真实 A2A 协议栈；测试不得直接伪造已经下线的 Worker 任务消息。
 
-## 测试目标与边界
+## 1. 验证目标
 
-端到端测试重点验证用户可感知的业务闭环，而不是替代单元测试、组件测试或覆盖率门禁。
+端到端测试覆盖以下用户可感知闭环：
 
-目标：
+1. 通过 GraphQL/UI 创建 Project、注册和编辑 Worker、创建并分配 Task。
+2. `startTask` 先原子保存 A2A round 与 dispatch intent，再由 Manager 通过 FRP 发现 Worker Agent Card，并使用官方 A2A SDK 发起流式执行。
+3. Worker A2A Server 使用测试 Adapter 执行确定性 Codex/Claude fixture，将标准 Task 状态和 execution v1 DataPart/Artifact 投影为任务状态、日志、会话、交互和结果。
+4. UI 展示 A2A 轮次、远端状态、日志、会话、结果和领域事件，并在订阅事件或兜底刷新后更新看板分组。
+5. 用户回复交互时引用既有 A2A Task/Context；中断使用标准 `CancelTask`；Manager 重启后通过 `GetTask`/`SubscribeToTask` 恢复追踪。
+6. Worker 断线、乱序、重复事件和部分 Artifact 不得破坏幂等、序列连续性和终态单调性。
+7. 真实 Codex/Claude CLI 在发布门禁中使用同一 Adapter/A2A 主流程完成固定任务。
 
-- 验证 Project、Worker、Task、Settings、Board 等核心对象可以通过 UI/API 完成主要工作流。
-- 验证 Manager GraphQL 与 Worker WebSocket 的协议交互、状态流转、日志、会话、结果和领域事件持久化。
-- 验证运行中 Agent 交互闭环：Worker 上报 `TASK_INTERACTION_REQUEST` 后任务进入 `WAITING_INPUT`，UI 批准/回答后 Manager 下发 `TASK_INTERACTION_RESPONSE`，Worker 上报 `TASK_INTERACTION_RESOLVED` 并恢复执行。
-- 验证 Claude `permission_denials` 通过同一交互闭环展示在 UI 中，并在用户批准后由 Worker 继续同一个 Claude session。
-- 验证任务分配时的 Agent CLI 运行配置会保存、展示，并随 `TASK_START` / `TASK_CONTINUE` 下发给 Worker。
-- 验证 Vue Web UI 可以加载、展示看板状态分组，并在订阅事件或兜底刷新后呈现最新状态。
-- 验证真实 Codex/Claude CLI 在发布前可以通过 Worker 执行固定任务，并产出可追踪结果。
+E2E 不替代字段级单元测试或安全渗透测试。系统仍是 trusted mode；`WORKER_TOKEN` 非空时，浏览器入口、Worker 注册/FRP 和 A2A Bearer 鉴权使用同一固定 token。
 
-边界：
+## 2. 测试分层
 
-- E2E 不覆盖所有字段级校验，字段级分支主要由 Go 单元测试和 Vue component 测试覆盖。
-- E2E 不承担安全渗透测试。当前系统处于 trusted mode；当 `WORKER_TOKEN` 非空时，GraphQL/UI 使用同一个固定 token 做访问门禁。
-- 真实 Agent E2E 依赖本机 CLI、凭据、网络和模型服务，作为发布必跑项，不作为每次本地文档或代码变更的默认验证。
-
-## 测试分层与现有入口
-
-| 层级 | 入口 | 用途 | 默认运行时机 |
+| 层级 | 入口 | 验证范围 | 默认时机 |
 | --- | --- | --- | --- |
-| L1 Go in-process E2E | `make e2e` | 使用 `httptest` 在进程内验证 Manager GraphQL、Worker WebSocket、领域事件和日志落库 | 本地变更、CI、发布前 |
-| L2 Playwright UI E2E | `npm run e2e` | 连接运行中的 UI/Manager，验证 Vue Web UI、GraphQL 种子数据、模拟 Worker 生命周期、看板状态分组和 Review Git workspace 状态、同步与发布流程 | UI/API 变更、CI、发布前 |
-| L3 Real Agent Release Gate | `npm run e2e:real-agents` | 启动真实 Manager/Worker，并使用 Codex/Claude CLI 跑通固定任务 | 发布必跑 |
+| L1 Go E2E | `make e2e` | 进程内 Manager、FRP、Worker A2A Server、纯 Go 测试 Adapter、GraphQL、持久化和恢复 | 每次交付、CI |
+| L2 Playwright E2E | `npm run e2e` | 运行中的 Vue/Manager，加生产 Worker 与确定性假 CLI，覆盖主要 UI 工作流 | 每次交付、CI |
+| L3 Real Agent E2E | `npm run e2e:real-agents` | 生产 Adapter、真实 Codex/Claude CLI、认证和完整 A2A/FRP 链路 | 涉及 Agent/Worker/发布流程时，发布前 |
 
-现有测试文件：
+关键测试文件：
 
-- `manager/e2e/trusted_flow_test.go`：L1，进程内构造 Manager、Worker WebSocket、GraphQL 创建 Project/Task、启动任务、上报 Worker 事件并验证完成与日志。
-- `e2e/block_play_table.spec.ts`：L2，打开 Vue Web UI，验证首次进入时配置 Manager URL，通过 GraphQL 创建 Project/Worker/Task，模拟 Worker WebSocket 上报 `TASK_STARTED`、`TASK_INTERACTION_REQUEST`、`TASK_LOG`、`TASK_CONVERSATION`、`TASK_RESULT`、`TASK_COMPLETED`，验证任务状态、Codex/Claude 交互授权、日志、会话、领域事件、Agent CLI 运行配置下发、Task terminal、Task Review Git workspace remote/branch 输入、status 摘要、fetch/rebase 同步、commit/publish、Board/Projects/Workers/Events 分页、Calendar 日/周/月/年视图和 Archived 视图删除归档任务。
-- `e2e/board_status_groups.spec.ts`：L2，构造 pending/running/archived 任务，验证活跃 Board 视图排除归档任务、Archived 视图展示并删除归档任务，并生成截图 `board-status-groups.png`。
-- `scripts/real_agent_e2e.sh`：L3，检查 `codex` 与 `claude` 命令存在，启动 trusted-mode Manager/Worker；任务创建和结果校验需要通过 UI、GraphQL 或后续 Playwright/API 流程完成。
+- `manager/e2e/trusted_flow_test.go`：L1 A2A 任务下发、流式事件、日志/结果投影和 FRP/Review 闭环。
+- `e2e/block_play_table.spec.ts`：L2 项目、Worker、任务、交互、日志、会话、结果、A2A 轮次、终端、Review 和分页流程。
+- `e2e/board_status_groups.spec.ts`：L2 保持看板页面打开，通过详情页 Start 和审批操作驱动任务从 Ready 进入 In Progress 再进入 Done，验证真实 A2A 状态投影与订阅刷新。
+- `scripts/real_agent_e2e.sh`：L3 启动生产 Manager/Worker，并分别验证 Codex 与 Claude。
 
-## 本地环境准备
+测试 Adapter 只存在于测试代码。它实现与生产 Adapter 相同的 Runtime 边界，但输出确定性的 SDK Task/Artifact；Playwright 使用生产 Worker 进程和可执行假 CLI，因此 Agent Card、JSON-RPC/SSE、鉴权、FRP、SQLite TaskStore、幂等 inbox 和 Manager 投影均为真实实现。
 
-基础依赖：
+## 3. 本地完整验证
 
-- Go：用于 Manager、Worker 和 Go E2E。若本机 Go 环境有 `GOROOT` 冲突，使用 `GO_TEST_ENV='env -u GOROOT'`。
-- Node.js 与 npm：用于安装和运行 Playwright。
-- Playwright：通过 `npm install` 安装 `@playwright/test`。
-- Node.js/npm：用于启动 Vue UI、运行本地栈脚本和 Playwright。
-- Codex CLI：真实 Agent E2E 需要 `codex app-server --listen stdio://` 可用。
-- Claude CLI：真实 Agent E2E 需要 `claude -p` 可用。
-- Worker 工作目录：真实或容器 Worker 需要可写目录，例如 `./worker-data` 或 `worker-data-real-e2e`。
-
-推荐本地启动方式：
+安装依赖并启动完整栈。`make run-local` 会先停止状态文件记录的旧实例，并确认 Manager/UI 端口已经释放；若检测到未受状态文件管理的旧服务，或任一组件启动失败，脚本会失败并回收本次已启动的进程，避免多个同 ID Worker 互相替换连接。
 
 ```bash
+npm install
 make run-local
 ```
 
-该命令通过 npm 脚本在本地后台启动 Manager、Worker 和 Vue UI，默认使用 SQLite。默认端口：
+确认以下入口可用：
 
 - UI：`http://localhost:18080`
 - Manager：`http://localhost:8080`
 - GraphQL：`http://localhost:8080/graphql`
-- Worker WebSocket：`ws://localhost:8080/worker/ws`
+- Worker 注册/心跳：`ws://localhost:8080/worker/ws`
+- Worker FRP：`ws://localhost:8080/worker/frp`
 
-UI 是静态应用，首次打开时需要填写 Manager 基础地址，例如 `http://localhost:8080`。Playwright 用例会在浏览器上下文中自动填写该地址，并在需要时输入 Manager token。
+随后运行：
 
-结束本地栈：
+```bash
+make test
+make coverage
+make fuzz
+make e2e
+npm run e2e
+```
+
+涉及真实 Agent 执行、Worker Runtime、CLI 参数、worktree 或发布流程时，还必须运行：
+
+```bash
+npm run e2e:real-agents
+```
+
+完成后清理：
 
 ```bash
 make stop-local
 ```
 
-清理本地栈和 Worker 数据：
+任何一步失败都必须先按 Observation、Hypothesis、Verification、Implementation、Evidence 顺序定位和修复，不能以静态检查代替主流程验证。
 
-```bash
-make clean-local
-```
+## 4. 常用环境变量
 
-## 关键环境变量
-
-| 变量 | 默认值或来源 | 用途 |
+| 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `BPT_UI_URL` | `http://localhost:18080` | Playwright `baseURL`，指定 UI 地址 |
-| `BPT_UI_PORT` | `18080` | `make run-local` 启动 Vue UI 时使用的端口 |
-| `BPT_MANAGER_URL` | 由 `BPT_MANAGER_GRAPHQL_URL` 去掉 `/graphql` 推导 | Playwright 首次进入 UI 时填写的 Manager 基础地址 |
-| `BPT_MANAGER_GRAPHQL_URL` | `http://localhost:8080/graphql` | Playwright 测试访问 Manager GraphQL 的地址 |
-| `BPT_MANAGER_TOKEN` | `WORKER_TOKEN` 或 `dev-worker-token` | Playwright 访问 Manager GraphQL、UI 解锁、订阅、终端和代理时使用的固定 token |
-| `BPT_MANAGER_WS_URL` | 由 GraphQL URL 推导为 `/worker/ws` | Playwright 模拟 Worker 连接的 WebSocket 地址 |
-| `BPT_MANAGER_WS_TOKEN` | 空 | Playwright 模拟 Worker 连接时追加到 `token` 查询参数 |
-| `WORKER_TOKEN` | 本地 Makefile 默认 `dev-worker-token` | Manager 启用用户侧 token 门禁和 Worker WebSocket token 校验，真实 Worker 使用同值连接 |
-| `MANAGER_WS_URLS` | 空 | 真实 Worker 可用逗号分隔 URL 同时连接多个 Manager，优先级高于 `MANAGER_WS_URL` |
-| `DB_DRIVER` | Manager 默认 `sqlite` | Manager 存储驱动，可选 `sqlite`、`postgres`、`memory` |
-| `DB_DSN` | SQLite 默认 `./data/manager.db` | Manager 数据源地址；PostgreSQL 模式必须显式提供 |
-| `GO_BIN` | `go` | `scripts/real_agent_e2e.sh` 用于启动 Manager/Worker 的 Go 命令 |
-| `WORKER_DIR` | `./worker-data-real-e2e` | 真实 Agent E2E 使用的 Worker 工作目录 |
-| `REAL_AGENT_CODEX_MODEL` | 空 | 真实 Agent E2E 可选 Codex `agentConfig.codex.model`；为空时不传模型名，避免依赖特定模型可用性 |
-| `REAL_AGENT_CLAUDE_MODEL` | 空 | 真实 Agent E2E 可选 Claude `agentConfig.claude.model`；为空时不传模型名，避免依赖特定模型可用性 |
+| `BPT_UI_URL` | `http://localhost:18080` | Playwright UI 地址 |
+| `BPT_MANAGER_URL` | 从 GraphQL URL 推导 | UI 配置的 Manager 基础地址 |
+| `BPT_MANAGER_GRAPHQL_URL` | `http://localhost:8080/graphql` | Playwright 数据准备与断言 |
+| `BPT_MANAGER_TOKEN` | `WORKER_TOKEN` 或 `dev-worker-token` | 浏览器/GraphQL Bearer token |
+| `MANAGER_ADDR` | `127.0.0.1:18081` | Real Agent E2E 隔离 Manager 地址，避免占用本地 UI 的 `18080` |
+| `WORKER_TOKEN` | 本地栈使用 `dev-worker-token` | Manager、Worker 注册/FRP 与 A2A Bearer 鉴权 |
+| `MANAGER_WS_URL` | `ws://localhost:8080/worker/ws` | 单个 Worker 的注册/心跳入口，并用于派生 FRP 地址 |
+| `WORKER_ID` | `worker-local` | Worker 稳定身份 |
+| `WORKER_WORK_DIR` | `./worker-data` | worktree 与 Worker A2A SQLite 数据目录 |
+| `WORKER_A2A_HOST` | `127.0.0.1` | Worker A2A loopback 监听地址；非 loopback 会拒绝启动 |
+| `WORKER_A2A_PORT` | `0` | Worker A2A 监听端口；`0` 表示动态分配 |
+| `WORKER_A2A_DB_PATH` | `<WORKER_WORK_DIR>/a2a.db` | Worker A2A Task、binding 和 journal 的 SQLite 文件 |
+| `REAL_AGENT_CODEX_MODEL` | 空 | L3 Codex 显式模型 |
+| `REAL_AGENT_CLAUDE_MODEL` | 空 | L3 Claude 显式模型 |
 
-与 Worker 本体相关的常用变量还包括 `MANAGER_WS_URL`、`MANAGER_WS_URLS`、`WORKER_ID`、`WORKER_NAME`、`WORKER_WORK_DIR`、`WORKER_SUPPORTED_AGENTS`、`WORKER_PROJECT_BINDING_MODE`、`WORKER_BOUND_PROJECT_IDS`。
+Worker 固定探测并发布 Codex 与 Claude 两种 Adapter，不提供按环境变量裁剪能力的启动模式。L2 使用两个确定性假 CLI，L3 必须同时提供已认证的真实 Codex 和 Claude CLI。
 
-## 运行方式
+一个 Worker 进程只连接一个 Manager。测试多个 Manager 时必须启动相互隔离的 Worker 进程和数据目录，避免 A2A Task、command inbox 或 worktree 所有权混淆。
 
-### L1 Go in-process E2E
+## 5. 覆盖率与模糊测试
 
-```bash
-make e2e
-```
+`make coverage` 串联三类独立 80% 门禁：
 
-等价于：
+1. Go 语句覆盖率：Manager、Worker、共享包完整插桩，再按标准 `// Code generated ... DO NOT EDIT.` 标记精确过滤文件。GraphQL 包中的手写 resolver/helper 仍在分母。
+2. Go 分支覆盖率：固定 `gobco v1.3.4`，按整包插桩和测试，解析 `-stats` JSON 中每个条件的 true/false 方向，再精确过滤生成文件。gobco 必须整包运行；逐文件插桩会丢失同包类型信息。
+3. Vue 覆盖率：Vitest/Istanbul 对 statement、branch、function、line 分别执行 80% 阈值。
 
-```bash
-GOTOOLCHAIN=local go test ./manager/e2e -count=1
-```
+覆盖产物：
 
-在有 Go 环境冲突的机器上：
+- `coverage-manager.out`、`coverage-worker.out`、`coverage-pkg.out`
+- `coverage-manager.txt`、`coverage-worker.txt`、`coverage-pkg.txt`、`coverage.txt`
+- `.coverage/go-statement/`
+- `.coverage/go-branch/report.tsv`
+- `ui/coverage/`
 
-```bash
-make e2e GO=go GO_TEST_ENV='env -u GOROOT'
-```
-
-期望结果：
-
-- `TestTrustedManagerWorkerFlow` 通过。
-- GraphQL 创建 Project/Task 成功。
-- Worker WebSocket 收到 `TASK_START`。
-- `TASK_START` / `TASK_CONTINUE` 中的 `payload.task.agentConfig` 与分配时选择的模型、思考深度、工作模式和权限配置一致。
-- Manager 接收 Worker 运行事件后，将任务推进到 `COMPLETED`。
-- `taskLogs` 能查询到 Worker 日志。
-
-### L2 Playwright UI E2E
-
-先启动本地 UI/Manager/Worker：
+`make fuzz` 自动发现仓库内所有 `Fuzz*` 并逐个运行。CI 默认使用有界时长；快速本地复现可使用：
 
 ```bash
-make run-local
+FUZZ_TIME=1x make fuzz
 ```
 
-安装 Node 依赖：
+新增解析器、协议事件或日志脱敏逻辑时，必须同时考虑 seed corpus、随机输入上限、panic、UTF-8、超大 payload 和敏感值跨分块场景。
 
-```bash
-npm install
-```
+## 6. A2A 主流程断言
 
-运行全部 Playwright E2E：
+每个 START/RETRY/CONTINUE 轮次至少断言：
 
-```bash
-npm run e2e
-```
+1. Manager 在网络发送前已持久化唯一 `commandId`、round 和 `PENDING` intent。
+2. Worker 注册 capability、Agent Card、协议版本、JSON-RPC endpoint 和 required execution extension 完全一致。
+3. 首个流事件在控制超时内到达，Task ID/Context ID 一旦绑定便不可变。
+4. Worker 接受 execution 后，`execution.accepted`、`workspace.ready`、日志、会话、结果和 `execution.terminal` 的 sequence 连续且可重放；接受前的标准 `REJECTED` 不创建 execution event。
+5. 重复 command 返回同一 A2A Task；相同 event ID/内容幂等，冲突内容被拒绝。
+6. 终态只允许 `COMPLETED`、`FAILED`、`REJECTED` 或 `CANCELED`，且不会回退到非终态。
+7. 日志分块不超过 32 KiB；敏感环境变量在 Manager/Worker 持久化、错误和 Artifact 中均为 `[REDACTED]`。
+8. Task Detail 的 A2A 轮次、任务状态、日志、会话、结果和领域事件最终一致。
 
-连接非默认地址时：
+恢复与异常测试至少覆盖：
 
-```bash
-BPT_UI_URL=http://localhost:18080 \
-BPT_MANAGER_GRAPHQL_URL=http://localhost:8080/graphql \
-BPT_MANAGER_TOKEN=dev-worker-token \
-BPT_MANAGER_WS_URL=ws://localhost:8080/worker/ws \
-BPT_MANAGER_WS_TOKEN=dev-worker-token \
-npm run e2e
-```
+- Manager 在 dispatch 前、绑定远端 Task 后、投影中途和终态前重启。
+- SSE 中断或 idle timeout 后 `GetTask` 对账，再重新订阅。
+- Artifact 序列缺口触发快照恢复，不猜测或跳过缺失事件。
+- Worker 重启把内存中非终态 A2A Task 收敛为稳定失败，并保留恢复摘要。
+- 无法确认远端 Task 不存在时保持可恢复状态；确认不存在后使用稳定错误码失败。
 
-列出现有用例：
+## 7. Playwright 主要工作流
 
-```bash
-npm run e2e -- --list
-```
+浏览器门禁必须覆盖并通过：
 
-失败后检查：
+1. 首次进入配置 Manager URL/token。
+2. Project 创建、编辑和归档。
+3. Worker 注册、编辑、Project 绑定和能力展示。
+4. Task 创建、分配、Agent 配置，以及从 Task Detail 发起 Start。
+5. 同一 Task Detail 弹窗在审批和 continue 后自动刷新 A2A task/context、START/CONTINUE 轮次状态、日志、会话和结果。
+6. 看板四组状态及 Ready → In Progress → Done 的订阅换列、Calendar 和 Archived 删除流程。
+7. Task/Worker terminal 可用性与基本交互。
+8. Review diff、stage/unstage、discard/restore、fetch/rebase、commit 和 publish 防护。
 
-- Playwright trace：配置为 `on-first-retry`，失败重试时会生成 trace。
-- Playwright output：`test-results/` 下包含截图和失败上下文。
-- 看板截图：`board-status-groups.png` 会写入当前 Playwright 用例输出目录。
+真实 Agent 的 CONTINUE 还必须保持首次执行的 `agentSessionId` 与 `worktreePath`，并确认审批轮次创建的 token 命名标记文件在续接后仍存在；仅验证第二轮文本结果不足以证明会话和工作区连续性。L3 使用 `touch` 创建标记文件，避免不同 Claude Code 版本对 shell 输出重定向实施额外路径检查而绕开标准 `--allowedTools` 恢复语义。Codex Adapter 固定使用 `approvalsReviewer=user`，因此 L3 即使运行在配置了本机 `auto_review` 的主机上，也必须由 Manager 收到并完成审批。
 
-### L3 真实 Agent 发布准入
+用例必须使用唯一 Worker ID、工作目录和 A2A SQLite 路径，并在 `finally`/fixture teardown 中终止测试 Worker、关闭 FRP、删除临时资源。失败时保留 Playwright trace、截图、Manager/Worker 日志和 A2A round 标识。
 
-真实 Agent E2E 是发布必跑项。发布前必须分别使用 Codex 与 Claude 跑通固定任务，并验证任务最终状态、日志、会话、结果和 worktree。
+## 8. CI 与发布证据
 
-前置检查：
+CI 顺序要求：
 
-```bash
-command -v codex
-command -v claude
-codex --version
-claude --version
-```
+1. `npm ci`
+2. `make test`
+3. `make coverage`
+4. `make fuzz`
+5. `npm run validate:a2a`
+6. `make build`、UI typecheck/build、Docker build
+7. `make e2e`
+8. `make run-local` 后运行 `npm run e2e`
+9. 使用 `always()` 执行 `make stop-local` 并上传日志、覆盖率、Playwright trace/report
 
-启动真实 Agent E2E 栈：
+Pages 工作流必须把 `docs/a2a/extensions/` 复制到发布根目录的 `/a2a/extensions/`，并在构建前执行 schema/示例校验，确保 Agent Card 中的稳定 extension URI 可访问。
 
-```bash
-GO_BIN=go \
-WORKER_DIR=./worker-data-real-e2e \
-npm run e2e:real-agents
-```
-
-如需规避本机 `GOROOT` 冲突：
-
-```bash
-GO_BIN=go \
-GOROOT= \
-GOTOOLCHAIN=local \
-WORKER_DIR=./worker-data-real-e2e \
-npm run e2e:real-agents
-```
-
-发布前需要完成两条固定任务：
-
-- Codex 任务：`agentType=codex`，使用固定测试仓库或本地 fixture，要求 Worker 创建 worktree、执行前置命令、运行 `codex app-server`，必要时通过 UI 完成命令/文件/权限/用户输入交互，写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
-- Claude 任务：`agentType=claude`，使用同一类固定输入，要求 Worker 创建 worktree、执行前置命令、运行 `claude -p`、写入日志/会话、执行后置命令，并以 `COMPLETED` 结束。
-- 默认脚本会给两类任务传非空 `agentConfig`：Codex 覆盖 `reasoningEffort` 和权限/沙箱相关字段；Claude 覆盖 `effort` 和 `permissionMode`。模型字段可通过 `REAL_AGENT_CODEX_MODEL` / `REAL_AGENT_CLAUDE_MODEL` 显式开启，以避免默认测试依赖特定模型名可用性。空配置兼容路径由 L1/L2 与单元测试覆盖。
-
-验收查询应确认：
-
-- `task.status == COMPLETED`
-- `task.result` 非空，并包含固定任务的预期结果摘要
-- `taskLogs(taskId)` 包含 Agent 启动、前置命令、后置命令和关键输出
-- `taskConversations(taskId)` 包含 Agent 回复内容
-- `taskEvents(taskId)` 至少包含 `TaskCreated`、`TaskAssigned`、`TaskStartRequested`、`TaskStarted`、`TaskCompleted`
-- Worker 工作目录下存在对应任务的 worktree，且没有污染其他任务目录
-
-## 全量场景矩阵
-
-| 领域 | 场景 | 层级 | 状态 |
-| --- | --- | --- | --- |
-| Manager | `/healthz` 返回 200 | L1 | [待补齐] |
-| Manager | `/readyz` 在存储可用时返回 200、存储不可用时返回 503 | L1 | [待补齐] |
-| Manager | `WORKER_TOKEN` 为空时 GraphQL 保持无鉴权兼容；非空时无 token 被拒绝，正确 token 可访问 | L1/L2 | [已实现] |
-| Project | 创建 Project 并使用默认分支/worktree 前缀 | L1/L2 | [已实现] |
-| Project | 更新 Project 名称、Git URL、默认分支、worktree 前缀 | L1/L2 | [待补齐] |
-| UI | Board、Projects、Workers、Events 后端分页与翻页控件 | L1/L2 | [已实现] |
-| Project | 归档 Project 后默认列表不展示，includeArchived 可查询 | L1/L2 | [待补齐] |
-| Project | Worker 绑定 SPECIFIC_PROJECTS 时只接收绑定 Project 的任务 | L1/L2 | [已实现] |
-| Worker | 通过 GraphQL 注册 Worker | L2 | [已实现] |
-| Worker | 通过 Worker WebSocket `WORKER_REGISTER` 注册 Worker | L1 | [已实现] |
-| Worker | 设置 `WORKER_TOKEN` 后，无 token 连接被拒绝，正确 token 可连接 | L1/L2 | [已实现] |
-| Worker | Worker 上报心跳并更新 `lastHeartbeatAt` | L1 | [待补齐] |
-| Worker | Worker 断线后被标记为 `OFFLINE` | L1/L2 | [待补齐] |
-| Worker | Worker 重连后恢复 `ONLINE` 并可继续接收任务 | L1/L2 | [待补齐] |
-| Worker | `MANAGER_WS_URLS` 配置多个 Manager 后 Worker 同时注册到所有 Manager | L1 | [已实现] |
-| Worker FRP | Worker 建立 `/worker/frp` yamux 隧道，Manager `/proxy/**` 按 Worker name、host 与 `worker_port` 转发 HTTP 请求 | L1 | [已实现] |
-| UI | Task 详情输入 Worker 网络地址并通过 Manager 同源代理显示网页预览 | L2 | [已实现] |
-| UI | Task 详情 Terminal 面板先通过 `/terminal/tasks/{taskID}` 预检 worktree，再连接 `/terminal/tasks/{taskID}/ws` 并在默认 worktree 执行 `pwd` 与命令输出 | L1/L2 | [已实现] |
-| UI | Task 详情 Review 面板通过 Worker Review 服务展示 Git workspace status，使用 remote/branch 输入执行 Fetch/Rebase，并提交 staged 改动后 fast-forward publish 到 base branch | L2 | [已实现] |
-| Worker | 禁用 Worker 后不参与自动分配，启用后恢复可用 | L1/L2 | [待补齐] |
-| Worker | 删除空闲 Worker 后列表移除并产生领域事件 | L1/L2 | [待补齐] |
-| Worker | 更新 Worker 项目绑定为 ALL_PROJECTS 与 SPECIFIC_PROJECTS | L1/L2 | [待补齐] |
-| Task | 创建未分配、无 Agent 的任务 | L1/L2 | [待补齐] |
-| Task | 创建指定 Worker 与 Agent 的任务后状态为 `ASSIGNED` | L2 | [已实现] |
-| Task | 创建任务同时选择 Worker 时保存 Agent CLI 运行配置 | L1/L2 | [已实现] |
-| Task | `assignWorker` 写入 Codex/Claude 配置并在任务详情展示 | L1/L2 | [已实现] |
-| Task | 创建任务时保存并展示开始/结束日期，默认当天且不影响启动执行 | L1/L2 | [已实现] |
-| Task | 自动分配只选择在线、空闲、支持 Agent、允许 Project 的 Worker | L1/L2 | [待补齐] |
-| Task | 启动已分配任务，Manager 向 Worker 下发 `TASK_START` | L1/L2 | [已实现] |
-| Task | `TASK_START` 和 `TASK_CONTINUE` 下发同一份 `agentConfig` | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_ACCEPTED` 后保持启动流程可追踪 | L2 | [已实现] |
-| Task | Worker 上报 `TASK_STARTED` 后任务进入 `RUNNING` 并记录 worktree | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_LOG` 后日志可在 API/UI 查询；只有 `TASK_CONVERSATION` 的历史或真实 Agent 输出也会以会话角色派生到 `taskLogs` | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_CONVERSATION` 后会话可在 API/UI 查询 | L2 | [已实现] |
-| Task | Worker 上报 `TASK_RESULT` 后结果暂存到任务 | L2 | [已实现] |
-| Task | Worker 上报 `TASK_COMPLETED` 后任务进入 `COMPLETED` 并释放 Worker | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_FAILED` 后任务进入 `FAILED` 并保留失败原因 | L1/L2 | [待补齐] |
-| Task | Worker 上报 `TASK_WAITING_INPUT` 后任务进入 `WAITING_INPUT` | L1/L2 | [已实现] |
-| Task | Worker 上报 `TASK_INTERACTION_REQUEST` 后 UI 展示待处理授权/输入，响应后 Worker 收到 `TASK_INTERACTION_RESPONSE` 并通过 `TASK_INTERACTION_RESOLVED` 恢复任务 | L1/L2 | [已实现] |
-| Task | Claude Plan 模式通过 `ExitPlanMode` 上报 Markdown `plan` 时，任务详情 Overview 直接展示计划并保留审批闭环 | L2 | [已实现] |
-| Task | 中断运行中任务，下发 `TASK_INTERRUPT`，Worker 上报 `TASK_INTERRUPTED` | L1/L2 | [待补齐] |
-| Task | 删除或取消等待任务时下发 `TASK_CANCEL` | L1 | [待补齐] |
-| Task | 已完成、失败、中断任务可重试并清理旧 Worker/worktree/result | L1/L2 | [部分实现：Worker 同 task 分支 worktree 清理由单元测试覆盖，浏览器主流程待补齐] |
-| Task | 重试后清空旧 Worker 绑定和 `agentConfig`，自动分配使用空配置 | L1 | [已实现] |
-| Task | Created/Completed/Failed/Interrupted 任务可归档并从活跃 Board 视图移入 Archived 视图 | L2 | [已实现] |
-| Task | 仅 Archived 任务可永久删除，删除后保留 `TaskDeleted` 审计事件 | L1/L2 | [已实现] |
-| Task | 重复 Worker messageId 被幂等处理 | L1 | [待补齐] |
-| UI | Vue Web 首屏可加载并显示 `Vue-view` | L2 | [已实现] |
-| UI | Kanban 将 CREATED/ASSIGNED/STARTING、RUNNING/WAITING/INTERRUPTING、COMPLETED/FAILED/INTERRUPTED 分成三列，ARCHIVED 不进入活跃列 | L2 | [已实现] |
-| UI | Archived Board 视图按 List 模式展示归档任务并支持删除 | L2 | [已实现] |
-| UI | Board/Projects/Workers/Events 顶部搜索和排序在服务端过滤排序后分页，默认创建时间倒序 | L2 | [已实现] |
-| UI | Board Project 过滤与搜索、排序、分页组合时只展示目标 Project 的任务 | L2 | [已实现] |
-| UI | Calendar 按任务开始/结束日期在日、周、月、年视图展示任务范围，并跟随 Board 全局搜索结果聚焦匹配任务 | L2 | [已实现] |
-| UI | 任务详情展示状态、日志、会话和最终结果 | L2 | [待补齐] |
-| UI | GraphQL subscription 事件到达后看板刷新 | L2 | [待补齐] |
-| UI | subscription 失败时触发兜底 reload/refresh | L2 | [待补齐] |
-| UI | Project/Worker/Task 创建与编辑弹窗完成真实 API 写入 | L2 | [待补齐] |
-| Settings | Agent runtime env var 在 UI/API 中遮蔽敏感值 | L1/L2 | [待补齐] |
-| Settings | 编辑公开 env var 时保留可见值，编辑敏感 env var 时保留空值语义 | L1/L2 | [待补齐] |
-| Settings | 启动任务时仅注入 enabled env vars 到 Worker payload | L1/L3 | [待补齐] |
-| Storage | SQLite 模式跨重启保留 Project/Worker/Task/Event/Log | L1 | [待补齐] |
-| Storage | PostgreSQL 模式应用迁移并通过 readiness | L1/L2 | [待补齐] |
-| Storage | 领域事件可按 aggregateId/aggregateType/eventType/search 过滤 | L1/L2 | [已实现] |
-| Storage | Outbox message 可查询 pending/published 状态 | L1/L2 | [待补齐] |
-| Real Agent | Codex CLI 完成固定 fixture 任务，并覆盖 `--model`、推理深度、sandbox/approval 参数构造 | L3 | [发布必跑] |
-| Real Agent | Claude CLI 完成固定 fixture 任务，并覆盖 `--model`、`--effort`、`--permission-mode` 参数构造 | L3 | [发布必跑] |
-| Real Agent | 前置命令失败时任务失败并记录 stderr | L3 | [待补齐] |
-| Real Agent | 后置命令失败时任务失败并记录 stderr | L3 | [待补齐] |
-| Real Agent | Agent 输出中的敏感 env var 值被遮蔽 | L3 | [待补齐] |
-
-## 发布前准入流程
-
-发布候选必须按顺序完成：
-
-1. Go 单元测试与覆盖率门禁：
-
-   ```bash
-   make test-go
-   make coverage
-   ```
-
-2. L1 Go E2E：
-
-   ```bash
-   make e2e
-   ```
-
-3. 本地完整栈启动：
-
-   ```bash
-   make run-local
-   ```
-
-4. L2 Playwright UI E2E：
-
-   ```bash
-   npm install
-   npm run e2e
-   ```
-
-5. L3 真实 Agent 发布准入：
-
-   ```bash
-   GO_BIN=go WORKER_DIR=./worker-data-real-e2e npm run e2e:real-agents
-   ```
-
-   在脚本启动 Manager/Worker 后，分别创建 `agentType=codex` 和 `agentType=claude` 的固定任务；默认携带非空 `agentConfig`，并按 L3 验收查询确认任务完成。
-
-6. 关闭本地栈：
-
-   ```bash
-   make stop-local
-   ```
-
-发布阻断条件：
-
-- 任一 L1/L2 自动化用例失败。
-- Codex 或 Claude 任一真实 Agent 固定任务未完成。
-- 真实 Agent 任务没有日志、会话或最终结果。
-- Worker 工作目录出现跨任务污染或无法解释的残留。
-- `readyz` 在目标存储模式下不稳定。
-
-## 测试数据、隔离与清理
-
-- 自动化用例使用时间戳后缀创建 Project、Worker 和 Task，避免名称冲突。
-- Playwright 模拟 Worker 使用唯一 `workerId`，并在用例结束时关闭 WebSocket。
-- Worker 工作目录使用测试专属路径，例如 `/tmp/e2e-worker`、`/tmp/e2e-board-groups-worker` 或 `./worker-data-real-e2e`。
-- 真实 Agent 发布测试使用固定 fixture 仓库或本地 fixture，不能直接使用生产仓库。
-- PostgreSQL 本地验证结束后可使用 `make clean-local` 清理 volume 和 Worker 数据。
-- 失败现场需要保留 Playwright trace、截图、Manager 日志、Worker 日志和 Worker 工作目录，直到问题完成归因。
-
-## 截图、Trace、日志与排障
-
-常见失败与排查方向：
-
-| 现象 | 优先检查 |
-| --- | --- |
-| UI 打不开或 `Vue-view` 不可见 | `BPT_UI_URL`、Vue dev server、浏览器控制台、浏览器控制台 |
-| GraphQL 请求失败 | UI 中保存的 Manager URL、`BPT_MANAGER_GRAPHQL_URL`、`BPT_MANAGER_TOKEN`/`WORKER_TOKEN`、Manager `/healthz`、Manager 日志、GraphQL response errors |
-| Worker WebSocket 连接失败 | `BPT_MANAGER_WS_URL`、`WORKER_TOKEN` 与 `BPT_MANAGER_WS_TOKEN` 是否一致、`/worker/ws` 查询参数 |
-| 任务停在 `ASSIGNED` | Worker 是否在线、是否支持目标 Agent、是否绑定目标 Project、是否空闲 |
-| 任务停在 `STARTING` | Worker 是否收到 `TASK_START`、是否上报 `TASK_ACCEPTED`/`TASK_STARTED` |
-| 日志或会话缺失 | Worker 是否上报 `TASK_LOG`/`TASK_CONVERSATION`，Manager 是否拒绝了消息或 messageId 被去重；若没有持久化 `task_logs`，`taskLogs` 会从 `task_conversations` 派生可展示日志 |
-| Playwright 看板截图为空 | UI 是否加载完成、测试数据是否写入 Manager、浏览器 viewport 是否为 `1400x900` |
-| 真实 Agent 任务失败 | CLI 是否登录、fixture 是否可访问、worktree 是否创建成功、前置/后置命令输出、Agent stderr |
-| PostgreSQL readiness 失败 | `DB_DSN`、PostgreSQL healthcheck、迁移日志、网络连通性 |
-
-建议保留的失败证据：
-
-- `test-results/` 下的 Playwright trace、截图和视频。
-- Manager 启动日志与 GraphQL 错误响应。
-- Worker stdout/stderr 与 Worker 工作目录。
-- 失败任务的 `taskEvents`、`taskLogs`、`taskConversations` 查询结果。
-
-## 文档维护规则
-
-- 新增 E2E 用例时，同时更新“现有测试文件”和“全量场景矩阵”状态。
-- 新增环境变量或测试入口时，同时更新“关键环境变量”和 README 中的简要入口。
-- 将已经自动化的场景从 `[待补齐]` 改为 `[已实现]`，将发布人工准入场景标记为 `[发布必跑]`。
-- 真实 Agent E2E 自动化增强后，仍保留 Codex 与 Claude 双 Agent 发布准入要求。
+交付证据至少包含每条门禁命令的退出码和关键统计。若本地环境无法监听端口、缺少 CLI/凭据或无法下载依赖，必须明确列出未通过命令、实际错误和需要补跑的环境，不能标记为完成。

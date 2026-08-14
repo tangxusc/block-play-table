@@ -12,6 +12,7 @@ import (
 )
 
 type Store interface {
+	A2AStore
 	Ping(context.Context) error
 	SaveTask(context.Context, *domain.Task) error
 	Task(context.Context, string) (*domain.Task, error)
@@ -42,35 +43,38 @@ type Store interface {
 	DomainEvents(context.Context, domain.EventFilter) ([]domain.DomainEvent, error)
 	OutboxMessages(context.Context, bool) ([]domain.OutboxMessage, error)
 	MarkOutboxPublished(context.Context, []string, time.Time) error
-	MarkMessageProcessed(context.Context, string) (bool, error)
 }
 
 type MemoryStore struct {
-	mu                sync.RWMutex
-	tasks             map[string]*domain.Task
-	workers           map[string]*domain.Worker
-	projects          map[string]*domain.Project
-	settings          *domain.Settings
-	logs              []domain.TaskLog
-	conversations     []domain.ConversationMessage
-	interactions      map[string]domain.TaskInteraction
-	gitBackups        map[string]domain.TaskGitBackup
-	gitSnapshots      map[string]domain.TaskGitTurnSnapshot
-	events            []domain.DomainEvent
-	outbox            []domain.OutboxMessage
-	processedMessages map[string]struct{}
+	mu            sync.RWMutex
+	tasks         map[string]*domain.Task
+	workers       map[string]*domain.Worker
+	projects      map[string]*domain.Project
+	settings      *domain.Settings
+	logs          []domain.TaskLog
+	conversations []domain.ConversationMessage
+	interactions  map[string]domain.TaskInteraction
+	gitBackups    map[string]domain.TaskGitBackup
+	gitSnapshots  map[string]domain.TaskGitTurnSnapshot
+	events        []domain.DomainEvent
+	outbox        []domain.OutboxMessage
+	a2aRounds     map[string]domain.TaskA2ARound
+	a2aIntents    map[string]domain.TaskA2ADispatchIntent
+	a2aEventInbox map[string]domain.A2AEventInbox
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		tasks:             map[string]*domain.Task{},
-		workers:           map[string]*domain.Worker{},
-		projects:          map[string]*domain.Project{},
-		interactions:      map[string]domain.TaskInteraction{},
-		gitBackups:        map[string]domain.TaskGitBackup{},
-		gitSnapshots:      map[string]domain.TaskGitTurnSnapshot{},
-		settings:          domain.NewSettings(time.Now().UTC()),
-		processedMessages: map[string]struct{}{},
+		tasks:         map[string]*domain.Task{},
+		workers:       map[string]*domain.Worker{},
+		projects:      map[string]*domain.Project{},
+		interactions:  map[string]domain.TaskInteraction{},
+		gitBackups:    map[string]domain.TaskGitBackup{},
+		gitSnapshots:  map[string]domain.TaskGitTurnSnapshot{},
+		settings:      domain.NewSettings(time.Now().UTC()),
+		a2aRounds:     map[string]domain.TaskA2ARound{},
+		a2aIntents:    map[string]domain.TaskA2ADispatchIntent{},
+		a2aEventInbox: map[string]domain.A2AEventInbox{},
 	}
 }
 
@@ -132,6 +136,27 @@ func (s *MemoryStore) DeleteTask(ctx context.Context, id string) error {
 	for snapshotID, snapshot := range s.gitSnapshots {
 		if snapshot.TaskID == id {
 			delete(s.gitSnapshots, snapshotID)
+		}
+	}
+	deletedRounds := make(map[string]struct{})
+	deletedExecutions := make(map[string]struct{})
+	for roundID, round := range s.a2aRounds {
+		if round.TaskID == id {
+			deletedRounds[roundID] = struct{}{}
+			deletedExecutions[round.ExecutionID] = struct{}{}
+			delete(s.a2aRounds, roundID)
+		}
+	}
+	for intentID, intent := range s.a2aIntents {
+		if intent.TaskID == id {
+			delete(s.a2aIntents, intentID)
+		}
+	}
+	for key, inbox := range s.a2aEventInbox {
+		_, roundDeleted := deletedRounds[inbox.RoundID]
+		_, executionDeleted := deletedExecutions[inbox.ExecutionID]
+		if roundDeleted || executionDeleted {
+			delete(s.a2aEventInbox, key)
 		}
 	}
 	return nil
@@ -217,8 +242,14 @@ func (s *MemoryStore) Settings(ctx context.Context) (*domain.Settings, error) {
 }
 
 func (s *MemoryStore) AppendTaskLog(ctx context.Context, log domain.TaskLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.validateTaskLogIDsLocked([]domain.TaskLog{log}); err != nil {
+		return err
+	}
 	s.logs = append(s.logs, log)
 	return nil
 }
@@ -236,8 +267,14 @@ func (s *MemoryStore) TaskLogs(ctx context.Context, taskID string) ([]domain.Tas
 }
 
 func (s *MemoryStore) AppendConversation(ctx context.Context, message domain.ConversationMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.validateConversationIDsLocked([]domain.ConversationMessage{message}); err != nil {
+		return err
+	}
 	s.conversations = append(s.conversations, message)
 	return nil
 }
@@ -255,8 +292,14 @@ func (s *MemoryStore) TaskConversations(ctx context.Context, taskID string) ([]d
 }
 
 func (s *MemoryStore) SaveTaskInteraction(ctx context.Context, interaction domain.TaskInteraction) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.validateTaskInteractionOwnerLocked(&interaction); err != nil {
+		return err
+	}
 	s.interactions[interaction.ID] = interaction
 	return nil
 }
@@ -451,27 +494,10 @@ func (s *MemoryStore) MarkOutboxPublished(ctx context.Context, ids []string, pub
 	return nil
 }
 
-func (s *MemoryStore) MarkMessageProcessed(ctx context.Context, messageID string) (bool, error) {
-	if messageID == "" {
-		return true, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.processedMessages[messageID]; ok {
-		return false, nil
-	}
-	s.processedMessages[messageID] = struct{}{}
-	return true, nil
-}
-
 func cloneTask(task *domain.Task) *domain.Task {
 	copy := *task
 	copy.PreCommands = append([]string(nil), task.PreCommands...)
 	copy.PostCommands = append([]string(nil), task.PostCommands...)
-	if task.PendingDirective != nil {
-		directive := *task.PendingDirective
-		copy.PendingDirective = &directive
-	}
 	return &copy
 }
 

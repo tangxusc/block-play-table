@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tangxusc/block-play-table/pkg/domain"
-	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
@@ -281,27 +280,9 @@ type ContinueTaskInput struct {
 	Message string `json:"message"`
 }
 
-type TaskInteractionRequestInput struct {
-	InteractionID  string                     `json:"interactionId"`
-	TaskID         string                     `json:"taskId"`
-	Kind           domain.TaskInteractionKind `json:"kind"`
-	Title          string                     `json:"title"`
-	Body           string                     `json:"body"`
-	RawPayload     string                     `json:"rawPayload"`
-	AgentSessionID string                     `json:"agentSessionId"`
-}
-
+// RespondTaskInteractionInput 描述用户对当前 A2A 交互请求的决定与可选内容。
 type RespondTaskInteractionInput struct {
 	InteractionID string                         `json:"interactionId"`
-	Decision      domain.TaskInteractionDecision `json:"decision"`
-	Message       string                         `json:"message"`
-	Payload       string                         `json:"payload"`
-}
-
-type TaskInteractionResolvedInput struct {
-	InteractionID string                         `json:"interactionId"`
-	TaskID        string                         `json:"taskId"`
-	Responded     bool                           `json:"responded"`
 	Decision      domain.TaskInteractionDecision `json:"decision"`
 	Message       string                         `json:"message"`
 	Payload       string                         `json:"payload"`
@@ -1115,11 +1096,15 @@ func (s *Service) WorkerDisconnected(ctx context.Context, workerID string) (*dom
 	return worker, s.appendEvents(ctx, events)
 }
 
+// MarkStaleWorkersOffline 根据心跳时间把过期 Worker 标记为离线。
+// 参数：ctx 用于取消查询和保存，timeout 是允许的最大心跳间隔。
+// 返回：全部过期 Worker 处理成功时返回 nil。
+// 错误：Worker 查询、保存或领域事件持久化失败时返回错误。
 func (s *Service) MarkStaleWorkersOffline(ctx context.Context, timeout time.Duration) error {
-	return s.markWorkersLost(ctx, timeout)
+	return s.markStaleWorkersOffline(ctx, timeout)
 }
 
-func (s *Service) markWorkersLost(ctx context.Context, timeout time.Duration) error {
+func (s *Service) markStaleWorkersOffline(ctx context.Context, timeout time.Duration) error {
 	if timeout <= 0 {
 		return nil
 	}
@@ -1129,27 +1114,16 @@ func (s *Service) markWorkersLost(ctx context.Context, timeout time.Duration) er
 	}
 	cutoff := s.clock().Add(-timeout)
 	for _, worker := range workers {
-		online := worker.Status == domain.WorkerOnline
-		hasTasks := len(worker.CurrentTaskIDs) > 0
 		stale := worker.LastHeartbeatAt == nil || !worker.LastHeartbeatAt.After(cutoff)
-		if online && !stale {
+		if worker.Status != domain.WorkerOnline || !stale {
 			continue
 		}
-		if !online && !hasTasks {
-			continue
+		worker.MarkOffline(s.clock())
+		events := worker.PullEvents()
+		if err := s.store.SaveWorker(ctx, worker); err != nil {
+			return err
 		}
-		if online && !hasTasks && stale {
-			worker.MarkOffline(s.clock())
-			events := worker.PullEvents()
-			if err := s.store.SaveWorker(ctx, worker); err != nil {
-				return err
-			}
-			if err := s.appendEvents(ctx, events); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := s.MarkWorkerLost(ctx, worker.ID); err != nil {
+		if err := s.appendEvents(ctx, events); err != nil {
 			return err
 		}
 	}
@@ -1220,7 +1194,7 @@ func (s *Service) MonitorWorkerHeartbeats(ctx context.Context, timeout, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.markWorkersLost(ctx, timeout)
+			_ = s.markStaleWorkersOffline(ctx, timeout)
 		}
 	}
 }
@@ -1265,121 +1239,200 @@ func (s *Service) AssignWorkerWithConfig(ctx context.Context, taskID, workerID s
 	return task, nil
 }
 
-func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, protocol.TaskStartPayload, error) {
+// StartTask 原子启动任务并创建持久化 A2A round 与下发意图。
+// 参数：ctx 用于取消查询和事务，taskID 是待启动的 Manager Task 标识。
+// 返回：进入 STARTING 状态的任务快照。
+// 错误：任务、Worker、Project、状态、A2A 请求校验或事务提交失败时返回错误。
+func (s *Service) StartTask(ctx context.Context, taskID string) (*domain.Task, error) {
 	now := s.clock()
 	task, err := s.store.Task(ctx, taskID)
 	if err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+		return nil, err
 	}
 	if task.AgentType == "" {
-		return nil, protocol.TaskStartPayload{}, fmt.Errorf("%w: task %s requires agent before start", domain.ErrConflict, task.ID)
+		return nil, fmt.Errorf("%w: task %s requires agent before start", domain.ErrConflict, task.ID)
 	}
+	expectedTaskVersion := task.Version
 	if task.WorkerID == "" && task.Status == domain.TaskCreated {
-		task, err = s.assignFirstAvailableWorker(ctx, task, now)
-		if err != nil {
-			return nil, protocol.TaskStartPayload{}, err
+		workers, listErr := s.store.Workers(ctx)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, candidate := range workers {
+			if candidate.CanAcceptTask(task.AgentType, task.ProjectID) {
+				if err := task.AssignWorker(candidate.ID, now); err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
+		if task.WorkerID == "" {
+			return nil, fmt.Errorf("%w: no available worker for task %s", domain.ErrConflict, task.ID)
 		}
 	}
 	worker, err := s.store.Worker(ctx, task.WorkerID)
 	if err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+		return nil, err
 	}
 	if !workerCanRunTask(worker, task.AgentType, task.ProjectID, task.ID) {
-		return nil, protocol.TaskStartPayload{}, fmt.Errorf("%w: worker %s is not ready for task", domain.ErrConflict, worker.ID)
+		return nil, fmt.Errorf("%w: worker %s is not ready for task", domain.ErrConflict, worker.ID)
 	}
 	project, err := s.store.Project(ctx, task.ProjectID)
 	if err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+		return nil, err
 	}
+	rounds, err := s.store.TaskA2ARounds(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	operation, executionID, attempt := nextA2AStartIdentity(rounds)
+	expectedWorkerVersion := worker.Version
 	if err := task.Start(now); err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+		return nil, err
 	}
 	if err := worker.AssignTask(task.ID, now); err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+		return nil, err
+	}
+	round, commandID, err := newA2ARound(task, worker, operation, executionID, attempt, 1, "", "", 0, now)
+	if err != nil {
+		return nil, err
+	}
+	request, err := buildA2ARequest(task, project, worker, round, commandID, operation, nil)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalA2AIntentPayload(request, a2aStartText(task))
+	if err != nil {
+		return nil, err
+	}
+	intent, err := domain.NewTaskA2ADispatchIntent(round, operation, commandID, payload, now)
+	if err != nil {
+		return nil, err
 	}
 	events := task.PullEvents()
 	events = append(events, worker.PullEvents()...)
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, protocol.TaskStartPayload{}, err
+	if err := s.store.CommitA2ACommand(ctx, store.A2ACommandCommit{
+		Task: task, ExpectedTaskVersion: expectedTaskVersion, Worker: worker, ExpectedWorkerVersion: expectedWorkerVersion,
+		Round: round, CreateRound: true, Intent: intent, Events: events,
+	}); err != nil {
+		return nil, err
 	}
-	if err := s.store.SaveWorker(ctx, worker); err != nil {
-		return nil, protocol.TaskStartPayload{}, err
-	}
-	if err := s.appendEvents(ctx, events); err != nil {
-		return nil, protocol.TaskStartPayload{}, err
-	}
-	return task, buildStartPayload(task, project, worker), nil
+	s.publishEvents(events)
+	return task, nil
 }
 
-func (s *Service) ContinueTask(ctx context.Context, input ContinueTaskInput) (*domain.Task, protocol.TaskContinuePayload, error) {
+// ContinueTask 原子创建同 execution 下一 turn 的 A2A round 与下发意图。
+// 参数：ctx 用于取消查询和事务，input 包含任务标识和非空继续消息。
+// 返回：重新进入 STARTING 状态的任务快照。
+// 错误：任务不可继续、原 round 未终止、Worker 不可用、请求非法或事务失败时返回错误。
+func (s *Service) ContinueTask(ctx context.Context, input ContinueTaskInput) (*domain.Task, error) {
 	now := s.clock()
 	if strings.TrimSpace(input.Message) == "" {
-		return nil, protocol.TaskContinuePayload{}, fmt.Errorf("message is required")
+		return nil, fmt.Errorf("message is required")
 	}
 	task, err := s.store.Task(ctx, input.TaskID)
 	if err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
 	}
 	if err := validateTaskCanContinue(task); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
+	}
+	parentRound, err := s.store.LatestTaskA2ARound(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if parentRound.A2ATaskID == "" || parentRound.ContextID == "" || !parentRound.RemoteStatus.Terminal() {
+		return nil, fmt.Errorf("%w: latest a2a round is not completed and bound", domain.ErrConflict)
 	}
 	worker, err := s.store.Worker(ctx, task.WorkerID)
 	if err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
 	}
 	if !workerCanRunTask(worker, task.AgentType, task.ProjectID, task.ID) {
-		return nil, protocol.TaskContinuePayload{}, fmt.Errorf("%w: worker %s is not ready to continue task %s", domain.ErrConflict, worker.ID, task.ID)
+		return nil, fmt.Errorf("%w: worker %s is not ready to continue task %s", domain.ErrConflict, worker.ID, task.ID)
 	}
 	project, err := s.store.Project(ctx, task.ProjectID)
 	if err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
 	}
+	expectedTaskVersion := task.Version
+	expectedWorkerVersion := worker.Version
 	if err := task.AppendUserConversation(input.Message, now); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
 	}
-	if err := s.store.AppendConversation(ctx, domain.ConversationMessage{ID: "msg_" + uuid.NewString(), TaskID: task.ID, Role: "user", Content: input.Message, CreatedAt: now}); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
-	}
+	conversation := domain.ConversationMessage{ID: "msg_" + uuid.NewString(), TaskID: task.ID, Role: "user", Content: input.Message, CreatedAt: now}
 	events := task.PullEvents()
 	if err := task.Continue(now); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
-	}
-	if err := task.QueueContinueDirective("dir_"+uuid.NewString(), input.Message, now); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
 	}
 	if err := worker.AssignTask(task.ID, now); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+		return nil, err
+	}
+	round, commandID, err := newA2ARound(task, worker, domain.TaskA2AOperationContinue, parentRound.ExecutionID, parentRound.Attempt, parentRound.Turn+1, parentRound.ID, parentRound.ContextID, parentRound.LastSequence, now)
+	if err != nil {
+		return nil, err
+	}
+	request, err := buildA2ARequest(task, project, worker, round, commandID, domain.TaskA2AOperationContinue, nil)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalA2AIntentPayload(request, input.Message)
+	if err != nil {
+		return nil, err
+	}
+	intent, err := domain.NewTaskA2ADispatchIntent(round, domain.TaskA2AOperationContinue, commandID, payload, now)
+	if err != nil {
+		return nil, err
 	}
 	events = append(events, task.PullEvents()...)
 	events = append(events, worker.PullEvents()...)
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
+	if err := s.store.CommitA2ACommand(ctx, store.A2ACommandCommit{
+		Task: task, ExpectedTaskVersion: expectedTaskVersion, Worker: worker, ExpectedWorkerVersion: expectedWorkerVersion,
+		Round: round, CreateRound: true, Intent: intent, Conversations: []domain.ConversationMessage{conversation}, Events: events,
+	}); err != nil {
+		return nil, err
 	}
-	if err := s.store.SaveWorker(ctx, worker); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
-	}
-	if err := s.appendEvents(ctx, events); err != nil {
-		return nil, protocol.TaskContinuePayload{}, err
-	}
-	return task, buildContinuePayload(task, project, worker, input.Message), nil
+	s.publishEvents(events)
+	return task, nil
 }
 
-func (s *Service) InterruptTask(ctx context.Context, taskID string) (*domain.Task, string, error) {
+// InterruptTask 原子记录标准 A2A CancelTask 下发意图。
+// 参数：ctx 用于取消查询和事务，taskID 是待中断的 Manager Task 标识。
+// 返回：进入 INTERRUPTING 状态的任务快照。
+// 错误：任务没有已绑定的活跃 A2A round、状态非法或事务提交失败时返回错误。
+func (s *Service) InterruptTask(ctx context.Context, taskID string) (*domain.Task, error) {
 	task, err := s.store.Task(ctx, taskID)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	if err := task.RequestInterrupt(s.clock()); err != nil {
-		return nil, "", err
+	round, err := s.store.LatestTaskA2ARound(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if round.A2ATaskID == "" || round.ContextID == "" || round.RemoteStatus.Terminal() {
+		return nil, fmt.Errorf("%w: task %s has no active a2a round", domain.ErrConflict, task.ID)
+	}
+	if task.Status == domain.TaskInterrupting && task.DesiredState == domain.TaskDesiredInterrupt {
+		return task, nil
+	}
+	now := s.clock()
+	expectedTaskVersion := task.Version
+	if err := task.RequestInterrupt(now); err != nil {
+		return nil, err
+	}
+	commandID := newA2AIdentity("command")
+	intent, err := domain.NewTaskA2ADispatchIntent(round, domain.TaskA2AOperationCancel, commandID, nil, now)
+	if err != nil {
+		return nil, err
 	}
 	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, "", err
+	if err := s.store.CommitA2ACommand(ctx, store.A2ACommandCommit{
+		Task: task, ExpectedTaskVersion: expectedTaskVersion, Round: round, CreateRound: false, Intent: intent, Events: events,
+	}); err != nil {
+		return nil, err
 	}
-	if err := s.appendEvents(ctx, events); err != nil {
-		return nil, "", err
-	}
-	return task, task.WorkerID, nil
+	s.publishEvents(events)
+	return task, nil
 }
 
 func (s *Service) assignFirstAvailableWorker(ctx context.Context, task *domain.Task, now time.Time) (*domain.Task, error) {
@@ -1410,159 +1463,10 @@ func (s *Service) assignFirstAvailableWorker(ctx context.Context, task *domain.T
 	return task, nil
 }
 
-func (s *Service) ApplyWorkerTaskAccepted(ctx context.Context, messageID, taskID string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	return s.store.Task(ctx, taskID)
-}
-
-func (s *Service) ApplyWorkerTaskStarted(ctx context.Context, messageID, taskID, worktreePath string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.MarkRunning(worktreePath, s.clock()); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskLog(ctx context.Context, messageID, taskID, stream, content string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.AppendLog(stream, content, now); err != nil {
-		return nil, err
-	}
-	if err := s.store.AppendTaskLog(ctx, domain.TaskLog{ID: "log_" + uuid.NewString(), TaskID: taskID, Stream: stream, Content: content, CreatedAt: now}); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerConversation(ctx context.Context, messageID, taskID, role, content string) (*domain.Task, error) {
-	return s.ApplyWorkerConversationWithMetadata(ctx, messageID, taskID, role, content, nil)
-}
-
-func (s *Service) ApplyWorkerConversationWithMetadata(ctx context.Context, messageID, taskID, role, content string, metadata map[string]string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.AppendConversation(role, content, now); err != nil {
-		return nil, err
-	}
-	task.RememberAgentSession(metadata["agentSessionId"], now)
-	if err := s.store.AppendConversation(ctx, domain.ConversationMessage{ID: "msg_" + uuid.NewString(), TaskID: taskID, Role: role, Content: content, Metadata: cloneStringMap(metadata), CreatedAt: now}); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerWaitingInput(ctx context.Context, messageID, taskID, content string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.WaitForInput(now); err != nil {
-		return nil, err
-	}
-	if content != "" {
-		if err := s.store.AppendTaskLog(ctx, domain.TaskLog{ID: "log_" + uuid.NewString(), TaskID: taskID, Stream: "system", Content: content, CreatedAt: now}); err != nil {
-			return nil, err
-		}
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskInteractionRequest(ctx context.Context, messageID string, input TaskInteractionRequestInput) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, input.TaskID)
-	}
-	now := s.clock()
-	if strings.TrimSpace(input.InteractionID) == "" {
-		input.InteractionID = messageID
-	}
-	if strings.TrimSpace(input.TaskID) == "" {
-		return nil, fmt.Errorf("task id is required")
-	}
-	if !input.Kind.Valid() {
-		return nil, fmt.Errorf("unsupported task interaction kind %q", input.Kind)
-	}
-	if existing, err := s.store.TaskInteraction(ctx, input.InteractionID); err == nil {
-		return s.store.Task(ctx, existing.TaskID)
-	}
-	task, err := s.store.Task(ctx, input.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	interaction, err := domain.NewTaskInteraction(domain.TaskInteraction{
-		ID:             input.InteractionID,
-		TaskID:         task.ID,
-		Kind:           input.Kind,
-		Status:         domain.TaskInteractionPending,
-		Title:          input.Title,
-		Body:           input.Body,
-		RawPayload:     input.RawPayload,
-		AgentSessionID: firstString(input.AgentSessionID, task.AgentSessionID),
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := task.RequestInteraction(interaction.ID, interaction.Kind, interaction.Title, now, interaction.AgentSessionID); err != nil {
-		return nil, err
-	}
-	if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
+// RespondTaskInteraction 原子记录交互决定并创建 A2A 回复或标准 CancelTask intent。
+// 参数：ctx 用于取消查询和事务，input 指定交互、决定及可选回复内容。
+// 返回：已回答或已取消的交互快照。
+// 错误：交互/Worker/round 不可用、状态冲突、请求校验或事务提交失败时返回错误。
 func (s *Service) RespondTaskInteraction(ctx context.Context, input RespondTaskInteractionInput) (*domain.TaskInteraction, error) {
 	if strings.TrimSpace(input.InteractionID) == "" {
 		return nil, fmt.Errorf("interaction id is required")
@@ -1575,7 +1479,10 @@ func (s *Service) RespondTaskInteraction(ctx context.Context, input RespondTaskI
 	if err != nil {
 		return nil, err
 	}
-	if interaction.Status == domain.TaskInteractionAnswered {
+	if err := validateTaskInteractionResponse(interaction.Kind, input); err != nil {
+		return nil, err
+	}
+	if interaction.Status == domain.TaskInteractionAnswered || interaction.Status == domain.TaskInteractionCanceled {
 		if interaction.ResponseDecision == input.Decision &&
 			interaction.ResponseMessage == input.Message &&
 			interaction.ResponsePayload == input.Payload {
@@ -1600,252 +1507,99 @@ func (s *Service) RespondTaskInteraction(ctx context.Context, input RespondTaskI
 	if worker.Status != domain.WorkerOnline {
 		return nil, fmt.Errorf("%w: worker %s is not online", domain.ErrConflict, worker.ID)
 	}
+	round, err := s.store.LatestTaskA2ARound(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if round.A2ATaskID == "" || round.ContextID == "" || round.RemoteStatus.Terminal() {
+		return nil, fmt.Errorf("%w: interaction %s has no active a2a round", domain.ErrConflict, interaction.ID)
+	}
+	if input.Decision == domain.TaskInteractionCancel {
+		expectedTaskVersion := task.Version
+		interaction.Status = domain.TaskInteractionCanceled
+		interaction.ResponseDecision = input.Decision
+		interaction.ResponseMessage = input.Message
+		interaction.ResponsePayload = input.Payload
+		interaction.UpdatedAt = now
+		if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
+			return nil, err
+		}
+		if err := task.RequestInterrupt(now); err != nil {
+			return nil, err
+		}
+		commandID := newA2AIdentity("command")
+		intent, err := domain.NewTaskA2ADispatchIntent(round, domain.TaskA2AOperationCancel, commandID, nil, now)
+		if err != nil {
+			return nil, err
+		}
+		events := task.PullEvents()
+		if err := s.store.CommitA2ACommand(ctx, store.A2ACommandCommit{
+			Task: task, ExpectedTaskVersion: expectedTaskVersion, Round: round, CreateRound: false,
+			Intent: intent, Interaction: interaction, Events: events, CancelPendingInteractions: true,
+		}); err != nil {
+			return nil, err
+		}
+		s.publishEvents(events)
+		return interaction, nil
+	}
+	project, err := s.store.Project(ctx, task.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	expectedTaskVersion := task.Version
 	interaction.Status = domain.TaskInteractionAnswered
 	interaction.ResponseDecision = input.Decision
 	interaction.ResponseMessage = input.Message
 	interaction.ResponsePayload = input.Payload
 	interaction.UpdatedAt = now
-	if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
-		return nil, err
-	}
 	if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
 		return nil, err
 	}
-	if err := task.QueueInteractionDirective("dir_"+uuid.NewString(), interaction.ID, input.Decision, input.Message, input.Payload, now); err != nil {
+	commandID := newA2AIdentity("command")
+	request, err := buildA2ARequest(task, project, worker, round, commandID, domain.TaskA2AOperationInteractionResponse, interaction)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalA2AIntentPayload(request, a2aInteractionText(interaction))
+	if err != nil {
+		return nil, err
+	}
+	intent, err := domain.NewTaskA2ADispatchIntent(round, domain.TaskA2AOperationInteractionResponse, commandID, payload, now)
+	if err != nil {
 		return nil, err
 	}
 	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
+	if err := s.store.CommitA2ACommand(ctx, store.A2ACommandCommit{
+		Task: task, ExpectedTaskVersion: expectedTaskVersion, Round: round, CreateRound: false, Intent: intent, Interaction: interaction, Events: events,
+	}); err != nil {
 		return nil, err
 	}
-	if err := s.appendEvents(ctx, events); err != nil {
-		return nil, err
-	}
+	s.publishEvents(events)
 	return interaction, nil
 }
 
-func (s *Service) AssignedTasks(ctx context.Context, workerID string) ([]*domain.Task, error) {
-	all, err := s.store.Tasks(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*domain.Task, 0, 4)
-	for _, task := range all {
-		if task.WorkerID != workerID {
-			continue
+func validateTaskInteractionResponse(kind domain.TaskInteractionKind, input RespondTaskInteractionInput) error {
+	switch kind {
+	case domain.TaskInteractionUserInput:
+		if input.Decision == domain.TaskInteractionCancel {
+			return nil
 		}
-		if isTaskTerminal(task.Status) {
-			continue
+		if input.Decision != "" {
+			return fmt.Errorf("%w: user input interaction does not accept decision %q", domain.ErrConflict, input.Decision)
 		}
-		if task.Status == domain.TaskCreated || task.Status == domain.TaskAssigned {
-			continue
+		if strings.TrimSpace(input.Message) == "" && strings.TrimSpace(input.Payload) == "" {
+			return fmt.Errorf("%w: user input interaction requires message or payload", domain.ErrConflict)
 		}
-		out = append(out, task)
-	}
-	return out, nil
-}
-
-func (s *Service) AssignedTaskBundle(ctx context.Context, taskID string) (*domain.Task, *domain.Project, *domain.Worker, error) {
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if task.WorkerID == "" {
-		return nil, nil, nil, fmt.Errorf("%w: task %s has no worker", domain.ErrConflict, taskID)
-	}
-	project, err := s.store.Project(ctx, task.ProjectID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	worker, err := s.store.Worker(ctx, task.WorkerID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return task, project, worker, nil
-}
-
-func (s *Service) BuildStartPayload(task *domain.Task, project *domain.Project, worker *domain.Worker) protocol.TaskStartPayload {
-	return buildStartPayload(task, project, worker)
-}
-
-func (s *Service) BuildContinuePayload(task *domain.Task, project *domain.Project, worker *domain.Worker, message string) protocol.TaskContinuePayload {
-	return buildContinuePayload(task, project, worker, message)
-}
-
-func (s *Service) AckTaskDirective(ctx context.Context, taskID, directiveID string) (*domain.Task, error) {
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.AckDirective(directiveID, now); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if len(events) == 0 {
-		return task, nil
-	}
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	if err := s.appendEvents(ctx, events); err != nil {
-		return nil, err
-	}
-	return task, nil
-}
-
-func (s *Service) ApplyWorkerTaskInteractionResolved(ctx context.Context, messageID string, input TaskInteractionResolvedInput) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, input.TaskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, input.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	if input.Responded {
-		interaction, err := s.store.TaskInteraction(ctx, input.InteractionID)
-		if err != nil {
-			return nil, err
+		return nil
+	case domain.TaskInteractionCommandApproval, domain.TaskInteractionFileApproval, domain.TaskInteractionPermissionApproval:
+		if input.Decision == domain.TaskInteractionApprove || input.Decision == domain.TaskInteractionApproveForSession ||
+			input.Decision == domain.TaskInteractionDeny || input.Decision == domain.TaskInteractionCancel {
+			return nil
 		}
-		if interaction.Status == domain.TaskInteractionPending {
-			interaction.Status = domain.TaskInteractionAnswered
-			interaction.ResponseDecision = input.Decision
-			interaction.ResponseMessage = input.Message
-			interaction.ResponsePayload = input.Payload
-			interaction.UpdatedAt = now
-			if err := s.store.SaveTaskInteraction(ctx, *interaction); err != nil {
-				return nil, err
-			}
-			if err := task.RecordInteractionAnswered(interaction.ID, interaction.ResponseDecision, now); err != nil {
-				return nil, err
-			}
-		}
+		return fmt.Errorf("%w: approval interaction requires an explicit decision", domain.ErrConflict)
+	default:
+		return fmt.Errorf("unsupported task interaction kind %q", kind)
 	}
-	if task.Status == domain.TaskWaitingInput {
-		if err := task.Resume(now); err != nil {
-			return nil, err
-		}
-	} else if task.Status != domain.TaskRunning {
-		return nil, fmt.Errorf("%w: resolve interaction from %s", domain.ErrInvalidTransition, task.Status)
-	} else {
-		if err := task.RecordInteractionResolved(input.InteractionID, now); err != nil {
-			return nil, err
-		}
-	}
-	if task.PendingDirective != nil && task.PendingDirective.Kind == domain.TaskDirectiveInteraction && task.PendingDirective.InteractionID == input.InteractionID {
-		if err := task.AckDirective(task.PendingDirective.ID, now); err != nil {
-			return nil, err
-		}
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskResult(ctx context.Context, messageID, taskID, result string, agentSessionIDs ...string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.RecordResult(result, s.clock(), firstString(agentSessionIDs...)); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskCompleted(ctx context.Context, messageID, taskID, result string, agentSessionIDs ...string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.Complete(result, now, firstString(agentSessionIDs...)); err != nil {
-		return nil, err
-	}
-	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
-		return nil, err
-	}
-	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskFailed(ctx context.Context, messageID, taskID, reason string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := task.Fail(reason, now); err != nil {
-		return nil, err
-	}
-	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
-		return nil, err
-	}
-	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
-}
-
-func (s *Service) ApplyWorkerTaskInterrupted(ctx context.Context, messageID, taskID, result string) (*domain.Task, error) {
-	ok, err := s.store.MarkMessageProcessed(ctx, messageID)
-	if err != nil || !ok {
-		return s.store.Task(ctx, taskID)
-	}
-	now := s.clock()
-	task, err := s.store.Task(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if result != "" {
-		if err := task.RecordResult(result, now); err != nil {
-			return nil, err
-		}
-	}
-	if err := task.MarkInterrupted(now); err != nil {
-		return nil, err
-	}
-	if err := s.releaseWorkerFromTask(ctx, task, now); err != nil {
-		return nil, err
-	}
-	if err := s.store.CancelPendingTaskInteractions(ctx, task.ID, now); err != nil {
-		return nil, err
-	}
-	events := task.PullEvents()
-	if err := s.store.SaveTask(ctx, task); err != nil {
-		return nil, err
-	}
-	return task, s.appendEvents(ctx, events)
 }
 
 func (s *Service) releaseWorkerFromTask(ctx context.Context, task *domain.Task, now time.Time) error {
@@ -1937,46 +1691,6 @@ func eventMatchesFilter(event domain.DomainEvent, filter domain.EventFilter) boo
 		return false
 	}
 	return true
-}
-
-func buildStartPayload(task *domain.Task, project *domain.Project, worker *domain.Worker) protocol.TaskStartPayload {
-	runtime := worker.EnabledRuntimeEnv(task.AgentType)
-	env := make([]protocol.RuntimeEnvVar, 0, len(runtime))
-	for _, item := range runtime {
-		env = append(env, protocol.RuntimeEnvVar{Key: item.Key, Value: item.Value, Sensitive: item.Sensitive})
-	}
-	return protocol.TaskStartPayload{
-		Task: protocol.TaskPayload{
-			ID:           task.ID,
-			Title:        task.Title,
-			Description:  task.Description,
-			AgentType:    task.AgentType,
-			AgentConfig:  task.AgentConfig,
-			BaseBranch:   task.BaseBranch,
-			PreCommands:  append([]string(nil), task.PreCommands...),
-			PostCommands: append([]string(nil), task.PostCommands...),
-		},
-		Project: protocol.ProjectPayload{
-			ID:                 project.ID,
-			GitURL:             project.GitURL,
-			DefaultBranch:      project.DefaultBranch,
-			WorktreeNamePrefix: project.WorktreeNamePrefix,
-		},
-		AgentRuntimeEnv: env,
-	}
-}
-
-func buildContinuePayload(task *domain.Task, project *domain.Project, worker *domain.Worker, message string) protocol.TaskContinuePayload {
-	start := buildStartPayload(task, project, worker)
-	return protocol.TaskContinuePayload{
-		Task:            start.Task,
-		Project:         start.Project,
-		Message:         message,
-		AgentSessionID:  task.AgentSessionID,
-		WorktreePath:    task.WorktreePath,
-		AgentRuntimeEnv: start.AgentRuntimeEnv,
-		Settings:        start.Settings,
-	}
 }
 
 func isTaskTerminal(status domain.TaskStatus) bool {

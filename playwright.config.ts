@@ -5,6 +5,7 @@ const localChromeChannel =
 
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/global_setup.ts',
   timeout: 120_000,
   workers: 1,
   use: {

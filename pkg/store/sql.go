@@ -39,6 +39,10 @@ type migrationExecutor interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+type sqlExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func OpenSQLStore(ctx context.Context, driver, dsn string) (*SQLStore, error) {
 	driver = strings.ToLower(strings.TrimSpace(driver))
 	dsn = strings.TrimSpace(dsn)
@@ -242,6 +246,10 @@ func quoteSQLiteIdentifier(value string) string {
 }
 
 func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
+	return s.saveTask(ctx, s.db, task)
+}
+
+func (s *SQLStore) saveTask(ctx context.Context, exec sqlExecer, task *domain.Task) error {
 	preCommands, err := encodeJSON(task.PreCommands)
 	if err != nil {
 		return err
@@ -258,14 +266,6 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	if desiredState == "" {
 		desiredState = domain.TaskDesiredRun
 	}
-	var pendingDirective sql.NullString
-	if task.PendingDirective != nil {
-		encoded, err := encodeJSON(task.PendingDirective)
-		if err != nil {
-			return err
-		}
-		pendingDirective = sql.NullString{String: encoded, Valid: true}
-	}
 	startDate := storeTaskDisplayDate(task.StartDate)
 	if startDate.IsZero() {
 		startDate = storeTaskDisplayDate(task.CreatedAt)
@@ -274,10 +274,10 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 	if endDate.IsZero() {
 		endDate = startDate
 	}
-	_, err = s.db.ExecContext(ctx, s.upsertSQL(
+	_, err = exec.ExecContext(ctx, s.upsertSQL(
 		"tasks",
-		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive", "owner_user_id"},
-		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "pending_directive", "owner_user_id"},
+		[]string{"id", "title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "owner_user_id"},
+		[]string{"title", "description", "status", "project_id", "worker_id", "agent_type", "agent_config", "base_branch", "worktree_path", "agent_session_id", "pre_commands", "post_commands", "result", "start_date", "end_date", "version", "created_at", "updated_at", "desired_state", "owner_user_id"},
 	),
 		task.ID,
 		task.Title,
@@ -299,14 +299,13 @@ func (s *SQLStore) SaveTask(ctx context.Context, task *domain.Task) error {
 		task.CreatedAt,
 		task.UpdatedAt,
 		string(desiredState),
-		pendingDirective,
 		task.OwnerUserID,
 	)
 	return err
 }
 
 func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive, owner_user_id FROM tasks WHERE id = `+s.bind(1), id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, owner_user_id FROM tasks WHERE id = `+s.bind(1), id)
 	task, err := scanTask(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -318,7 +317,7 @@ func (s *SQLStore) Task(ctx context.Context, id string) (*domain.Task, error) {
 }
 
 func (s *SQLStore) Tasks(ctx context.Context) ([]*domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, pending_directive, owner_user_id FROM tasks ORDER BY created_at, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, description, status, project_id, worker_id, agent_type, agent_config, base_branch, worktree_path, agent_session_id, pre_commands, post_commands, result, start_date, end_date, version, created_at, updated_at, desired_state, owner_user_id FROM tasks ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +339,15 @@ func (s *SQLStore) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM a2a_event_inbox WHERE round_id IN (SELECT id FROM task_a2a_rounds WHERE task_id = `+s.bind(1)+`)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM a2a_dispatch_intents WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_a2a_rounds WHERE task_id = `+s.bind(1), id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM task_interactions WHERE task_id = `+s.bind(1), id); err != nil {
 		return err
 	}
@@ -370,6 +378,18 @@ func (s *SQLStore) DeleteTask(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if err := s.saveWorker(ctx, tx, worker); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) saveWorker(ctx context.Context, exec sqlExecer, worker *domain.Worker) error {
 	capabilities, err := encodeJSON(worker.Capabilities)
 	if err != nil {
 		return err
@@ -382,12 +402,7 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer rollback(tx)
-	if _, err := tx.ExecContext(ctx, s.upsertSQL(
+	if _, err := exec.ExecContext(ctx, s.upsertSQL(
 		"workers",
 		[]string{"id", "name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_ids", "last_heartbeat_at", "version", "created_at", "updated_at"},
 		[]string{"name", "status", "capabilities", "supported_agents", "work_dir", "startup_command", "project_binding_mode", "current_task_ids", "last_heartbeat_at", "version", "created_at", "updated_at"},
@@ -408,27 +423,27 @@ func (s *SQLStore) SaveWorker(ctx context.Context, worker *domain.Worker) error 
 	); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_project_bindings WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
+	if _, err := exec.ExecContext(ctx, `DELETE FROM worker_project_bindings WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_agent_env_vars WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
+	if _, err := exec.ExecContext(ctx, `DELETE FROM worker_agent_env_vars WHERE worker_id = `+s.bind(1), worker.ID); err != nil {
 		return err
 	}
 	if worker.ProjectBindingMode == domain.WorkerSpecificProjects {
 		for _, projectID := range worker.BoundProjectIDs {
-			if _, err := tx.ExecContext(ctx, s.insertIgnoreSQL("worker_project_bindings", []string{"worker_id", "project_id", "created_at"}), worker.ID, projectID, worker.UpdatedAt); err != nil {
+			if _, err := exec.ExecContext(ctx, s.insertIgnoreSQL("worker_project_bindings", []string{"worker_id", "project_id", "created_at"}), worker.ID, projectID, worker.UpdatedAt); err != nil {
 				return err
 			}
 		}
 	}
 	for _, group := range worker.AgentRuntimeEnv {
 		for _, item := range group.Vars {
-			if _, err := tx.ExecContext(ctx, s.workerAgentEnvUpsertSQL(), worker.ID, group.AgentType, item.Key, item.Value, nullableString(item.Description), item.Enabled, item.Sensitive, worker.CreatedAt, worker.UpdatedAt); err != nil {
+			if _, err := exec.ExecContext(ctx, s.workerAgentEnvUpsertSQL(), worker.ID, group.AgentType, item.Key, item.Value, nullableString(item.Description), item.Enabled, item.Sensitive, worker.CreatedAt, worker.UpdatedAt); err != nil {
 				return err
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLStore) Worker(ctx context.Context, id string) (*domain.Worker, error) {
@@ -584,7 +599,11 @@ func (s *SQLStore) Settings(ctx context.Context) (*domain.Settings, error) {
 }
 
 func (s *SQLStore) AppendTaskLog(ctx context.Context, log domain.TaskLog) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO task_logs (id, task_id, stream, content, created_at) VALUES (`+s.bindList(1, 5)+`)`, log.ID, log.TaskID, log.Stream, log.Content, log.CreatedAt)
+	return s.appendTaskLog(ctx, s.db, log)
+}
+
+func (s *SQLStore) appendTaskLog(ctx context.Context, exec sqlExecer, log domain.TaskLog) error {
+	_, err := exec.ExecContext(ctx, `INSERT INTO task_logs (id, task_id, stream, content, created_at) VALUES (`+s.bindList(1, 5)+`)`, log.ID, log.TaskID, log.Stream, log.Content, log.CreatedAt)
 	return err
 }
 
@@ -606,11 +625,15 @@ func (s *SQLStore) TaskLogs(ctx context.Context, taskID string) ([]domain.TaskLo
 }
 
 func (s *SQLStore) AppendConversation(ctx context.Context, message domain.ConversationMessage) error {
+	return s.appendConversation(ctx, s.db, message)
+}
+
+func (s *SQLStore) appendConversation(ctx context.Context, exec sqlExecer, message domain.ConversationMessage) error {
 	metadata, err := encodeJSON(message.Metadata)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO task_conversations (id, task_id, role, content, metadata, created_at) VALUES (`+s.bindList(1, 6)+`)`, message.ID, message.TaskID, message.Role, message.Content, metadata, message.CreatedAt)
+	_, err = exec.ExecContext(ctx, `INSERT INTO task_conversations (id, task_id, role, content, metadata, created_at) VALUES (`+s.bindList(1, 6)+`)`, message.ID, message.TaskID, message.Role, message.Content, metadata, message.CreatedAt)
 	return err
 }
 
@@ -636,11 +659,15 @@ func (s *SQLStore) TaskConversations(ctx context.Context, taskID string) ([]doma
 }
 
 func (s *SQLStore) SaveTaskInteraction(ctx context.Context, interaction domain.TaskInteraction) error {
-	_, err := s.db.ExecContext(ctx, s.upsertSQL(
+	return s.saveTaskInteraction(ctx, s.db, interaction)
+}
+
+func (s *SQLStore) saveTaskInteraction(ctx context.Context, exec sqlExecer, interaction domain.TaskInteraction) error {
+	result, err := exec.ExecContext(ctx, s.upsertSQL(
 		"task_interactions",
 		[]string{"id", "task_id", "kind", "status", "title", "body", "raw_payload", "agent_session_id", "response_decision", "response_message", "response_payload", "created_at", "updated_at"},
-		[]string{"task_id", "kind", "status", "title", "body", "raw_payload", "agent_session_id", "response_decision", "response_message", "response_payload", "updated_at"},
-	),
+		[]string{"kind", "status", "title", "body", "raw_payload", "agent_session_id", "response_decision", "response_message", "response_payload", "updated_at"},
+	)+" WHERE task_interactions.task_id = excluded.task_id",
 		interaction.ID,
 		interaction.TaskID,
 		interaction.Kind,
@@ -655,7 +682,17 @@ func (s *SQLStore) SaveTaskInteraction(ctx context.Context, interaction domain.T
 		interaction.CreatedAt,
 		interaction.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: task interaction %s belongs to another task", domain.ErrConflict, interaction.ID)
+	}
+	return nil
 }
 
 func (s *SQLStore) TaskInteraction(ctx context.Context, id string) (*domain.TaskInteraction, error) {
@@ -779,17 +816,24 @@ func (s *SQLStore) AppendEvents(ctx context.Context, events []domain.DomainEvent
 		return err
 	}
 	defer rollback(tx)
+	if err := s.appendEventsTx(ctx, tx, events); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) appendEventsTx(ctx context.Context, exec sqlExecer, events []domain.DomainEvent) error {
 	for _, event := range events {
 		payload := string(event.Payload)
-		if _, err := tx.ExecContext(ctx, s.insertIgnoreSQL("domain_events", []string{"id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "payload", "occurred_at", "correlation_id", "causation_id"}), event.EventID, event.EventType, event.AggregateType, event.AggregateID, event.AggregateVersion, payload, event.OccurredAt, nullableString(event.CorrelationID), nullableString(event.CausationID)); err != nil {
+		if _, err := exec.ExecContext(ctx, s.insertIgnoreSQL("domain_events", []string{"id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "payload", "occurred_at", "correlation_id", "causation_id"}), event.EventID, event.EventType, event.AggregateType, event.AggregateID, event.AggregateVersion, payload, event.OccurredAt, nullableString(event.CorrelationID), nullableString(event.CausationID)); err != nil {
 			return err
 		}
 		outboxID := "out_" + event.EventID
-		if _, err := tx.ExecContext(ctx, s.insertIgnoreSQL("outbox_messages", []string{"id", "event_id", "event_type", "payload", "status", "created_at", "published_at"}), outboxID, event.EventID, event.EventType, payload, domain.OutboxPending, event.OccurredAt, nil); err != nil {
+		if _, err := exec.ExecContext(ctx, s.insertIgnoreSQL("outbox_messages", []string{"id", "event_id", "event_type", "payload", "status", "created_at", "published_at"}), outboxID, event.EventID, event.EventType, payload, domain.OutboxPending, event.OccurredAt, nil); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLStore) DomainEvents(ctx context.Context, filter domain.EventFilter) ([]domain.DomainEvent, error) {
@@ -866,21 +910,6 @@ func (s *SQLStore) MarkOutboxPublished(ctx context.Context, ids []string, publis
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE outbox_messages SET status = `+s.bind(1)+`, published_at = `+s.bind(2)+` WHERE id IN (`+s.bindList(3, len(ids))+`)`, args...)
 	return err
-}
-
-func (s *SQLStore) MarkMessageProcessed(ctx context.Context, messageID string) (bool, error) {
-	if messageID == "" {
-		return true, nil
-	}
-	result, err := s.db.ExecContext(ctx, s.insertIgnoreSQL("processed_worker_messages", []string{"message_id", "processed_at"}), messageID, time.Now().UTC())
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
 }
 
 func (s *SQLStore) scanWorker(ctx context.Context, scanner interface{ Scan(...any) error }) (*domain.Worker, error) {
@@ -1025,8 +1054,7 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 	var postCommands string
 	var agentConfig string
 	var desiredState sql.NullString
-	var pendingDirective sql.NullString
-	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt, &desiredState, &pendingDirective, &task.OwnerUserID); err != nil {
+	if err := scanner.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.ProjectID, &workerID, &task.AgentType, &agentConfig, &task.BaseBranch, &worktreePath, &agentSessionID, &preCommands, &postCommands, &result, &startDate, &endDate, &task.Version, &task.CreatedAt, &task.UpdatedAt, &desiredState, &task.OwnerUserID); err != nil {
 		return nil, err
 	}
 	task.WorkerID = fromNullString(workerID)
@@ -1061,13 +1089,6 @@ func scanTask(scanner interface{ Scan(...any) error }) (*domain.Task, error) {
 		task.DesiredState = domain.TaskDesiredState(desiredState.String)
 	} else {
 		task.DesiredState = domain.TaskDesiredRun
-	}
-	if pendingDirective.Valid && strings.TrimSpace(pendingDirective.String) != "" {
-		var directive domain.TaskDirective
-		if err := decodeJSON(pendingDirective.String, &directive); err != nil {
-			return nil, err
-		}
-		task.PendingDirective = &directive
 	}
 	return &task, nil
 }

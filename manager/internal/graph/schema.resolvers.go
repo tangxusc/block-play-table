@@ -107,7 +107,7 @@ func (r *mutationResolver) StartTask(ctx context.Context, input *model.StartTask
 	if resolvedTaskID == "" {
 		return nil, fmt.Errorf("taskId is required")
 	}
-	task, _, err := r.Service.StartTask(ctx, resolvedTaskID)
+	task, err := r.Service.StartTask(ctx, resolvedTaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (r *mutationResolver) StartTask(ctx context.Context, input *model.StartTask
 
 // ContinueTask is the resolver for the continueTask field.
 func (r *mutationResolver) ContinueTask(ctx context.Context, input model.ContinueTaskInput) (*model.Task, error) {
-	task, _, err := r.Service.ContinueTask(ctx, app.ContinueTaskInput{
+	task, err := r.Service.ContinueTask(ctx, app.ContinueTaskInput{
 		TaskID:  input.TaskID,
 		Message: input.Message,
 	})
@@ -150,7 +150,7 @@ func (r *mutationResolver) InterruptTask(ctx context.Context, taskID *string, id
 	if resolvedTaskID == "" {
 		return nil, fmt.Errorf("taskId is required")
 	}
-	task, _, err := r.Service.InterruptTask(ctx, resolvedTaskID)
+	task, err := r.Service.InterruptTask(ctx, resolvedTaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +499,18 @@ func (r *queryResolver) TaskLogs(ctx context.Context, taskID string) ([]*model.T
 		out = append(out, toModelTaskLog(log))
 	}
 	return out, nil
+}
+
+// TaskA2AExecutions 返回指定任务按 attempt、turn 排序的 A2A 执行轮次。
+// 参数：ctx 用于取消查询，taskID 是 Manager Task 标识。
+// 返回：用于 GraphQL 展示的 A2A round 列表。
+// 错误：存储查询失败时返回错误。
+func (r *queryResolver) TaskA2AExecutions(ctx context.Context, taskID string) ([]*model.TaskA2AExecution, error) {
+	rounds, err := r.Service.Store().TaskA2ARounds(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return toModelTaskA2AExecutions(rounds), nil
 }
 
 // TaskConversations is the resolver for the taskConversations field.

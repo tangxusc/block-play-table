@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -30,7 +31,7 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); !errors.Is(err, domain.ErrConflict) {
+	if _, err := service.StartTask(ctx, task.ID); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("StartTask without worker err = %v, want conflict", err)
 	}
 
@@ -52,7 +53,7 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	if err := service.Store().SaveWorker(ctx, worker); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); !errors.Is(err, domain.ErrConflict) {
+	if _, err := service.StartTask(ctx, task.ID); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("StartTask with offline worker err = %v, want conflict", err)
 	}
 	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
@@ -82,18 +83,19 @@ func TestServiceStartTaskErrorsAndRuntimeEnvPayload(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	started, payload, err := service.StartTask(ctx, task.ID)
+	started, err := service.StartTask(ctx, task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if started.Status != domain.TaskStarting {
 		t.Fatalf("status = %s, want STARTING", started.Status)
 	}
-	if len(payload.AgentRuntimeEnv) != 1 || payload.AgentRuntimeEnv[0].Key != "TOKEN" || payload.AgentRuntimeEnv[0].Value != "secret" {
-		t.Fatalf("runtime env = %+v", payload.AgentRuntimeEnv)
+	request := preparedA2ARequestForTask(t, ctx, service, task.ID)
+	if len(request.Request.Environment.Variables) != 1 || request.Request.Environment.Variables[0].Key != "TOKEN" || request.Request.Environment.Variables[0].Value != "secret" {
+		t.Fatalf("runtime env = %+v", request.Request.Environment.Variables)
 	}
-	if len(payload.Task.PreCommands) != 1 || len(payload.Task.PostCommands) != 1 {
-		t.Fatalf("payload commands = %+v %+v", payload.Project, payload.Task)
+	if len(request.Request.Commands.Pre) != 1 || len(request.Request.Commands.Post) != 1 {
+		t.Fatalf("request commands = %+v", request.Request.Commands)
 	}
 }
 
@@ -108,7 +110,7 @@ func TestServiceContinueTaskValidatesBeforeAppendingUserMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
+	if _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("ContinueTask missing session err = %v, want conflict", err)
 	}
 	messages, err := service.Store().TaskConversations(ctx, task.ID)
@@ -118,7 +120,7 @@ func TestServiceContinueTaskValidatesBeforeAppendingUserMessage(t *testing.T) {
 	if len(messages) != 0 {
 		t.Fatalf("messages = %+v, want none after rejected continuation", messages)
 	}
-	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "   "}); err == nil {
+	if _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "   "}); err == nil {
 		t.Fatal("ContinueTask should reject blank messages")
 	}
 }
@@ -137,7 +139,7 @@ func TestServiceContinueTaskRequiresOriginalWorkerOnlineButAllowsConcurrency(t *
 	if err := service.Store().SaveWorker(ctx, worker); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
+	if _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("ContinueTask offline worker err = %v, want conflict", err)
 	}
 
@@ -148,40 +150,44 @@ func TestServiceContinueTaskRequiresOriginalWorkerOnlineButAllowsConcurrency(t *
 	if err := service.Store().SaveWorker(ctx, worker); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); err != nil {
+	if _, err := service.ContinueTask(ctx, ContinueTaskInput{TaskID: task.ID, Message: "follow up"}); err != nil {
 		t.Fatalf("ContinueTask with concurrent worker task returned error: %v", err)
 	}
 }
 
-func TestServiceDuplicateRuntimeMessagesReturnExistingTask(t *testing.T) {
+func TestServiceA2AEventsAreIdempotentWithinRound(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())
 	task := seedRunningTask(t, ctx, service)
 
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-dupe", task.ID, "/tmp/one"); err == nil {
-		t.Fatal("second started event should be rejected by task state")
+	round, workspace := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, &a2aext.RuntimeInfo{WorktreePath: "/tmp/one"}, map[string]any{})
+	if err := applyTestA2ARawEvent(ctx, service, round, workspace, domain.TaskA2ARemoteStatusWorking); !errors.Is(err, ErrA2AProtocolConflict) {
+		t.Fatalf("worktree 发生变化时错误 = %v，期望 A2A 协议冲突", err)
 	}
-	if _, err := service.ApplyWorkerTaskLog(ctx, "log-dupe", task.ID, "stdout", "first"); err != nil {
-		t.Fatal(err)
+	round, logEvent := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventLogChunk, nil, map[string]any{"stream": string(a2aext.LogStdout), "content": "first"})
+	if err := applyTestA2ARawEvent(ctx, service, round, logEvent, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("首次 log.chunk 返回错误: %v", err)
 	}
-	loaded, err := service.ApplyWorkerTaskLog(ctx, "log-dupe", task.ID, "stdout", "second")
-	if err != nil {
-		t.Fatal(err)
+	if err := applyTestA2ARawEvent(ctx, service, round, logEvent, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("重复 log.chunk 返回错误: %v", err)
 	}
+	loaded := loadTestA2ATask(t, ctx, service, task.ID)
 	if loaded.ID != task.ID {
 		t.Fatalf("duplicate log returned task %s, want %s", loaded.ID, task.ID)
 	}
-	if _, err := service.ApplyWorkerConversation(ctx, "conv-dupe", task.ID, "assistant", "first"); err != nil {
-		t.Fatal(err)
+	round, conversationEvent := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventConversationMessage, nil, map[string]any{"role": "assistant", "content": "first"})
+	if err := applyTestA2ARawEvent(ctx, service, round, conversationEvent, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("首次 conversation.message 返回错误: %v", err)
 	}
-	if _, err := service.ApplyWorkerConversation(ctx, "conv-dupe", task.ID, "assistant", "second"); err != nil {
-		t.Fatal(err)
+	if err := applyTestA2ARawEvent(ctx, service, round, conversationEvent, domain.TaskA2ARemoteStatusWorking); err != nil {
+		t.Fatalf("重复 conversation.message 返回错误: %v", err)
 	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "complete-dupe", task.ID, "done"); err != nil {
-		t.Fatal(err)
+	round, terminalEvent := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, nil, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
+	if err := applyTestA2ARawEvent(ctx, service, round, terminalEvent, domain.TaskA2ARemoteStatusCompleted); err != nil {
+		t.Fatalf("首次 execution.terminal 返回错误: %v", err)
 	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "complete-dupe", task.ID, "done again"); err != nil {
-		t.Fatal(err)
+	if err := applyTestA2ARawEvent(ctx, service, round, terminalEvent, domain.TaskA2ARemoteStatusCompleted); err != nil {
+		t.Fatalf("重复 execution.terminal 返回错误: %v", err)
 	}
 	logs, err := service.Store().TaskLogs(ctx, task.ID)
 	if err != nil {
@@ -373,29 +379,12 @@ func TestServiceValidationNotFoundAndExistingWorkerBranches(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, task.ID, "missing-worker"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("AssignWorker missing worker err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := service.StartTask(ctx, "missing-task"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := service.StartTask(ctx, "missing-task"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("StartTask missing task err = %v, want ErrNotFound", err)
 	}
 }
 
-func TestServiceDuplicateProcessedRuntimeMessages(t *testing.T) {
-	ctx := context.Background()
-	service := NewService(store.NewMemoryStore())
-	task := seedRunningTask(t, ctx, service)
-	for _, messageID := range []string{"started-processed", "failed-processed"} {
-		if ok, err := service.Store().MarkMessageProcessed(ctx, messageID); err != nil || !ok {
-			t.Fatalf("MarkMessageProcessed(%s) = %v, %v", messageID, ok, err)
-		}
-	}
-	if loaded, err := service.ApplyWorkerTaskStarted(ctx, "started-processed", task.ID, "/tmp/ignored"); err != nil || loaded.ID != task.ID {
-		t.Fatalf("duplicate started = %+v, %v", loaded, err)
-	}
-	if loaded, err := service.ApplyWorkerTaskFailed(ctx, "failed-processed", task.ID, "ignored"); err != nil || loaded.ID != task.ID {
-		t.Fatalf("duplicate failed = %+v, %v", loaded, err)
-	}
-}
-
-func TestServiceRejectsRuntimeMessagesForCreatedTask(t *testing.T) {
+func TestServiceRejectsA2AUpdateForUnknownRound(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore())
 	project, err := service.CreateProject(ctx, CreateProjectInput{Name: "P", GitURL: "git://repo"})
@@ -406,16 +395,8 @@ func TestServiceRejectsRuntimeMessagesForCreatedTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskLog(ctx, "created-log", task.ID, "stdout", "ignored"); !errors.Is(err, domain.ErrInvalidTransition) {
-		t.Fatalf("ApplyWorkerTaskLog err = %v, want invalid transition", err)
-	}
-	if _, err := service.ApplyWorkerConversation(ctx, "created-conv", task.ID, "assistant", "ignored"); !errors.Is(err, domain.ErrInvalidTransition) {
-		t.Fatalf("ApplyWorkerConversation err = %v, want invalid transition", err)
-	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "created-complete", task.ID, "ignored"); !errors.Is(err, domain.ErrInvalidTransition) {
-		t.Fatalf("ApplyWorkerTaskCompleted err = %v, want invalid transition", err)
-	}
-	if _, err := service.ApplyWorkerTaskFailed(ctx, "created-failed", task.ID, "ignored"); !errors.Is(err, domain.ErrInvalidTransition) {
-		t.Fatalf("ApplyWorkerTaskFailed err = %v, want invalid transition", err)
+	err = service.ApplyA2ARemoteUpdate(ctx, task.ID, A2ARemoteUpdate{})
+	if !errors.Is(err, ErrA2AProjection) || !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("未知 round 的 A2A 更新错误 = %v", err)
 	}
 }

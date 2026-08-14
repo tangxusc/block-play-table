@@ -167,6 +167,21 @@ func toModelTasks(tasks []*domain.Task) []*model.Task {
 	return out
 }
 
+func toModelTaskA2AExecutions(rounds []domain.TaskA2ARound) []*model.TaskA2AExecution {
+	out := make([]*model.TaskA2AExecution, 0, len(rounds))
+	for _, round := range rounds {
+		out = append(out, &model.TaskA2AExecution{
+			ID: round.ID, ExecutionID: round.ExecutionID, Attempt: round.Attempt, Turn: round.Turn,
+			Operation: string(round.Operation), WorkerID: round.WorkerID, A2aTaskID: optionalString(round.A2ATaskID),
+			ContextID: optionalString(round.ContextID), RemoteStatus: string(round.RemoteStatus), LastSequence: round.LastSequence,
+			LastSyncedAt: optionalTime(round.LastSyncedAt), ErrorCode: optionalString(round.ErrorCode),
+			ErrorMessage: optionalString(round.ErrorMessage), Retryable: round.Retryable,
+			CreatedAt: round.CreatedAt, CompletedAt: optionalTime(round.CompletedAt),
+		})
+	}
+	return out
+}
+
 func toModelProject(project *domain.Project) *model.Project {
 	if project == nil {
 		return nil

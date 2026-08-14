@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tangxusc/block-play-table/manager/internal/app"
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -248,14 +249,10 @@ func createReviewTask(t *testing.T, service *app.Service, reviewPort int, worktr
 	if err := service.Store().SaveTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err = service.ApplyWorkerTaskStarted(ctx, "started-"+task.ID, task.ID, worktree)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return task
+	return applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: worktree}, map[string]any{})
 }
 
 func connectReviewTunnelToGateway(t *testing.T, gateway *WorkerGateway, workerID, workerName string) {

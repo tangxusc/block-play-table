@@ -17,6 +17,10 @@ coverage.*
 coverage-*.txt
 *.coverprofile
 profile.cov
+.coverage/
+.gocache/
+.gopath/
+.tools/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -44,6 +48,7 @@ ui/dist/
 node_modules/
 test-results/
 playwright-report/
+ui/coverage/
 
 # Editor/IDE
 # .idea/

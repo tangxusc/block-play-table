@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -155,6 +156,113 @@ func TestHTTPProxyRoundTripsThroughWorkerTunnel(t *testing.T) {
 	}
 	if body := <-bodyCh; body != "hello" {
 		t.Fatalf("target body = %q, want hello", body)
+	}
+}
+
+func TestHTTPProxyContextCancellationClosesTunnelStream(t *testing.T) {
+	left, right := net.Pipe()
+	managerSession, err := yamux.Client(left, nil)
+	if err != nil {
+		t.Fatalf("manager yamux: %v", err)
+	}
+	defer managerSession.Close()
+	workerSession, err := yamux.Server(right, nil)
+	if err != nil {
+		t.Fatalf("worker yamux: %v", err)
+	}
+	defer workerSession.Close()
+
+	streamClosed := make(chan error, 1)
+	go func() {
+		stream, acceptErr := workerSession.AcceptStream()
+		if acceptErr != nil {
+			streamClosed <- acceptErr
+			return
+		}
+		defer stream.Close()
+		request, readErr := http.ReadRequest(bufio.NewReader(stream))
+		if readErr != nil {
+			streamClosed <- readErr
+			return
+		}
+		_ = request.Body.Close()
+		buffer := make([]byte, 1)
+		_, readErr = stream.Read(buffer)
+		streamClosed <- readErr
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "http://manager.local/a2a", nil)
+	startedAt := time.Now()
+	_, err = ProxyHTTP(ctx, managerSession, request, ProxyTarget{Port: 12345, Path: "/a2a"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ProxyHTTP error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("ProxyHTTP cancellation took %s", elapsed)
+	}
+	select {
+	case closeErr := <-streamClosed:
+		if closeErr == nil {
+			t.Fatal("worker stream read unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation did not close the worker stream")
+	}
+}
+
+func TestHTTPProxyContextCancellationInterruptsStreamingResponseRead(t *testing.T) {
+	left, right := net.Pipe()
+	managerSession, err := yamux.Client(left, nil)
+	if err != nil {
+		t.Fatalf("manager yamux: %v", err)
+	}
+	defer managerSession.Close()
+	workerSession, err := yamux.Server(right, nil)
+	if err != nil {
+		t.Fatalf("worker yamux: %v", err)
+	}
+	defer workerSession.Close()
+
+	releaseWorker := make(chan struct{})
+	defer close(releaseWorker)
+	go func() {
+		stream, acceptErr := workerSession.AcceptStream()
+		if acceptErr != nil {
+			return
+		}
+		defer stream.Close()
+		request, readErr := http.ReadRequest(bufio.NewReader(stream))
+		if readErr != nil {
+			return
+		}
+		_ = request.Body.Close()
+		_, _ = io.WriteString(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+		<-releaseWorker
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPost, "http://manager.local/a2a", strings.NewReader("{}"))
+	response, err := ProxyHTTP(ctx, managerSession, request, ProxyTarget{Port: 12345, Path: "/a2a"})
+	if err != nil {
+		t.Fatalf("ProxyHTTP returned error: %v", err)
+	}
+	defer response.Body.Close()
+	readDone := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, 1)
+		_, readErr := response.Body.Read(buffer)
+		readDone <- readErr
+	}()
+	cancel()
+	select {
+	case readErr := <-readDone:
+		if readErr == nil {
+			t.Fatal("streaming response read unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation did not interrupt streaming response read")
 	}
 }
 

@@ -110,7 +110,14 @@ func (w *Worker) Connect(now time.Time) {
 	w.addEvent("WorkerConnected", nil, now)
 }
 
+// Heartbeat 记录 Worker 心跳，并在非禁用状态下恢复其在线状态。
+// 参数：now 是 Manager 接收心跳的时间。
+// 返回：无。
+// 异常：本方法不返回错误；禁用的 Worker 不会因心跳重新上线。
 func (w *Worker) Heartbeat(now time.Time) {
+	if w.Status != WorkerDisabled {
+		w.Status = WorkerOnline
+	}
 	w.LastHeartbeatAt = &now
 	w.touch(now)
 	w.addEvent("WorkerHeartbeatReceived", nil, now)

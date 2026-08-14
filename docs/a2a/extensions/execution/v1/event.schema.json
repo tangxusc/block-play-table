@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tangxusc.github.io/block-play-table/a2a/extensions/execution/v1/event.schema.json",
+  "title": "Block Play Table A2A execution event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "version", "event", "scope", "payload"],
+  "properties": {
+    "kind": { "const": "bpt.execution.event" },
+    "version": { "const": "1.0" },
+    "event": { "$ref": "#/$defs/event" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "payload": { "type": "object" }
+  },
+	"allOf": [
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "enum": ["execution.accepted", "workspace.ready", "agent.session.started", "agent.session.updated"] } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/emptyPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "workspace.ready" } } } } },
+			"then": { "properties": { "runtime": { "required": ["worktreePath"] } }, "required": ["runtime"] }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "enum": ["agent.session.started", "agent.session.updated"] } } } } },
+			"then": { "properties": { "runtime": { "required": ["agentSessionId"] } }, "required": ["runtime"] }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "log.chunk" } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/logPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "conversation.message" } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/conversationPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "enum": ["interaction.requested", "interaction.resolved"] } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/interactionPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "result.updated" } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/resultPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "execution.diagnostic" } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/diagnosticPayload" } } }
+		},
+		{
+			"if": { "properties": { "event": { "properties": { "type": { "const": "execution.terminal" } } } } },
+			"then": { "properties": { "payload": { "$ref": "#/$defs/terminalPayload" } } }
+		}
+	],
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "emptyPayload": { "type": "object", "additionalProperties": false },
+    "uuidV7": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sequence", "type", "occurredAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuidV7" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "type": {
+          "enum": [
+            "execution.accepted",
+            "workspace.ready",
+            "agent.session.started",
+            "agent.session.updated",
+            "log.chunk",
+            "conversation.message",
+            "interaction.requested",
+            "interaction.resolved",
+            "result.updated",
+            "execution.diagnostic",
+            "execution.terminal"
+          ]
+        },
+        "occurredAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["localTaskId", "executionId", "attempt", "turn", "workerId"],
+      "properties": {
+        "localTaskId": { "$ref": "#/$defs/identifier" },
+        "executionId": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "turn": { "type": "integer", "minimum": 1 },
+        "workerId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agentSessionId": { "$ref": "#/$defs/identifier" },
+        "worktreePath": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "branch": { "type": "string", "maxLength": 1024 },
+        "head": { "type": "string", "maxLength": 256 }
+      }
+    },
+		"logPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["stream", "content"],
+			"properties": {
+				"stream": { "enum": ["stdout", "stderr", "system"] },
+				"content": { "type": "string", "minLength": 1, "maxLength": 32768 },
+				"chunkIndex": { "type": "integer", "minimum": 0 },
+				"finalChunk": { "type": "boolean" }
+			}
+		},
+		"conversationPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["content"],
+			"properties": {
+				"role": { "enum": ["assistant", "user", "system"] },
+				"content": { "type": "string", "minLength": 1, "maxLength": 16777216 }
+			}
+		},
+		"interactionPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["interactionId", "kind"],
+			"properties": {
+				"interactionId": { "$ref": "#/$defs/identifier" },
+				"kind": { "enum": ["USER_INPUT", "COMMAND_APPROVAL", "FILE_APPROVAL", "PERMISSION_APPROVAL"] },
+				"title": { "type": "string", "maxLength": 4096 },
+				"body": { "type": "string", "maxLength": 16777216 },
+				"message": { "type": "string", "maxLength": 16777216 },
+				"rawPayload": { "type": "string", "maxLength": 16777216 },
+				"payload": { "type": "string", "maxLength": 16777216 },
+				"decision": { "enum": ["APPROVE", "APPROVE_FOR_SESSION", "DENY", "CANCEL", "RESPOND"] }
+			}
+		},
+		"resultPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["result"],
+			"properties": { "result": { "type": "string", "minLength": 1, "maxLength": 16777216 } }
+		},
+		"diagnosticPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"anyOf": [
+				{ "required": ["errorCode"] },
+				{ "required": ["message"] }
+			],
+			"properties": {
+				"errorCode": { "type": "string", "maxLength": 256 },
+				"message": { "type": "string", "maxLength": 16777216 },
+				"retryable": { "type": "boolean" }
+			}
+		},
+		"terminalPayload": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["status"],
+			"properties": {
+				"status": { "enum": ["COMPLETED", "FAILED", "REJECTED", "CANCELED"] },
+				"result": { "type": "string", "maxLength": 16777216 },
+				"errorCode": { "type": "string", "maxLength": 256 },
+				"message": { "type": "string", "maxLength": 16777216 }
+			}
+    }
+  }
+}

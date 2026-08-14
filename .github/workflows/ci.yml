@@ -21,7 +21,7 @@ jobs:
   go-checks:
     name: Go checks
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       - name: Check out repository
@@ -32,6 +32,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
 
       - name: Run Go tests
         shell: bash
@@ -46,6 +55,25 @@ jobs:
           mkdir -p artifacts/logs
           set -o pipefail
           make coverage 2>&1 | tee artifacts/logs/make-coverage.log
+
+      - name: Run fuzz gate
+        shell: bash
+        env:
+          FUZZ_TIME: 10s
+        run: |
+          mkdir -p artifacts/logs
+          set -o pipefail
+          make fuzz 2>&1 | tee artifacts/logs/make-fuzz.log
+
+      - name: Validate A2A extension assets
+        run: npm run validate:a2a
+
+      - name: Run Go end-to-end tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          set -o pipefail
+          make e2e 2>&1 | tee artifacts/logs/make-e2e.log
 
       - name: Build Go binaries
         shell: bash
@@ -64,6 +92,10 @@ jobs:
             artifacts/logs/
             coverage*.out
             coverage*.txt
+            .coverage/go-statement/
+            .coverage/go-branch/
+            .coverage/fuzz-cases.txt
+            ui/coverage/
 
   ui-and-docker-checks:
     name: UI and Docker checks
@@ -90,6 +122,13 @@ jobs:
           set -o pipefail
           make ui-typecheck 2>&1 | tee artifacts/logs/make-ui-typecheck.log
 
+      - name: Run Vue UI tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          set -o pipefail
+          npm test 2>&1 | tee artifacts/logs/npm-test.log
+
       - name: Build Vue UI
         shell: bash
         run: |
@@ -112,6 +151,65 @@ jobs:
           if-no-files-found: ignore
           path: artifacts/logs/
 
+  browser-e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local stack
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          set -o pipefail
+          make run-local 2>&1 | tee artifacts/logs/make-run-local.log
+
+      - name: Run Playwright end-to-end tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run e2e 2>&1 | tee artifacts/logs/npm-e2e.log
+
+      - name: Stop local stack
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          make stop-local 2>&1 | tee artifacts/logs/make-stop-local.log
+
+      - name: Upload browser end-to-end artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-e2e-artifacts
+          if-no-files-found: ignore
+          path: |
+            artifacts/logs/
+            .local-run/*.log
+            test-results/
+            playwright-report/
+
   publish-main-images:
     name: Publish main images
     runs-on: ubuntu-latest
@@ -119,6 +217,7 @@ jobs:
     needs:
       - go-checks
       - ui-and-docker-checks
+      - browser-e2e
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

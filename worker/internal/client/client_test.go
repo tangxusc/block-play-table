@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,13 +15,6 @@ import (
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 )
 
-func TestParseAgentsFiltersInvalidValues(t *testing.T) {
-	agents := ParseAgents("codex, nope, claude")
-	if len(agents) != 2 || agents[0] != domain.AgentCodex || agents[1] != domain.AgentClaude {
-		t.Fatalf("agents = %+v", agents)
-	}
-}
-
 func TestRunRequiresManagerURL(t *testing.T) {
 	err := New(Config{WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()}).Run(context.Background())
 	if err == nil {
@@ -28,59 +22,20 @@ func TestRunRequiresManagerURL(t *testing.T) {
 	}
 }
 
-func TestSendWorkerEventWritesEnvelope(t *testing.T) {
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	received := make(chan protocol.Envelope, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Errorf("upgrade: %v", err)
-			return
-		}
-		defer conn.Close()
-		var envelope protocol.Envelope
-		if err := conn.ReadJSON(&envelope); err != nil {
-			t.Errorf("read json: %v", err)
-			return
-		}
-		received <- envelope
-	}))
-	defer server.Close()
-
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	client := New(Config{WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()})
-	client.conn = conn
-	if err := client.SendWorkerEvent(context.Background(), protocol.WorkerEvent{Type: protocol.MessageTaskLog, TaskID: "task-1", Stream: "stdout", Content: "hi"}); err != nil {
-		t.Fatalf("SendWorkerEvent returned error: %v", err)
-	}
-	select {
-	case envelope := <-received:
-		if envelope.Type != protocol.MessageTaskLog || envelope.WorkerID != "worker-1" || envelope.TaskID != "task-1" {
-			t.Fatalf("envelope = %+v", envelope)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for envelope")
-	}
-}
-
-func TestSendWorkerEventSerializesConcurrentWrites(t *testing.T) {
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+func TestSendSerializesConcurrentWrites(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	const total = 32
 	received := make(chan protocol.Envelope, total)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(response, request, nil)
 		if err != nil {
 			t.Errorf("upgrade: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer connection.Close()
 		for {
 			var envelope protocol.Envelope
-			if err := conn.ReadJSON(&envelope); err != nil {
+			if err := connection.ReadJSON(&envelope); err != nil {
 				return
 			}
 			received <- envelope
@@ -88,67 +43,63 @@ func TestSendWorkerEventSerializesConcurrentWrites(t *testing.T) {
 	}))
 	defer server.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	client := New(Config{WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()})
-	client.conn = conn
+	defer connection.Close()
+	worker := New(Config{WorkerID: "worker-1", Name: "W", WorkDir: t.TempDir()})
+	worker.conn = connection
 
 	start := make(chan struct{})
-	errs := make(chan error, total)
-	var wg sync.WaitGroup
-	for i := 0; i < total; i++ {
-		wg.Add(1)
+	errorsByWrite := make(chan error, total)
+	var wait sync.WaitGroup
+	for index := 0; index < total; index++ {
+		wait.Add(1)
 		go func() {
-			defer wg.Done()
+			defer wait.Done()
 			<-start
-			errs <- client.SendWorkerEvent(context.Background(), protocol.WorkerEvent{
-				Type:    protocol.MessageTaskLog,
-				TaskID:  "task-1",
-				Stream:  "stdout",
-				Content: strings.Repeat("x", 64*1024),
+			errorsByWrite <- worker.send(context.Background(), protocol.Envelope{
+				MessageID: "heartbeat", Type: protocol.MessageWorkerHeartbeat, WorkerID: "worker-1", Timestamp: time.Now().UTC(),
 			})
 		}()
 	}
 	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("SendWorkerEvent returned error: %v", err)
+	wait.Wait()
+	close(errorsByWrite)
+	for writeErr := range errorsByWrite {
+		if writeErr != nil {
+			t.Fatalf("send returned error: %v", writeErr)
 		}
 	}
-
-	for i := 0; i < total; i++ {
+	for index := 0; index < total; index++ {
 		select {
 		case envelope := <-received:
-			if envelope.Type != protocol.MessageTaskLog || envelope.WorkerID != "worker-1" || envelope.TaskID != "task-1" {
+			if envelope.Type != protocol.MessageWorkerHeartbeat || envelope.WorkerID != "worker-1" {
 				t.Fatalf("envelope = %+v", envelope)
 			}
 		case <-time.After(3 * time.Second):
-			t.Fatalf("timed out waiting for envelope %d/%d", i+1, total)
+			t.Fatalf("timed out waiting for envelope %d/%d", index+1, total)
 		}
 	}
 }
 
 func TestConnectAndServeSendsRegistration(t *testing.T) {
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	registered := make(chan protocol.Envelope, 1)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/worker/ws", func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("token"); got != "secret" {
+	mux.HandleFunc("/worker/ws", func(response http.ResponseWriter, request *http.Request) {
+		if got := request.URL.Query().Get("token"); got != "secret" {
 			t.Errorf("token query = %q, want secret", got)
 		}
-		conn, err := upgrader.Upgrade(w, r, nil)
+		connection, err := upgrader.Upgrade(response, request, nil)
 		if err != nil {
 			t.Errorf("upgrade: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer connection.Close()
 		var envelope protocol.Envelope
-		if err := conn.ReadJSON(&envelope); err != nil {
+		if err := connection.ReadJSON(&envelope); err != nil {
 			t.Errorf("read register: %v", err)
 			return
 		}
@@ -160,12 +111,8 @@ func TestConnectAndServeSendsRegistration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := New(Config{
-		ManagerWSURL:    "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/ws",
-		WorkerID:        "worker-1",
-		WorkerToken:     "secret",
-		Name:            "W",
-		WorkDir:         t.TempDir(),
-		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+		ManagerWSURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/worker/ws", WorkerID: "worker-1",
+		WorkerToken: "secret", Name: "W", WorkDir: t.TempDir(), SupportedAgents: []domain.AgentType{domain.AgentCodex},
 	}).connectAndServe(ctx)
 	if err == nil {
 		t.Fatal("connectAndServe should return when server closes")
@@ -177,5 +124,14 @@ func TestConnectAndServeSendsRegistration(t *testing.T) {
 		}
 	default:
 		t.Fatal("registration envelope was not sent")
+	}
+}
+
+func TestRunHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := New(Config{ManagerWSURL: "ws://127.0.0.1:1/worker/ws", WorkerID: "worker-1", WorkDir: t.TempDir()}).Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run canceled error = %v, want context canceled", err)
 	}
 }

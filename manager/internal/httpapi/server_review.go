@@ -93,7 +93,7 @@ func (g *WorkerGateway) resolveTaskReview(ctx context.Context, taskID string) (t
 	if err != nil {
 		return taskReviewTarget{}, err
 	}
-	tunnel := g.proxyTunnel(worker.Name)
+	tunnel := g.proxyTunnelByWorkerID(worker.ID)
 	if tunnel == nil || tunnel.session == nil || tunnel.session.IsClosed() {
 		return taskReviewTarget{}, fmt.Errorf("worker review proxy tunnel is not connected")
 	}

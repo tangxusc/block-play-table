@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hashicorp/yamux"
 )
@@ -22,9 +24,16 @@ type ProxyTarget struct {
 	Path string
 }
 
+// ProxyHTTP 通过 Worker yamux 会话转发一次 HTTP 请求。
+// 参数：ctx 控制请求写入、响应头等待及响应体生命周期；session 是活动隧道；req 和 target 描述原请求与受限目标。
+// 返回：已绑定隧道流生命周期的 HTTP 响应。
+// 错误：context 取消、目标非法、隧道断开、请求写入或响应解析失败时返回错误。
 func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, target ProxyTarget) (*http.Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if session == nil || session.IsClosed() {
 		return nil, fmt.Errorf("worker proxy tunnel is not connected")
@@ -37,21 +46,28 @@ func ProxyHTTP(ctx context.Context, session *yamux.Session, req *http.Request, t
 	if err != nil {
 		return nil, err
 	}
+	streamLifecycle := newContextStreamCloser(ctx, stream)
 	closeOnError := true
 	defer func() {
 		if closeOnError {
-			_ = stream.Close()
+			_ = streamLifecycle.Close()
 		}
 	}()
 
 	if err := out.Write(stream); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(stream), out)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
-	resp.Body = &streamReadCloser{ReadCloser: resp.Body, closer: stream}
+	resp.Body = &streamReadCloser{ReadCloser: resp.Body, closer: streamLifecycle}
 	closeOnError = false
 	return resp, nil
 }
@@ -238,4 +254,38 @@ type streamReadCloser struct {
 func (r *streamReadCloser) Close() error {
 	_ = r.ReadCloser.Close()
 	return r.closer.Close()
+}
+
+type contextStreamCloser struct {
+	stream io.Closer
+	done   chan struct{}
+	once   sync.Once
+}
+
+func newContextStreamCloser(ctx context.Context, stream io.Closer) *contextStreamCloser {
+	closer := &contextStreamCloser{stream: stream, done: make(chan struct{})}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = closer.Close()
+		case <-closer.done:
+		}
+	}()
+	return closer
+}
+
+// Close 幂等终止 context 监视并关闭底层隧道流。
+// 参数：无。
+// 返回：首次关闭底层流的结果；重复关闭返回 nil。
+// 错误：底层流关闭失败时返回对应错误。
+func (c *contextStreamCloser) Close() error {
+	var closeErr error
+	c.once.Do(func() {
+		close(c.done)
+		if stream, ok := c.stream.(interface{ SetReadDeadline(time.Time) error }); ok {
+			_ = stream.SetReadDeadline(time.Now())
+		}
+		closeErr = c.stream.Close()
+	})
+	return closeErr
 }

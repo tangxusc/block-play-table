@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +30,17 @@ if (existsSync(statePath)) {
 }
 
 const processes = [];
+let stackReady = false;
+process.once("exit", () => {
+  if (stackReady) return;
+  for (const item of [...processes].reverse()) {
+    if (item.pid) killTree(item.pid);
+  }
+  rmSync(statePath, { force: true });
+});
+
+await waitForHTTPUnavailable(`${managerURL}/healthz`, "Manager");
+await waitForHTTPUnavailable(uiURL, "UI");
 
 function startProcess(name, command, args, options = {}) {
   const out = openSync(join(runDir, `${name}.log`), "a");
@@ -81,7 +92,6 @@ if (useWslBackend) {
       WORKER_ID: process.env.WORKER_ID || "worker-local",
       WORKER_NAME: process.env.WORKER_NAME || "local-worker",
       WORKER_WORK_DIR: hostToWsl(workerDir),
-      WORKER_SUPPORTED_AGENTS: process.env.WORKER_SUPPORTED_AGENTS || "codex,claude",
       WORKER_TOKEN: workerToken,
     },
     "./worker/cmd/worker",
@@ -104,7 +114,6 @@ if (useWslBackend) {
       WORKER_ID: process.env.WORKER_ID || "worker-local",
       WORKER_NAME: process.env.WORKER_NAME || "local-worker",
       WORKER_WORK_DIR: workerDir,
-      WORKER_SUPPORTED_AGENTS: process.env.WORKER_SUPPORTED_AGENTS || "codex,claude",
       WORKER_TOKEN: workerToken,
     },
   });
@@ -133,6 +142,7 @@ writeFileSync(
     2,
   ),
 );
+stackReady = true;
 
 console.log(`Local stack is running:
   UI:      ${uiDisplayURL}
@@ -153,6 +163,39 @@ async function waitForHTTP(url, label) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
   throw new Error(`${label} did not become ready at ${url}: ${last}`);
+}
+
+async function waitForHTTPUnavailable(url, label) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(url);
+    } catch {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`${label} is still reachable at ${url}; stop the unmanaged local process before starting a new stack.`);
+}
+
+function killTree(pid) {
+  try {
+    if (process.platform === "win32") {
+      const child = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.unref();
+      return;
+    }
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch {
+    // 进程可能已经退出。
+  }
 }
 
 function commandWorks(command, args) {

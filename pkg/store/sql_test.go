@@ -30,6 +30,34 @@ func TestSQLStorePostgresPersistenceContract(t *testing.T) {
 	runSQLStorePersistenceContract(t, context.Background(), SQLDriverPostgres, dsn)
 }
 
+func TestSQLStoreMigrationDropsLegacyTaskControlState(t *testing.T) {
+	ctx := context.Background()
+	sqlStore, err := OpenSQLStore(ctx, SQLDriverSQLite, filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLStore returned error: %v", err)
+	}
+	defer sqlStore.Close()
+	versioned := make([]Migration, 0, len(migrations.All))
+	for _, migration := range migrations.All {
+		versioned = append(versioned, Migration{Version: migration.Version, SQL: migration.SQL})
+	}
+	if err := sqlStore.MigrateVersioned(ctx, versioned); err != nil {
+		t.Fatalf("MigrateVersioned returned error: %v", err)
+	}
+	hasColumn, err := sqliteColumnExists(ctx, sqlStore.db, "tasks", "pending_directive")
+	if err != nil {
+		t.Fatalf("sqliteColumnExists returned error: %v", err)
+	}
+	if hasColumn {
+		t.Fatal("pending_directive should be removed after A2A migration")
+	}
+	var tableName string
+	err = sqlStore.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'processed_worker_messages'`).Scan(&tableName)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("processed_worker_messages lookup error = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	ctx := context.Background()
 	if _, err := OpenSQLStore(ctx, SQLDriverSQLite, ""); err == nil {
@@ -292,9 +320,6 @@ func TestSQLStoreVersionedMigrationListsDeletionAndHelpers(t *testing.T) {
 	if err := sqlStore.MarkOutboxPublished(ctx, nil, now); err != nil {
 		t.Fatalf("MarkOutboxPublished(nil) returned error: %v", err)
 	}
-	if ok, err := sqlStore.MarkMessageProcessed(ctx, ""); err != nil || !ok {
-		t.Fatalf("empty MarkMessageProcessed = %v, %v", ok, err)
-	}
 	if err := sqlStore.DeleteWorker(ctx, worker.ID); err != nil {
 		t.Fatalf("DeleteWorker returned error: %v", err)
 	}
@@ -530,7 +555,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	projectID := "project-sql-" + suffix
 	workerID := "worker-sql-" + suffix
 	taskID := "task-sql-" + suffix
-	messageID := "worker-message-" + suffix
 
 	project, err := domain.NewProject(domain.NewProjectInput{
 		ID:                 projectID,
@@ -596,9 +620,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	if err := sqlStore.AppendEvents(ctx, task.PullEvents()); err != nil {
 		t.Fatalf("AppendEvents returned error: %v", err)
-	}
-	if ok, err := sqlStore.MarkMessageProcessed(ctx, messageID); err != nil || !ok {
-		t.Fatalf("first MarkMessageProcessed = %v, %v", ok, err)
 	}
 	if err := sqlStore.SaveTaskGitBackup(ctx, domain.TaskGitBackup{
 		ID:        "git-backup-" + suffix,
@@ -695,9 +716,6 @@ func runSQLStorePersistenceContract(t *testing.T, ctx context.Context, driver, d
 	}
 	if err := reopened.MarkOutboxPublished(ctx, []string{foundOutbox}, now.Add(time.Second)); err != nil {
 		t.Fatalf("MarkOutboxPublished returned error: %v", err)
-	}
-	if ok, err := reopened.MarkMessageProcessed(ctx, messageID); err != nil || ok {
-		t.Fatalf("duplicate MarkMessageProcessed = %v, %v", ok, err)
 	}
 }
 

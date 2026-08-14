@@ -461,8 +461,22 @@ export class ApiClient {
   }
 
   async fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
-    const [taskData, logData, conversationData, interactionData, eventData] = await Promise.all([
-      this.graphQL<{ task: TaskItem }>(`query Task($id: ID!) { task(id: $id) { ${taskFields} } }`, { id: taskId }),
+    // Task 与 A2A round 在同一事务更新；先读 Task，避免并发请求拼出新 Task 和旧 round。
+    const taskData = await this.graphQL<{ task: TaskItem }>(
+      `query Task($id: ID!) { task(id: $id) { ${taskFields} } }`,
+      { id: taskId },
+    );
+    const [a2aData, logData, conversationData, interactionData, eventData] = await Promise.all([
+      this.graphQL<{ taskA2AExecutions: TaskDetailData["a2aExecutions"] }>(
+        `query TaskA2AExecutions($taskId: ID!) {
+          taskA2AExecutions(taskId: $taskId) {
+            id executionId attempt turn operation workerId
+            a2aTaskId contextId remoteStatus lastSequence lastSyncedAt
+            errorCode errorMessage retryable createdAt completedAt
+          }
+        }`,
+        { taskId },
+      ),
       this.graphQL<{ taskLogs: TaskDetailData["logs"] }>(
         `query TaskLogs($taskId: ID!) { taskLogs(taskId: $taskId) { id stream content createdAt } }`,
         { taskId },
@@ -506,6 +520,7 @@ export class ApiClient {
     ).then((data) => data.taskGitBackups).catch(() => []);
     return {
       task: taskData.task,
+      a2aExecutions: a2aData.taskA2AExecutions,
       logs: logData.taskLogs,
       conversations: conversationData.taskConversations,
       interactions: interactionData.taskInteractions,

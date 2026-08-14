@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -16,15 +17,11 @@ func TestServiceSettingsConversationFailureHeartbeatAndArchive(t *testing.T) {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
 	task := seedRunningTask(t, ctx, service)
-	if _, err := service.ApplyWorkerConversation(ctx, "conv-1", task.ID, "assistant", "hello"); err != nil {
-		t.Fatalf("ApplyWorkerConversation returned error: %v", err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventConversationMessage, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"role": "assistant", "content": "hello"})
 	if messages, _ := service.Store().TaskConversations(ctx, task.ID); len(messages) != 1 {
 		t.Fatalf("conversation count = %d", len(messages))
 	}
-	if _, err := service.ApplyWorkerTaskFailed(ctx, "failed-1", task.ID, "boom"); err != nil {
-		t.Fatalf("ApplyWorkerTaskFailed returned error: %v", err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusFailed, nil, map[string]any{"status": string(a2aext.TerminalFailed), "message": "boom"})
 	loaded, _ := service.Task(ctx, task.ID)
 	if loaded.Status != domain.TaskFailed {
 		t.Fatalf("status = %s, want failed", loaded.Status)
@@ -45,6 +42,43 @@ func TestServiceSettingsConversationFailureHeartbeatAndArchive(t *testing.T) {
 	}
 }
 
+func TestWorkerHeartbeatRestoresStaleWorkerWithoutEnablingDisabledWorker(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore())
+	worker, err := service.RegisterWorker(ctx, RegisterWorkerInput{
+		ID: "worker-heartbeat-recovery", Name: "Heartbeat recovery", WorkDir: "/tmp/worker-heartbeat-recovery",
+		SupportedAgents: []domain.AgentType{domain.AgentCodex},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WorkerDisconnected(ctx, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := service.WorkerHeartbeat(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != domain.WorkerOnline {
+		t.Fatalf("心跳恢复状态 = %s，期望 %s", recovered.Status, domain.WorkerOnline)
+	}
+
+	recovered.Disable(time.Now().UTC())
+	if err := service.Store().SaveWorker(ctx, recovered); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := service.WorkerHeartbeat(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Status != domain.WorkerDisabled {
+		t.Fatalf("禁用 Worker 心跳状态 = %s，期望 %s", disabled.Status, domain.WorkerDisabled)
+	}
+}
+
 func TestServiceTaskInteractionLifecycleAndDedup(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
@@ -52,28 +86,22 @@ func TestServiceTaskInteractionLifecycleAndDedup(t *testing.T) {
 	}))
 	task := seedRunningTask(t, ctx, service)
 
-	waiting, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-1", TaskInteractionRequestInput{
-		InteractionID:  "interaction-1",
-		TaskID:         task.ID,
-		Kind:           domain.TaskInteractionCommandApproval,
-		Title:          "Command approval",
-		Body:           "Run tests",
-		RawPayload:     `{"command":"make test"}`,
-		AgentSessionID: "session-1",
+	round, requested := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionRequested, &a2aext.RuntimeInfo{AgentSessionID: "session-1"}, map[string]any{
+		"interactionId": "interaction-1",
+		"kind":          string(a2aext.InteractionCommandApproval),
+		"title":         "Command approval",
+		"body":          "Run tests",
+		"rawPayload":    `{"command":"make test"}`,
 	})
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskInteractionRequest returned error: %v", err)
+	if err := applyTestA2ARawEvent(ctx, service, round, requested, domain.TaskA2ARemoteStatusInputRequired); err != nil {
+		t.Fatalf("首次 interaction.requested 返回错误: %v", err)
 	}
+	waiting := loadTestA2ATask(t, ctx, service, task.ID)
 	if waiting.Status != domain.TaskWaitingInput || waiting.AgentSessionID != "session-1" {
 		t.Fatalf("task after request = %+v", waiting)
 	}
-	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-dup", TaskInteractionRequestInput{
-		InteractionID: "interaction-1",
-		TaskID:        task.ID,
-		Kind:          domain.TaskInteractionCommandApproval,
-		Title:         "Duplicate",
-	}); err != nil {
-		t.Fatalf("duplicate interaction request returned error: %v", err)
+	if err := applyTestA2ARawEvent(ctx, service, round, requested, domain.TaskA2ARemoteStatusInputRequired); err != nil {
+		t.Fatalf("重复 interaction.requested 返回错误: %v", err)
 	}
 	interactions, err := service.Store().TaskInteractions(ctx, task.ID, domain.TaskInteractionPending)
 	if err != nil {
@@ -93,15 +121,109 @@ func TestServiceTaskInteractionLifecycleAndDedup(t *testing.T) {
 	if answered.Status != domain.TaskInteractionAnswered || answered.ResponseDecision != domain.TaskInteractionApprove {
 		t.Fatalf("answered interaction = %+v", answered)
 	}
-	resumed, err := service.ApplyWorkerTaskInteractionResolved(ctx, "interaction-resolved-1", TaskInteractionResolvedInput{
-		InteractionID: "interaction-1",
-		TaskID:        task.ID,
+	resumed := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionResolved, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{AgentSessionID: "session-1"}, map[string]any{
+		"interactionId": "interaction-1",
+		"kind":          string(a2aext.InteractionCommandApproval),
+		"decision":      string(a2aext.DecisionApprove),
 	})
-	if err != nil {
-		t.Fatalf("ApplyWorkerTaskInteractionResolved returned error: %v", err)
-	}
 	if resumed.Status != domain.TaskRunning {
 		t.Fatalf("task after resolved = %+v", resumed)
+	}
+}
+
+func TestA2ARoundStatusOnlyUpdatePublishesTaskRefreshEvent(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
+		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	}))
+	task := seedRunningTask(t, ctx, service)
+	round, requested := prepareTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionRequested, nil, map[string]any{
+		"interactionId": "interaction-refresh", "kind": string(a2aext.InteractionCommandApproval),
+		"title": "Command approval", "body": "Run tests",
+	})
+	if err := applyTestA2ARawEvent(ctx, service, round, requested, ""); err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{
+		AggregateType: "Task", AggregateID: task.ID, EventType: "TaskA2AExecutionUpdated",
+	})
+	defer unsubscribe()
+	applyTestA2AStatus(t, ctx, service, task.ID, domain.TaskA2ARemoteStatusInputRequired)
+	select {
+	case event := <-events:
+		if event.AggregateID != task.ID {
+			t.Fatalf("刷新事件=%+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("只更新 A2A round 状态时未发布 Task 刷新事件")
+	}
+}
+
+func TestServiceCancelTaskInteractionCreatesCancelIntentAtomically(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time { return now }))
+	task := seedRunningTask(t, ctx, service)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionRequested, domain.TaskA2ARemoteStatusInputRequired, &a2aext.RuntimeInfo{AgentSessionID: "session-cancel"}, map[string]any{
+		"interactionId": "interaction-cancel",
+		"kind":          string(a2aext.InteractionCommandApproval),
+		"title":         "Command approval",
+		"body":          "Run destructive command",
+	})
+
+	input := RespondTaskInteractionInput{
+		InteractionID: "interaction-cancel",
+		Decision:      domain.TaskInteractionCancel,
+		Message:       "stop",
+		Payload:       `{"reason":"user canceled"}`,
+	}
+	canceled, err := service.RespondTaskInteraction(ctx, input)
+	if err != nil {
+		t.Fatalf("取消交互返回错误: %v", err)
+	}
+	if canceled.Status != domain.TaskInteractionCanceled || canceled.ResponseDecision != domain.TaskInteractionCancel {
+		t.Fatalf("取消后的 interaction = %+v", canceled)
+	}
+	updated, err := service.Task(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != domain.TaskInterrupting {
+		t.Fatalf("取消交互后的 task status = %s，期望 %s", updated.Status, domain.TaskInterrupting)
+	}
+	intents, err := service.Store().A2ADispatchIntentsDue(ctx, now.Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelIntentIDs := make([]string, 0, 1)
+	for _, intent := range intents {
+		if intent.Operation == domain.TaskA2AOperationCancel {
+			cancelIntentIDs = append(cancelIntentIDs, intent.ID)
+			if len(intent.Payload) != 0 {
+				t.Fatalf("CancelTask intent 不应携带请求 payload: %+v", intent)
+			}
+		}
+	}
+	if len(cancelIntentIDs) != 1 {
+		t.Fatalf("取消 intent = %+v", intents)
+	}
+
+	replayed, err := service.RespondTaskInteraction(ctx, input)
+	if err != nil || replayed.ID != canceled.ID {
+		t.Fatalf("重复取消应幂等: interaction=%+v err=%v", replayed, err)
+	}
+	intents, err = service.Store().A2ADispatchIntentsDue(ctx, now.Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedCancelIDs := make([]string, 0, 1)
+	for _, intent := range intents {
+		if intent.Operation == domain.TaskA2AOperationCancel {
+			replayedCancelIDs = append(replayedCancelIDs, intent.ID)
+		}
+	}
+	if len(replayedCancelIDs) != 1 || replayedCancelIDs[0] != cancelIntentIDs[0] {
+		t.Fatalf("重复取消创建了额外 intent: intents=%+v err=%v", intents, err)
 	}
 }
 
@@ -111,15 +233,12 @@ func TestServiceTaskInteractionResponseRequiresOnlineWorkerAndTerminalCancelsPen
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
 	task := seedRunningTask(t, ctx, service)
-	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-offline", TaskInteractionRequestInput{
-		InteractionID: "interaction-offline",
-		TaskID:        task.ID,
-		Kind:          domain.TaskInteractionUserInput,
-		Title:         "Question",
-		Body:          "Need input",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionRequested, domain.TaskA2ARemoteStatusInputRequired, &a2aext.RuntimeInfo{AgentSessionID: "session-offline"}, map[string]any{
+		"interactionId": "interaction-offline",
+		"kind":          string(a2aext.InteractionUserInput),
+		"title":         "Question",
+		"body":          "Need input",
+	})
 	if _, err := service.WorkerDisconnected(ctx, task.WorkerID); err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +252,7 @@ func TestServiceTaskInteractionResponseRequiresOnlineWorkerAndTerminalCancelsPen
 	if _, err := service.WorkerConnected(ctx, task.WorkerID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "completed-with-pending", task.ID, "done"); err != nil {
-		t.Fatal(err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, nil, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
 	canceled, err := service.Store().TaskInteraction(ctx, "interaction-offline")
 	if err != nil {
 		t.Fatal(err)
@@ -145,32 +262,31 @@ func TestServiceTaskInteractionResponseRequiresOnlineWorkerAndTerminalCancelsPen
 	}
 }
 
-func TestServiceTaskInteractionResolvedWithResponseBeatsFastCompletion(t *testing.T) {
+func TestServiceTaskInteractionResponseRemainsIdempotentAfterCompletion(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(store.NewMemoryStore(), WithClock(func() time.Time {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
 	task := seedRunningTask(t, ctx, service)
-	if _, err := service.ApplyWorkerTaskInteractionRequest(ctx, "interaction-msg-race", TaskInteractionRequestInput{
-		InteractionID: "interaction-race",
-		TaskID:        task.ID,
-		Kind:          domain.TaskInteractionCommandApproval,
-		Title:         "Command approval",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ApplyWorkerTaskInteractionResolved(ctx, "interaction-resolved-race", TaskInteractionResolvedInput{
-		InteractionID: "interaction-race",
-		TaskID:        task.ID,
-		Responded:     true,
-		Decision:      domain.TaskInteractionApprove,
-	}); err != nil {
-		t.Fatalf("ApplyWorkerTaskInteractionResolved returned error: %v", err)
-	}
-	if _, err := service.ApplyWorkerTaskCompleted(ctx, "interaction-completed-race", task.ID, "done"); err != nil {
-		t.Fatalf("ApplyWorkerTaskCompleted returned error: %v", err)
-	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionRequested, domain.TaskA2ARemoteStatusInputRequired, &a2aext.RuntimeInfo{AgentSessionID: "session-race"}, map[string]any{
+		"interactionId": "interaction-race",
+		"kind":          string(a2aext.InteractionCommandApproval),
+		"title":         "Command approval",
+	})
 	answered, err := service.RespondTaskInteraction(ctx, RespondTaskInteractionInput{
+		InteractionID: "interaction-race",
+		Decision:      domain.TaskInteractionApprove,
+	})
+	if err != nil {
+		t.Fatalf("RespondTaskInteraction 返回错误: %v", err)
+	}
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventInteractionResolved, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{
+		"interactionId": "interaction-race",
+		"kind":          string(a2aext.InteractionCommandApproval),
+		"decision":      string(a2aext.DecisionApprove),
+	})
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, nil, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
+	answered, err = service.RespondTaskInteraction(ctx, RespondTaskInteractionInput{
 		InteractionID: "interaction-race",
 		Decision:      domain.TaskInteractionApprove,
 	})
@@ -399,7 +515,7 @@ func TestServiceDeleteOccupiedWorkerDoesNotPublishDeleteEvent(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
 	events, unsubscribe := service.SubscribeDomainEvents(ctx, domain.EventFilter{AggregateType: "Worker", EventType: "WorkerDeleted"})
@@ -477,14 +593,14 @@ func TestServiceAutoAssignAllowsWorkersWithRunningTasks(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, otherTask.ID, occupied.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, otherTask.ID); err != nil {
+	if _, err := service.StartTask(ctx, otherTask.ID); err != nil {
 		t.Fatal(err)
 	}
 	task, err := service.CreateTask(ctx, CreateTaskInput{Title: "Needs Worker", ProjectID: targetProject.ID, AgentType: domain.AgentCodex})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, _, err := service.StartTask(ctx, task.ID)
+	started, err := service.StartTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("StartTask returned error: %v", err)
 	}

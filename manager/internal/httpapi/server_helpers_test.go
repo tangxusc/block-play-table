@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/tangxusc/block-play-table/manager/internal/app"
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
-	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
 
@@ -28,36 +28,6 @@ func TestStripProxyPathHandlesAllForms(t *testing.T) {
 		if got := stripProxyPath(input); got != want {
 			t.Fatalf("stripProxyPath(%q) = %q, want %q", input, got, want)
 		}
-	}
-}
-
-func TestTaskIDFromEnvelopePrefersEnvelopeID(t *testing.T) {
-	envelope := rawEnvelope{TaskID: "task-from-envelope"}
-	event := protocol.WorkerEvent{TaskID: "task-from-event"}
-	if got := taskIDFromEnvelope(envelope, event); got != "task-from-envelope" {
-		t.Fatalf("envelope precedence = %q", got)
-	}
-	if got := taskIDFromEnvelope(rawEnvelope{}, event); got != "task-from-event" {
-		t.Fatalf("event fallback = %q", got)
-	}
-	if got := taskIDFromEnvelope(rawEnvelope{}, protocol.WorkerEvent{}); got != "" {
-		t.Fatalf("empty result = %q", got)
-	}
-}
-
-func TestCloneMetadataCopiesEntries(t *testing.T) {
-	source := map[string]string{"a": "1", "b": "2"}
-	clone := cloneMetadata(source)
-	if len(clone) != len(source) {
-		t.Fatalf("clone size = %d, want %d", len(clone), len(source))
-	}
-	clone["a"] = "mutated"
-	if source["a"] != "1" {
-		t.Fatalf("clone mutation leaked into source: %q", source["a"])
-	}
-	empty := cloneMetadata(nil)
-	if len(empty) != 0 {
-		t.Fatalf("nil input should produce empty map, got %+v", empty)
 	}
 }
 
@@ -116,11 +86,11 @@ func TestTaskReviewPathBuildsRouteWithQuery(t *testing.T) {
 
 func TestTerminalPathParsersRejectInvalidInput(t *testing.T) {
 	taskCases := map[string]bool{
-		"/terminal/tasks/task-1/ws":       true,
-		"/terminal/tasks//ws":             false,
-		"/terminal/tasks/task/sub/ws":     false,
-		"/different/prefix":               false,
-		"/terminal/tasks/task-1":          false,
+		"/terminal/tasks/task-1/ws":   true,
+		"/terminal/tasks//ws":         false,
+		"/terminal/tasks/task/sub/ws": false,
+		"/different/prefix":           false,
+		"/terminal/tasks/task-1":      false,
 	}
 	for path, want := range taskCases {
 		_, ok := terminalTaskIDFromPath(path)
@@ -202,12 +172,10 @@ func TestResolveTaskReviewRejectsInvalidStates(t *testing.T) {
 		t.Fatal("task without worktree should error")
 	}
 
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-review", task.ID, "/tmp/worktree"); err != nil {
-		t.Fatal(err)
-	}
+	applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
 	if _, err := service.WorkerDisconnected(ctx, worker.ID); err != nil {
 		t.Fatal(err)
 	}

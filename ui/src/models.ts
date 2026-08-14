@@ -177,6 +177,26 @@ export interface TaskInteraction {
   updatedAt: string;
 }
 
+/** 描述一次 Manager 与 Worker 之间的 A2A 执行轮次。 */
+export interface TaskA2AExecution {
+  id: string;
+  executionId: string;
+  attempt: number;
+  turn: number;
+  operation: string;
+  workerId: string;
+  a2aTaskId: string | null;
+  contextId: string | null;
+  remoteStatus: string;
+  lastSequence: number;
+  lastSyncedAt: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface TaskGitDiffFile {
   path: string;
   oldPath?: string;
@@ -223,6 +243,7 @@ export interface TaskGitBackup {
 
 export interface TaskDetailData {
   task: TaskItem;
+  a2aExecutions: TaskA2AExecution[];
   logs: TaskLogItem[];
   conversations: ConversationMessage[];
   interactions: TaskInteraction[];

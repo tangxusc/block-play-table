@@ -300,6 +300,25 @@ type Task struct {
 	UpdatedAt      time.Time             `json:"updatedAt"`
 }
 
+type TaskA2AExecution struct {
+	ID           string     `json:"id"`
+	ExecutionID  string     `json:"executionId"`
+	Attempt      int        `json:"attempt"`
+	Turn         int        `json:"turn"`
+	Operation    string     `json:"operation"`
+	WorkerID     string     `json:"workerId"`
+	A2aTaskID    *string    `json:"a2aTaskId,omitempty"`
+	ContextID    *string    `json:"contextId,omitempty"`
+	RemoteStatus string     `json:"remoteStatus"`
+	LastSequence int64      `json:"lastSequence"`
+	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
+	ErrorCode    *string    `json:"errorCode,omitempty"`
+	ErrorMessage *string    `json:"errorMessage,omitempty"`
+	Retryable    bool       `json:"retryable"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+}
+
 type TaskConnection struct {
 	Nodes      []*Task `json:"nodes"`
 	TotalCount int     `json:"totalCount"`

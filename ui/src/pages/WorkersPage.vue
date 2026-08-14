@@ -22,17 +22,17 @@ interface WorkerFormDraft {
   workerId: string;
   workerName: string;
   workDir: string;
-  supportedAgents: string[];
   projectBindingMode: "ALL_PROJECTS" | "SPECIFIC_PROJECTS";
   boundProjectIds: string[];
 }
+
+const fixedSupportedAgents = ["codex", "claude"];
 
 function newDraft(): WorkerFormDraft {
   return {
     workerId: "worker-local",
     workerName: "local-worker",
     workDir: "./worker-data",
-    supportedAgents: ["codex"],
     projectBindingMode: "ALL_PROJECTS",
     boundProjectIds: [],
   };
@@ -92,7 +92,7 @@ function generateCommand() {
   commandDialogOpen.value = true;
 }
 
-// --- Edit worker ---
+// Worker 编辑态与启动态共享固定双 Agent 能力，避免生成无效的运行配置。
 const editDialogOpen = ref(false);
 const editDraft = ref<WorkerItem | null>(null);
 const activeAgent = ref<"codex" | "claude">("codex");
@@ -121,6 +121,7 @@ function openEditWorker(worker: WorkerItem) {
 
 async function saveEditWorker() {
   if (!editDraft.value) return;
+  editDraft.value.supportedAgents = [...fixedSupportedAgents];
   await api.updateWorker(editDraft.value);
   editDialogOpen.value = false;
   await load(false);
@@ -170,7 +171,7 @@ function removeEnvVar(item: AgentRuntimeEnvVar) {
 function cloneWorker(worker: WorkerItem): WorkerItem {
   const cloned: WorkerItem = JSON.parse(JSON.stringify(worker));
   for (const agent of ["codex", "claude"] as const) envGroup(cloned.agentRuntimeEnv, agent);
-  cloned.supportedAgents = [...worker.supportedAgents];
+  cloned.supportedAgents = [...fixedSupportedAgents];
   cloned.boundProjectIds = [...worker.boundProjectIds];
   return cloned;
 }
@@ -249,7 +250,7 @@ function envGroup(groups: WorkerAgentRuntimeEnv[], agentType: "codex" | "claude"
         <a-form-item label="Name"><a-input v-model:value="draft.workerName" aria-label="Name" /></a-form-item>
         <a-form-item label="Work directory"><a-input v-model:value="draft.workDir" aria-label="Work directory" /></a-form-item>
         <a-form-item label="Supported agents">
-          <a-checkbox-group v-model:value="draft.supportedAgents" :options="['codex', 'claude']" />
+          <a-space><a-tag v-for="agent in fixedSupportedAgents" :key="agent">{{ agent }}</a-tag></a-space>
         </a-form-item>
         <a-form-item label="Project binding">
           <a-radio-group v-model:value="draft.projectBindingMode">
@@ -277,7 +278,7 @@ function envGroup(groups: WorkerAgentRuntimeEnv[], agentType: "codex" | "claude"
         <a-form-item label="Name"><a-input v-model:value="editDraft.name" aria-label="Name" /></a-form-item>
         <a-form-item label="Work directory"><a-input v-model:value="editDraft.workDir" aria-label="Work directory" /></a-form-item>
         <a-form-item label="Supported agents">
-          <a-checkbox-group v-model:value="editDraft.supportedAgents" :options="['codex', 'claude']" />
+          <a-space><a-tag v-for="agent in fixedSupportedAgents" :key="agent">{{ agent }}</a-tag></a-space>
         </a-form-item>
         <a-form-item label="Project binding">
           <a-radio-group v-model:value="editDraft.projectBindingMode">
@@ -292,7 +293,7 @@ function envGroup(groups: WorkerAgentRuntimeEnv[], agentType: "codex" | "claude"
             </a-select-option>
           </a-select>
         </a-form-item>
-        <!-- Runtime environment section -->
+        <!-- 运行时环境变量按 Agent 隔离，避免敏感配置串用。 -->
         <a-divider>Runtime environment</a-divider>
         <a-tabs v-model:activeKey="activeAgent" style="margin-bottom: 12px">
           <a-tab-pane key="codex" tab="Codex" />

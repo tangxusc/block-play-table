@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
 	"github.com/tangxusc/block-play-table/manager/migrations"
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
 	"github.com/tangxusc/block-play-table/pkg/store"
@@ -67,13 +68,6 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	if got := postGraphQL(t, server.URL, `query { workers { id } }`, nil)["data"].(map[string]any)["workers"].([]any); len(got) != 1 {
 		t.Fatalf("workers count = %d, want 1", len(got))
 	}
-	workerConn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-ops", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerConn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, "worker-ops")
-
 	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"title": "T", "projectId": projectID, "agentType": "codex"},
 	})
@@ -90,19 +84,16 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	if len(currentTaskIDs) != 1 || currentTaskIDs[0] != taskID {
 		t.Fatalf("worker currentTaskIds = %+v, want [%s]", currentTaskIDs, taskID)
 	}
-	_ = workerConn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var start rawEnvelope
-	if err := workerConn.ReadJSON(&start); err != nil {
+	intents, err := service.Store().A2ADispatchIntentsDue(context.Background(), time.Now().Add(time.Hour), 10)
+	if err != nil || len(intents) != 1 {
+		t.Fatalf("A2A intents = %+v, error = %v", intents, err)
+	}
+	request, err := service.PrepareA2ADispatchRequest(context.Background(), intents[0])
+	if err != nil {
 		t.Fatal(err)
 	}
-	var payload protocol.TaskStartPayload
-	if data, err := json.Marshal(start.Payload); err != nil {
-		t.Fatal(err)
-	} else if err := json.Unmarshal(data, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.AgentRuntimeEnv) != 1 || payload.AgentRuntimeEnv[0].Key != "TOKEN" || payload.AgentRuntimeEnv[0].Value != "secret" {
-		t.Fatalf("task start env = %+v", payload.AgentRuntimeEnv)
+	if variables := request.Request.Environment.Variables; len(variables) != 1 || variables[0].Key != "TOKEN" || variables[0].Value != "secret" {
+		t.Fatalf("A2A task env = %+v", variables)
 	}
 
 	if got := postGraphQL(t, server.URL, `query Task($id: ID!) { task(id: $id) { id } }`, map[string]any{"id": taskID})["data"].(map[string]any)["task"].(map[string]any)["id"]; got != taskID {
@@ -128,10 +119,6 @@ func TestServerGraphQLOperationsCoverTrustedModeSurfaces(t *testing.T) {
 	if len(outbox) == 0 || outbox[0].(map[string]any)["status"] != string(domain.OutboxPublished) {
 		t.Fatalf("expected published outbox messages, got %#v", outbox)
 	}
-	if got := postGraphQL(t, server.URL, `mutation InterruptTask($taskId: ID!) { interruptTask(taskId: $taskId) { id } }`, map[string]any{"taskId": taskID})["data"].(map[string]any)["interruptTask"].(map[string]any)["id"]; got != taskID {
-		t.Fatalf("interrupt task id = %v, want %s", got, taskID)
-	}
-
 	rawSettingsEnv := postRawGraphQL(t, server.URL, `mutation UpdateSettings($input: UpdateAgentRuntimeEnvVarsInput!) { updateAgentRuntimeEnvVars(input: $input) { id } }`, map[string]any{
 		"input": map[string]any{"vars": []any{map[string]any{"key": "TOKEN", "value": "secret", "enabled": true, "sensitive": true}}},
 	})
@@ -191,15 +178,11 @@ func TestServerTaskLogsFallBackToConversationsWhenNoLogsPersisted(t *testing.T) 
 	if _, err := service.AssignWorker(ctx, task.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-conversation-log", task.ID, "/tmp/worktree"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ApplyWorkerConversation(ctx, "conversation-log", task.ID, "assistant", "conversation appears in logs"); err != nil {
-		t.Fatal(err)
-	}
+	applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
+	applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventConversationMessage, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"role": "assistant", "content": "conversation appears in logs"})
 
 	logs := postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) {
 		taskLogs(taskId: $taskId) { id stream content createdAt }
@@ -212,9 +195,7 @@ func TestServerTaskLogsFallBackToConversationsWhenNoLogsPersisted(t *testing.T) 
 		t.Fatalf("fallback log = %#v", first)
 	}
 
-	if _, err := service.ApplyWorkerTaskLog(ctx, "real-log", task.ID, "stdout", "real persisted log"); err != nil {
-		t.Fatal(err)
-	}
+	applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventLogChunk, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"stream": string(a2aext.LogStdout), "content": "real persisted log"})
 	logs = postGraphQL(t, server.URL, `query TaskLogs($taskId: ID!) {
 		taskLogs(taskId: $taskId) { stream content }
 	}`, map[string]any{"taskId": task.ID})["data"].(map[string]any)["taskLogs"].([]any)
@@ -615,365 +596,6 @@ func TestServerSubscriptionsAcceptBrowserOrigin(t *testing.T) {
 	}
 }
 
-func TestWorkerGatewayAppliesWorkerMessages(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	server := httptest.NewServer(NewServer(service).Handler())
-	defer server.Close()
-
-	ctx := context.Background()
-	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "T", ProjectID: project.ID, AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-ws", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	sendWS(t, conn, protocol.Envelope{MessageID: "reg-1", Type: protocol.MessageWorkerRegister, WorkerID: "worker-ws", Timestamp: time.Now(), Payload: map[string]any{
-		"id": "worker-ws", "name": "WS", "supportedAgents": []string{"codex"}, "workDir": "/tmp", "projectBindingMode": "ALL_PROJECTS",
-	}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "hb-1", Type: protocol.MessageWorkerHeartbeat, WorkerID: "worker-ws", Timestamp: time.Now()})
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		worker, err := service.Store().Worker(ctx, "worker-ws")
-		if err == nil && worker.Status == domain.WorkerOnline {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("worker registration err = %v worker = %+v", err, worker)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if _, err := service.AssignWorker(ctx, task.ID, "worker-ws"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
-		t.Fatal(err)
-	}
-	sendWS(t, conn, protocol.Envelope{MessageID: "started-1", Type: protocol.MessageTaskStarted, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "log-1", Type: protocol.MessageTaskLog, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Stream: "stdout", Content: "hello"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "conv-1", Type: protocol.MessageTaskConversation, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "done"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "waiting-1", Type: protocol.MessageTaskWaitingInput, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "waiting"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "result-1", Type: protocol.MessageTaskResult, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Result: "structured result"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "done-1", Type: protocol.MessageTaskCompleted, WorkerID: "worker-ws", TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{}})
-
-	deadline = time.Now().Add(2 * time.Second)
-	for {
-		loaded, err := service.Task(ctx, task.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if loaded.Status == domain.TaskCompleted {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("task status = %s, want completed", loaded.Status)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	loaded, err := service.Task(ctx, task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Result != "structured result" {
-		t.Fatalf("task result = %q, want structured result", loaded.Result)
-	}
-	if logs, _ := service.Store().TaskLogs(ctx, task.ID); len(logs) != 2 {
-		t.Fatalf("logs count = %d, want 2", len(logs))
-	}
-	if messages, _ := service.Store().TaskConversations(ctx, task.ID); len(messages) != 1 {
-		t.Fatalf("conversation count = %d, want 1", len(messages))
-	}
-}
-
-func TestWorkerGatewayRoutesTaskInteractionResponse(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	api := NewServer(service)
-	server := httptest.NewServer(api.Handler())
-	defer server.Close()
-
-	ctx := context.Background()
-	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
-		ID:              "worker-interaction",
-		Name:            "W",
-		SupportedAgents: []domain.AgentType{domain.AgentCodex},
-		WorkDir:         "/tmp",
-		BindingMode:     domain.WorkerAllProjects,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	task, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "T", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-interaction", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, worker.ID)
-
-	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": task.ID})
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var start rawEnvelope
-	if err := conn.ReadJSON(&start); err != nil {
-		t.Fatal(err)
-	}
-	if start.Type != protocol.MessageTaskStart {
-		t.Fatalf("start envelope = %+v", start)
-	}
-	sendWS(t, conn, protocol.Envelope{MessageID: "started-interaction", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "interaction-request", Type: protocol.MessageTaskInteractionRequest, WorkerID: worker.ID, TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.TaskInteractionRequestPayload{
-		InteractionID: "interaction-1",
-		TaskID:        task.ID,
-		Kind:          domain.TaskInteractionCommandApproval,
-		Title:         "Approve command",
-		Body:          "Run make test",
-		RawPayload:    `{"command":"make test"}`,
-	}})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		loaded, err := service.Task(ctx, task.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if loaded.Status == domain.TaskWaitingInput {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("task status = %s, want WAITING_INPUT", loaded.Status)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- postGraphQLError(server.URL, `mutation Respond($input: RespondTaskInteractionInput!) {
-			respondTaskInteraction(input: $input) { id status responseDecision }
-		}`, map[string]any{
-			"input": map[string]any{"interactionId": "interaction-1", "decision": "APPROVE"},
-		})
-	}()
-
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var response rawEnvelope
-	if err := conn.ReadJSON(&response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Type != protocol.MessageTaskInteractionResponse {
-		t.Fatalf("interaction response envelope = %+v", response)
-	}
-	var payload protocol.TaskInteractionResponsePayload
-	if err := json.Unmarshal(response.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.InteractionID != "interaction-1" || payload.Decision != domain.TaskInteractionApprove {
-		t.Fatalf("interaction response payload = %+v", payload)
-	}
-	sendWS(t, conn, protocol.Envelope{MessageID: "interaction-resolved", Type: protocol.MessageTaskInteractionResolved, WorkerID: worker.ID, TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.TaskInteractionResolvedPayload{
-		InteractionID: "interaction-1",
-		TaskID:        task.ID,
-	}})
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
-
-	loaded, err := waitForTaskStatus(ctx, service, task.ID, domain.TaskRunning, 2*time.Second)
-	if err != nil {
-		t.Fatalf("task after resolved: %v", err)
-	}
-	if loaded.Status != domain.TaskRunning {
-		t.Fatalf("task after resolved = %+v", loaded)
-	}
-	interaction, err := service.Store().TaskInteraction(ctx, "interaction-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if interaction.Status != domain.TaskInteractionAnswered || interaction.ResponseDecision != domain.TaskInteractionApprove {
-		t.Fatalf("interaction after response = %+v", interaction)
-	}
-}
-
-func TestWorkerGatewayApplyTaskTerminalEvents(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	gateway := NewServer(service).gateway
-	ctx := context.Background()
-	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
-		ID:              "worker-apply-terminal",
-		Name:            "Apply Terminal Worker",
-		SupportedAgents: []domain.AgentType{domain.AgentCodex},
-		WorkDir:         "/tmp",
-		BindingMode:     domain.WorkerAllProjects,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	failedTask, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "Failed", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.StartTask(ctx, failedTask.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := gateway.apply(ctx, rawEnvelope{MessageID: "accepted-apply", Type: protocol.MessageTaskAccepted, WorkerID: worker.ID, TaskID: failedTask.ID}, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := gateway.apply(ctx, rawEnvelope{MessageID: "started-failed-apply", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: failedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "/tmp/failed-worktree"})}, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := gateway.apply(ctx, rawEnvelope{MessageID: "failed-apply", Type: protocol.MessageTaskFailed, WorkerID: worker.ID, TaskID: failedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Result: "agent failed"})}, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	loadedFailed, err := service.Task(ctx, failedTask.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loadedFailed.Status != domain.TaskFailed || loadedFailed.Result != "agent failed" {
-		t.Fatalf("failed task = %+v, want FAILED with result", loadedFailed)
-	}
-
-	interruptedTask, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "Interrupted", ProjectID: project.ID, WorkerID: worker.ID, AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.StartTask(ctx, interruptedTask.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := gateway.apply(ctx, rawEnvelope{MessageID: "started-interrupted-apply", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: interruptedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "/tmp/interrupted-worktree"})}, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := gateway.apply(ctx, rawEnvelope{MessageID: "interrupted-apply", Type: protocol.MessageTaskInterrupted, WorkerID: worker.ID, TaskID: interruptedTask.ID, Payload: testRawPayload(t, protocol.WorkerEvent{Content: "partial result"})}, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	loadedInterrupted, err := service.Task(ctx, interruptedTask.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loadedInterrupted.Status != domain.TaskInterrupted || loadedInterrupted.Result != "partial result" {
-		t.Fatalf("interrupted task = %+v, want INTERRUPTED with result", loadedInterrupted)
-	}
-}
-
-func TestGraphQLContinueTaskSendsTaskContinueToOriginalWorker(t *testing.T) {
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	api := NewServer(service)
-	server := httptest.NewServer(api.Handler())
-	defer server.Close()
-
-	project := postGraphQL(t, server.URL, `mutation CreateProject($input: CreateProjectInput!) { createProject(input: $input) { id } }`, map[string]any{
-		"input": map[string]any{"name": "P", "gitUrl": "git://repo", "defaultBranch": "main", "worktreeNamePrefix": "p"},
-	})
-	projectID := project["data"].(map[string]any)["createProject"].(map[string]any)["id"].(string)
-	postGraphQL(t, server.URL, `mutation RegisterWorker($input: RegisterWorkerInput!) { registerWorker(input: $input) { id status } }`, map[string]any{
-		"input": map[string]any{"id": "worker-continue", "name": "W", "supportedAgents": []any{"codex"}, "workDir": "/tmp/worker", "projectBindingMode": "ALL_PROJECTS"},
-	})
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-continue", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, "worker-continue")
-
-	task := postGraphQL(t, server.URL, `mutation CreateTask($input: CreateTaskInput!) { createTask(input: $input) { id } }`, map[string]any{
-		"input": map[string]any{"title": "T", "projectId": projectID, "workerId": "worker-continue", "agentType": "codex"},
-	})
-	taskID := task["data"].(map[string]any)["createTask"].(map[string]any)["id"].(string)
-	postGraphQL(t, server.URL, `mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status } }`, map[string]any{"taskId": taskID})
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var start rawEnvelope
-	if err := conn.ReadJSON(&start); err != nil {
-		t.Fatal(err)
-	}
-	if start.Type != protocol.MessageTaskStart {
-		t.Fatalf("start envelope = %+v", start)
-	}
-	sendWS(t, conn, protocol.Envelope{MessageID: "started-continue", Type: protocol.MessageTaskStarted, WorkerID: "worker-continue", TaskID: taskID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
-	sendWS(t, conn, protocol.Envelope{MessageID: "completed-continue", Type: protocol.MessageTaskCompleted, WorkerID: "worker-continue", TaskID: taskID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Result: "first result", AgentSessionID: "session-1"}})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		loaded, err := service.Task(context.Background(), taskID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if loaded.Status == domain.TaskCompleted && loaded.AgentSessionID == "session-1" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("task after completion = %+v", loaded)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	continued := postGraphQL(t, server.URL, `mutation ContinueTask($input: ContinueTaskInput!) { continueTask(input: $input) { id status agentSessionId result } }`, map[string]any{
-		"input": map[string]any{"taskId": taskID, "message": "follow up"},
-	})
-	continuedTask := continued["data"].(map[string]any)["continueTask"].(map[string]any)
-	if continuedTask["status"] != string(domain.TaskStarting) || continuedTask["agentSessionId"] != "session-1" || continuedTask["result"] != nil {
-		t.Fatalf("continued task = %#v", continuedTask)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var continuation rawEnvelope
-	if err := conn.ReadJSON(&continuation); err != nil {
-		t.Fatal(err)
-	}
-	if continuation.Type != protocol.MessageTaskContinue || continuation.TaskID != taskID {
-		t.Fatalf("continue envelope = %+v", continuation)
-	}
-	var payload protocol.TaskContinuePayload
-	if err := json.Unmarshal(continuation.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.AgentSessionID != "session-1" || payload.Message != "follow up" || payload.WorktreePath != "/tmp/worktree" {
-		t.Fatalf("continue payload = %+v", payload)
-	}
-	messages := postGraphQL(t, server.URL, `query TaskConversations($taskId: ID!) { taskConversations(taskId: $taskId) { role content } }`, map[string]any{"taskId": taskID})
-	taskMessages := messages["data"].(map[string]any)["taskConversations"].([]any)
-	if len(taskMessages) != 1 || taskMessages[0].(map[string]any)["role"] != "user" {
-		t.Fatalf("task conversations = %#v", taskMessages)
-	}
-}
-
 func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
 	service := app.NewService(store.NewMemoryStore())
 	server := httptest.NewServer(NewServer(service, WithWorkerToken("secret")).Handler())
@@ -1016,128 +638,6 @@ func TestWorkerGatewayRequiresTokenAndMarksDisconnectOffline(t *testing.T) {
 			t.Fatalf("worker did not go offline: %+v, %v", worker, err)
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func TestWorkerGatewayWatchPumpDeliversListAndInterrupt(t *testing.T) {
-	ctx := context.Background()
-	service := app.NewService(store.NewMemoryStore(), app.WithClock(func() time.Time {
-		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	}))
-	api := NewServer(service)
-	server := httptest.NewServer(api.Handler())
-	defer server.Close()
-
-	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
-		ID:              "worker-watch",
-		Name:            "watch",
-		SupportedAgents: []domain.AgentType{domain.AgentCodex},
-		WorkDir:         "/tmp/worker",
-		BindingMode:     domain.WorkerAllProjects,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.WorkerConnected(ctx, worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	task, err := service.CreateTask(ctx, app.CreateTaskInput{
-		Title:     "T",
-		ProjectID: project.ID,
-		WorkerID:  worker.ID,
-		AgentType: domain.AgentCodex,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Move the task into STARTING before the worker connects so the list step has work to do.
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-watch", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, "worker-watch")
-
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var listed rawEnvelope
-	if err := conn.ReadJSON(&listed); err != nil {
-		t.Fatalf("expected list envelope: %v", err)
-	}
-	if listed.Type != protocol.MessageTaskStart || listed.TaskID != task.ID {
-		t.Fatalf("list envelope = %+v", listed)
-	}
-
-	// Mark task RUNNING so InterruptTask is allowed.
-	sendWS(t, conn, protocol.Envelope{MessageID: "started-watch", Type: protocol.MessageTaskStarted, WorkerID: worker.ID, TaskID: task.ID, Timestamp: time.Now(), Payload: protocol.WorkerEvent{Content: "/tmp/worktree"}})
-	if _, err := waitForTaskStatus(ctx, service, task.ID, domain.TaskRunning, 2*time.Second); err != nil {
-		t.Fatalf("task did not reach RUNNING: %v", err)
-	}
-
-	if _, _, err := service.InterruptTask(ctx, task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var interrupt rawEnvelope
-	if err := conn.ReadJSON(&interrupt); err != nil {
-		t.Fatalf("expected interrupt envelope: %v", err)
-	}
-	if interrupt.Type != protocol.MessageTaskInterrupt || interrupt.TaskID != task.ID {
-		t.Fatalf("interrupt envelope = %+v", interrupt)
-	}
-}
-
-func TestWorkerGatewayWatchPumpFiltersOtherWorkers(t *testing.T) {
-	ctx := context.Background()
-	service := app.NewService(store.NewMemoryStore())
-	api := NewServer(service)
-	server := httptest.NewServer(api.Handler())
-	defer server.Close()
-
-	project, err := service.CreateProject(ctx, app.CreateProjectInput{Name: "P", GitURL: "git://repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.RegisterWorker(ctx, app.RegisterWorkerInput{
-		ID: "worker-other", Name: "other", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerAllProjects,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.WorkerConnected(ctx, "worker-other"); err != nil {
-		t.Fatal(err)
-	}
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/worker/ws?worker_id=worker-watch-self", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	waitForWorkerGatewayConnection(t, api.gateway, "worker-watch-self")
-
-	// Create+assign a task to a different worker; the connected worker should not receive any envelope.
-	task, err := service.CreateTask(ctx, app.CreateTaskInput{Title: "T", ProjectID: project.ID, WorkerID: "worker-other", AgentType: domain.AgentCodex})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
-		t.Fatal(err)
-	}
-	var envelope rawEnvelope
-	if err := conn.ReadJSON(&envelope); err == nil {
-		t.Fatalf("worker-watch-self should not receive envelopes targeted at worker-other, got %+v", envelope)
 	}
 }
 

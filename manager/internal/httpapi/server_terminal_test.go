@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
 	"github.com/tangxusc/block-play-table/manager/internal/app"
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/store"
@@ -133,9 +134,7 @@ func TestTaskTerminalRejectsArchivedTask(t *testing.T) {
 		return time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
 	}))
 	task := createTerminalTask(t, service, 43210, "/tmp/worker/task-worktree")
-	if _, err := service.ApplyWorkerTaskCompleted(context.Background(), "completed-"+task.ID, task.ID, "done", "session-1"); err != nil {
-		t.Fatal(err)
-	}
+	applyHTTPAPITestA2AEvent(t, context.Background(), service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCompleted, &a2aext.RuntimeInfo{AgentSessionID: "session-1"}, map[string]any{"status": string(a2aext.TerminalCompleted), "result": "done"})
 	if _, err := service.ArchiveTask(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -195,14 +194,10 @@ func createTerminalTask(t *testing.T, service *app.Service, terminalPort int, wo
 	if worktree == "" {
 		return task
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err = service.ApplyWorkerTaskStarted(ctx, "started-"+task.ID, task.ID, worktree)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return task
+	return applyHTTPAPITestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: worktree}, map[string]any{})
 }
 
 func connectFRPTunnel(t *testing.T, managerURL, workerID, workerName string) {

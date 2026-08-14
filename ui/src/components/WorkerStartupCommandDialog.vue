@@ -10,7 +10,6 @@ interface WorkerFormInput {
   workerId: string;
   workerName: string;
   workDir: string;
-  supportedAgents: string[];
   projectBindingMode: string;
   boundProjectIds: string[];
 }
@@ -39,7 +38,6 @@ const commands = computed(() =>
     workerId: props.workerInput.workerId,
     workerName: props.workerInput.workerName,
     workDir: props.workerInput.workDir,
-    supportedAgents: props.workerInput.supportedAgents,
     projectBindingMode: props.workerInput.projectBindingMode,
     boundProjectIds: props.workerInput.boundProjectIds,
   }),

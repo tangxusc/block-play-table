@@ -1,8 +1,8 @@
+// Package client 提供 Worker 到单个 Manager 的注册、心跳和 FRP 控制连接。
 package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -16,12 +16,12 @@ import (
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/frp"
 	"github.com/tangxusc/block-play-table/pkg/protocol"
-	"github.com/tangxusc/block-play-table/worker/internal/executor"
 )
 
+// Config 描述 Worker 控制连接所需的 Manager 地址、身份、能力和心跳配置。
+// 创建 Client 时传入该配置；ManagerWSURL 和 WorkerID 由调用方负责提供。
 type Config struct {
 	ManagerWSURL    string
-	ManagerWSURLs   []string
 	WorkerID        string
 	WorkerToken     string
 	Name            string
@@ -33,19 +33,23 @@ type Config struct {
 	Capabilities    map[string]string
 	HeartbeatEvery  time.Duration
 	Logger          *slog.Logger
-	ReviewRecorder  executor.ReviewRecorder
 }
 
+// Client 负责维护一个 Worker 与一个 Manager 之间的控制连接和 FRP 隧道。
+// Client 可通过 New 创建，并由 Run 阻塞运行到上下文取消或发生不可恢复错误。
 type Client struct {
-	config   Config
-	executor *executor.Executor
-	logger   *slog.Logger
+	config Config
+	logger *slog.Logger
 
 	mu      sync.Mutex
 	writeMu sync.Mutex
 	conn    *websocket.Conn
 }
 
+// New 创建单 Manager Worker 客户端。
+// 参数：config 提供连接地址、Worker 身份、能力和心跳周期。
+// 返回：已应用默认值的 Client；该函数不会建立网络连接。
+// 错误：本函数不返回错误。
 func New(config Config) *Client {
 	if config.HeartbeatEvery == 0 {
 		config.HeartbeatEvery = 10 * time.Second
@@ -59,27 +63,17 @@ func New(config Config) *Client {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
-	c := &Client{config: config, logger: config.Logger}
-	c.executor = executor.NewExecutor(executor.Config{
-		WorkerID:       config.WorkerID,
-		WorkDir:        config.WorkDir,
-		ReviewRecorder: config.ReviewRecorder,
-		Reporter: executor.ReporterFunc(func(ctx context.Context, event protocol.WorkerEvent) error {
-			return c.SendWorkerEvent(ctx, event)
-		}),
-	})
-	return c
+	return &Client{config: config, logger: config.Logger}
 }
 
+// Run 持续维护 Worker 注册、心跳和 FRP 连接。
+// 参数：ctx 控制客户端完整生命周期。
+// 返回：连接正常结束时返回 nil。
+// 错误：context 取消、Manager 地址校验或连接循环不可恢复时返回错误。
 func (c *Client) Run(ctx context.Context) error {
-	managerURLs := c.managerWSURLs()
-	if len(managerURLs) == 0 {
+	if strings.TrimSpace(c.config.ManagerWSURL) == "" {
 		return errors.New("manager websocket url is required")
 	}
-	if len(managerURLs) > 1 {
-		return c.runMultipleManagers(ctx, managerURLs)
-	}
-	c.config.ManagerWSURL = managerURLs[0]
 	return c.runSingleManager(ctx)
 }
 
@@ -97,32 +91,6 @@ func (c *Client) runSingleManager(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-func (c *Client) runMultipleManagers(ctx context.Context, managerURLs []string) error {
-	errCh := make(chan error, len(managerURLs))
-	for _, managerURL := range managerURLs {
-		childConfig := c.config
-		childConfig.ManagerWSURL = managerURL
-		childConfig.ManagerWSURLs = nil
-		if c.logger != nil {
-			childConfig.Logger = c.logger.With("manager", managerURL)
-		}
-		go func() {
-			errCh <- New(childConfig).Run(ctx)
-		}()
-	}
-	for i := 0; i < len(managerURLs); i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case err := <-errCh:
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (c *Client) connectAndServe(ctx context.Context) error {
@@ -266,80 +234,12 @@ func (c *Client) readLoop(ctx context.Context) error {
 			return err
 		}
 		switch envelope.Type {
-		case protocol.MessageTaskStart:
-			var payload protocol.TaskStartPayload
-			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-				return err
-			}
-			if err := c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskAccepted, WorkerID: c.config.WorkerID, TaskID: envelope.TaskID, Timestamp: time.Now().UTC()}); err != nil {
-				return err
-			}
-			go func() {
-				if err := c.executor.Execute(ctx, payload); err != nil {
-					c.logger.Warn("task execution finished with error", "taskId", payload.Task.ID, "error", err)
-				}
-			}()
-		case protocol.MessageTaskContinue:
-			var payload protocol.TaskContinuePayload
-			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-				return err
-			}
-			if err := c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageTaskAccepted, WorkerID: c.config.WorkerID, TaskID: envelope.TaskID, Timestamp: time.Now().UTC()}); err != nil {
-				return err
-			}
-			go func() {
-				if err := c.executor.Continue(ctx, payload); err != nil {
-					c.logger.Warn("task continuation finished with error", "taskId", payload.Task.ID, "error", err)
-				}
-			}()
-		case protocol.MessageTaskInterrupt:
-			c.executor.Interrupt(envelope.TaskID)
-		case protocol.MessageTaskInteractionResponse:
-			var payload protocol.TaskInteractionResponsePayload
-			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-				return err
-			}
-			if payload.TaskID == "" {
-				payload.TaskID = envelope.TaskID
-			}
-			if err := c.executor.HandleTaskInteractionResponse(ctx, payload); err != nil {
-				c.logger.Warn("task interaction response was not routed", "taskId", payload.TaskID, "interactionId", payload.InteractionID, "error", err)
-			}
 		case protocol.MessagePing:
-			_ = c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageWorkerHeartbeat, WorkerID: c.config.WorkerID, Timestamp: time.Now().UTC()})
-		}
-	}
-}
-
-func (c *Client) SendWorkerEvent(ctx context.Context, event protocol.WorkerEvent) error {
-	if event.MessageID == "" {
-		event.MessageID = "msg_" + uuid.NewString()
-	}
-	if event.WorkerID == "" {
-		event.WorkerID = c.config.WorkerID
-	}
-	return c.send(ctx, protocol.Envelope{
-		MessageID: event.MessageID,
-		Type:      event.Type,
-		WorkerID:  event.WorkerID,
-		TaskID:    event.TaskID,
-		Timestamp: time.Now().UTC(),
-		Payload:   event,
-	})
-}
-
-func (c *Client) managerWSURLs() []string {
-	if len(c.config.ManagerWSURLs) > 0 {
-		out := make([]string, 0, len(c.config.ManagerWSURLs))
-		for _, item := range c.config.ManagerWSURLs {
-			item = strings.TrimSpace(item)
-			if item != "" {
-				out = append(out, item)
+			if err := c.send(ctx, protocol.Envelope{MessageID: "msg_" + uuid.NewString(), Type: protocol.MessageWorkerHeartbeat, WorkerID: c.config.WorkerID, Timestamp: time.Now().UTC()}); err != nil {
+				return err
 			}
 		}
-		return out
 	}
-	return ParseManagerWSURLs("", c.config.ManagerWSURL)
 }
 
 func (c *Client) send(ctx context.Context, envelope protocol.Envelope) error {
@@ -376,24 +276,12 @@ type rawEnvelope struct {
 	Type      protocol.MessageType `json:"type"`
 	WorkerID  string               `json:"workerId,omitempty"`
 	TaskID    string               `json:"taskId,omitempty"`
-	Payload   json.RawMessage      `json:"payload,omitempty"`
 }
 
-func ParseAgents(value string) []domain.AgentType {
-	var agents []domain.AgentType
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		agent := domain.AgentType(item)
-		if agent.Valid() {
-			agents = append(agents, agent)
-		}
-	}
-	return agents
-}
-
+// ParseProjectBindingMode 解析 Worker 的项目绑定模式。
+// 参数：value 是项目绑定模式文本。
+// 返回：显式的指定项目模式，其他输入返回全部项目模式。
+// 错误：本函数不返回错误。
 func ParseProjectBindingMode(value string) domain.WorkerProjectBindingMode {
 	switch domain.WorkerProjectBindingMode(strings.TrimSpace(value)) {
 	case domain.WorkerSpecificProjects:
@@ -403,6 +291,10 @@ func ParseProjectBindingMode(value string) domain.WorkerProjectBindingMode {
 	}
 }
 
+// ParseCSV 解析逗号分隔文本并丢弃空白项。
+// 参数：value 是配置文件或环境变量中的逗号分隔文本。
+// 返回：保持输入顺序的非空字符串。
+// 错误：本函数不返回错误。
 func ParseCSV(value string) []string {
 	var items []string
 	for _, item := range strings.Split(value, ",") {
@@ -412,11 +304,4 @@ func ParseCSV(value string) []string {
 		}
 	}
 	return items
-}
-
-func ParseManagerWSURLs(primary, legacy string) []string {
-	if strings.TrimSpace(primary) != "" {
-		return ParseCSV(primary)
-	}
-	return ParseCSV(legacy)
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/tangxusc/block-play-table/pkg/domain"
 )
 
-func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
+func TestMemoryStoreListsFiltersAndSettings(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore()
 	now := time.Now().UTC()
@@ -61,18 +61,6 @@ func TestMemoryStoreListsFiltersSettingsAndMessageDedup(t *testing.T) {
 	}
 	if loaded.WorkerHeartbeat != "45s" {
 		t.Fatalf("settings = %+v", loaded)
-	}
-	first, err := s.MarkMessageProcessed(ctx, "msg-1")
-	if err != nil || !first {
-		t.Fatalf("first mark = %v, %v", first, err)
-	}
-	second, err := s.MarkMessageProcessed(ctx, "msg-1")
-	if err != nil || second {
-		t.Fatalf("second mark = %v, %v", second, err)
-	}
-	empty, err := s.MarkMessageProcessed(ctx, "")
-	if err != nil || !empty {
-		t.Fatalf("empty mark = %v, %v", empty, err)
 	}
 }
 

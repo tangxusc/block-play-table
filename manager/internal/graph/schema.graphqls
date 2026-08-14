@@ -1,4 +1,5 @@
 scalar Time
+scalar Int64
 
 enum AgentType {
   codex
@@ -236,6 +237,25 @@ type TaskLog {
   stream: String!
   content: String!
   createdAt: Time!
+}
+
+type TaskA2AExecution {
+  id: ID!
+  executionId: ID!
+  attempt: Int!
+  turn: Int!
+  operation: String!
+  workerId: ID!
+  a2aTaskId: ID
+  contextId: ID
+  remoteStatus: String!
+  lastSequence: Int64!
+  lastSyncedAt: Time
+  errorCode: String
+  errorMessage: String
+  retryable: Boolean!
+  createdAt: Time!
+  completedAt: Time
 }
 
 type TaskInteraction {
@@ -669,6 +689,7 @@ type Query {
   domainEventsConnection(filter: DomainEventFilter, sort: DomainEventSortInput, aggregateId: ID, aggregateType: String, eventType: String, page: PageInput): DomainEventConnection!
   outboxMessages(includePublished: Boolean): [OutboxMessage!]!
   taskLogs(taskId: ID!): [TaskLog!]!
+  taskA2AExecutions(taskId: ID!): [TaskA2AExecution!]!
   taskConversations(taskId: ID!): [ConversationMessage!]!
   taskInteractions(taskId: ID!, status: TaskInteractionStatus): [TaskInteraction!]!
   taskGitDiff(taskId: ID!, scope: TaskGitDiffScope!, staged: Boolean): TaskGitDiff!

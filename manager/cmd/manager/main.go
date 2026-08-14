@@ -31,10 +31,12 @@ func main() {
 	defer closeStore()
 
 	service := app.NewService(st, employeeProviderOption()...)
-	monitorCtx, stopMonitor := context.WithCancel(context.Background())
-	defer stopMonitor()
-	reconciler := app.NewReconciler(service, heartbeatTimeout, heartbeatTimeout/3, app.WithReconcilerLogger(logger))
-	go reconciler.Run(monitorCtx)
+	if migrated, err := service.MigrateLegacyA2ATasks(ctx); err != nil {
+		logger.Error("manager A2A legacy task migration failed", "error", err)
+		os.Exit(1)
+	} else if migrated > 0 {
+		logger.Info("manager A2A legacy task migration completed", "tasks", migrated)
+	}
 
 	apiServer := httpapi.NewServer(
 		service,
@@ -42,6 +44,16 @@ func main() {
 		httpapi.WithTrustModeUserID(getenv("TRUST_MODE_USER_ID", "trust-mode-user-id")),
 		httpapi.WithWorkerHeartbeatTimeout(heartbeatTimeout),
 	)
+	monitorCtx, stopMonitor := context.WithCancel(context.Background())
+	defer stopMonitor()
+	reconciler := app.NewReconciler(
+		service,
+		heartbeatTimeout,
+		heartbeatTimeout/3,
+		app.WithReconcilerLogger(logger),
+		app.WithA2ATransport(apiServer.A2ATransport()),
+	)
+	go reconciler.Run(monitorCtx)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           apiServer.Handler(),

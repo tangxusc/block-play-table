@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tangxusc/block-play-table/pkg/a2aext"
 	"github.com/tangxusc/block-play-table/pkg/domain"
 	"github.com/tangxusc/block-play-table/pkg/store"
 )
@@ -103,21 +104,14 @@ func TestServiceDesignCRUDFilteringAndSettings(t *testing.T) {
 	if _, err := service.UpdateWorker(ctx, RegisterWorkerInput{ID: worker.ID, Name: "W3", SupportedAgents: []domain.AgentType{domain.AgentCodex}, WorkDir: "/tmp", BindingMode: domain.WorkerSpecificProjects, BoundProjectIDs: []string{project.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskAccepted(ctx, "accepted-1", task.ID); err != nil {
-		t.Fatalf("ApplyWorkerTaskAccepted returned error: %v", err)
-	}
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-design", task.ID, "/tmp/worktree"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ApplyWorkerWaitingInput(ctx, "waiting-design", task.ID, "need input"); err != nil {
-		t.Fatalf("ApplyWorkerWaitingInput returned error: %v", err)
-	}
-	if _, err := service.ApplyWorkerTaskFailed(ctx, "failed-design", task.ID, "boom"); err != nil {
-		t.Fatal(err)
-	}
+	bindTestA2ARound(t, ctx, service, task.ID)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionAccepted, domain.TaskA2ARemoteStatusSubmitted, nil, map[string]any{})
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
+	applyTestA2AStatus(t, ctx, service, task.ID, domain.TaskA2ARemoteStatusInputRequired)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusFailed, nil, map[string]any{"status": string(a2aext.TerminalFailed), "message": "boom"})
 	if retried, err := service.RetryTask(ctx, task.ID); err != nil || retried.Status != domain.TaskCreated {
 		t.Fatalf("RetryTask = %+v, %v", retried, err)
 	}
@@ -244,7 +238,7 @@ func TestServiceDesignEdgeBranches(t *testing.T) {
 	if _, err := service.AssignWorker(ctx, blocker.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.StartTask(ctx, blocker.ID); err != nil {
+	if _, err := service.StartTask(ctx, blocker.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.DeleteWorker(ctx, worker.ID); !errors.Is(err, domain.ErrConflict) {
@@ -256,20 +250,16 @@ func TestServiceDesignEdgeBranches(t *testing.T) {
 	if tasks, total, err := service.TasksFiltered(ctx, TaskFilter{Status: domain.TaskAssigned, WorkerID: worker.ID}, PageInput{Offset: 99}); err != nil || total != 1 || len(tasks) != 0 {
 		t.Fatalf("TasksFiltered offset = len %d total %d err %v", len(tasks), total, err)
 	}
-	if _, _, err := service.StartTask(ctx, task.ID); err != nil {
+	if _, err := service.StartTask(ctx, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyWorkerTaskStarted(ctx, "started-edge", task.ID, "/tmp/worktree"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ApplyWorkerConversationWithMetadata(ctx, "conv-edge", task.ID, "assistant", "hello", map[string]string{"tool": "codex"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ApplyWorkerTaskResult(ctx, "result-edge", task.ID, "partial"); err != nil {
-		t.Fatal(err)
-	}
-	if interrupted, err := service.ApplyWorkerTaskInterrupted(ctx, "interrupted-edge", task.ID, "stopped"); err != nil || interrupted.Status != domain.TaskInterrupted {
-		t.Fatalf("ApplyWorkerTaskInterrupted = %+v, %v", interrupted, err)
+	bindTestA2ARound(t, ctx, service, task.ID)
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventWorkspaceReady, domain.TaskA2ARemoteStatusWorking, &a2aext.RuntimeInfo{WorktreePath: "/tmp/worktree"}, map[string]any{})
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventConversationMessage, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"role": "assistant", "content": "hello"})
+	applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventResultUpdated, domain.TaskA2ARemoteStatusWorking, nil, map[string]any{"result": "partial"})
+	interrupted := applyTestA2AEvent(t, ctx, service, task.ID, a2aext.EventExecutionTerminal, domain.TaskA2ARemoteStatusCanceled, nil, map[string]any{"status": string(a2aext.TerminalCanceled), "result": "stopped"})
+	if interrupted.Status != domain.TaskInterrupted {
+		t.Fatalf("A2A interrupted task = %+v", interrupted)
 	}
 	if tasks, total, err := service.TasksFiltered(ctx, TaskFilter{IncludeArchived: true}, PageInput{}); err != nil || total == 0 || len(tasks) == 0 {
 		t.Fatalf("TasksFiltered include archived = len %d total %d err %v", len(tasks), total, err)

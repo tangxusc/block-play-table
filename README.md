@@ -2,14 +2,14 @@
 
 Block Play Table is a trusted-mode task orchestration prototype for AI agent work. It includes:
 
-- Go Manager service with gqlgen GraphQL API, Worker WebSocket gateway, DDD-style domain models, domain events, and in-memory persistence.
-- Go Worker service that registers with Manager, sends heartbeat messages, creates task worktrees, runs task pre/post commands, and adapts Codex/Claude non-interactive CLIs.
+- Go Manager service with gqlgen GraphQL API, an A2A task control plane, DDD-style domain models, domain events, and SQLite/PostgreSQL persistence.
+- Go Worker service that registers with one Manager, exposes a loopback A2A JSON-RPC/SSE endpoint through FRP, creates task worktrees, and adapts Codex/Claude CLIs.
 - Vue 3 + Ant Design Vue UI for tasks, Kanban/list/calendar/archived board views, projects, workers, and settings.
 - Dockerfiles, SQL schema, Go e2e tests, browser e2e tests, and coverage gates.
 
 ## Trusted Mode
 
-Manager and UI must run on a trusted network. When `WORKER_TOKEN` is set on Manager, the same fixed token protects Manager user-facing endpoints (`/graphql`, `/subscriptions`, `/terminal/**`, and `/proxy/**`) and Worker WebSocket/FRP connections. Browser users enter the token once per tab session; Workers send it as the existing Worker token. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, the task terminal endpoint opens a real shell in the task worktree on the Worker, and the task Review API can read diffs and stage, unstage, discard, or restore changes inside the task worktree, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
+Manager and UI must run on a trusted network. When `WORKER_TOKEN` is set on Manager, the same fixed token protects Manager user-facing endpoints (`/graphql`, `/subscriptions`, `/terminal/**`, and `/proxy/**`), Worker registration/heartbeat, the FRP tunnel, and Worker A2A requests. Browser users enter the token once per tab session; Manager sends it as a Bearer token when calling the Worker A2A endpoint through FRP. The `/proxy/**` endpoint can reach HTTP services on Worker-local or Worker-network `host:port` targets, the task terminal endpoint opens a real shell in the task worktree on the Worker, and the task Review API can read diffs and stage, unstage, discard, or restore changes inside the task worktree, so expose Manager only to trusted callers. The reserved roles are `Admin`, `Developer`, and `Viewer`, but no runtime permission checks are enforced yet.
 
 See `docs/security-trusted-mode.md`.
 
@@ -42,22 +42,12 @@ MANAGER_WS_URL=ws://localhost:8080/worker/ws \
 WORKER_ID=worker-local \
 WORKER_NAME=local-worker \
 WORKER_WORK_DIR=./worker-data \
-WORKER_SUPPORTED_AGENTS=codex,claude \
-WORKER_TOKEN=dev-worker-token \
 go run ./worker/cmd/worker
 ```
 
-If Manager is already running, the Worker can also be started directly with the same command above. `MANAGER_WS_URL` points to the running Manager, `WORKER_WORK_DIR` is the local directory where task worktrees are created, and `WORKER_TOKEN` must match Manager when Manager was started with a token.
+If Manager is already running, the Worker can also be started directly with the same command above. `MANAGER_WS_URL` is used only for registration, heartbeat, capability discovery, and deriving the FRP URL; task commands do not travel over that WebSocket. `WORKER_WORK_DIR` is the local directory where task worktrees and the Worker A2A SQLite store are created. Every Worker probes, publishes, and registers both Codex and Claude adapters; both CLIs must be available before the Worker becomes ready. Configure `WORKER_TOKEN` identically on Manager and Worker, or leave it empty on both for local compatibility; a mismatched value prevents Manager from authenticating to the Worker's A2A endpoint. A Worker process belongs to exactly one Manager; run separate Worker processes with separate data directories when multiple Managers need execution capacity.
 
-Workers can connect to multiple Managers at the same time by using comma-separated URLs:
-
-```bash
-MANAGER_WS_URLS=ws://manager-a:8080/worker/ws,ws://manager-b:8080/worker/ws \
-WORKER_ID=worker-local \
-WORKER_NAME=local-worker \
-WORKER_WORK_DIR=./worker-data \
-go run ./worker/cmd/worker
-```
+Worker A2A defaults require no manual port allocation: `WORKER_A2A_HOST` defaults to loopback `127.0.0.1`, `WORKER_A2A_PORT` defaults to `0` for a dynamic port, and `WORKER_A2A_DB_PATH` defaults to `<WORKER_WORK_DIR>/a2a.db`. Non-loopback A2A hosts are rejected because Manager must access this service only through the authenticated FRP tunnel.
 
 To require Manager access and Worker connection token checks, set the same token for Manager and Worker:
 
@@ -81,6 +71,8 @@ Manager endpoints:
 - `GET /terminal/tasks/{taskID}/ws`
 - `/proxy/**`
 - `GET /subscriptions`
+
+`/worker/ws` carries Worker registration, heartbeat, and capability discovery only. Manager persists an A2A dispatch intent before network I/O, resolves the Worker's Agent Card, then uses the official A2A SDK through `/worker/frp` to call the Worker's loopback `/a2a` endpoint. `START`, `RETRY`, and `CONTINUE` create independently traceable A2A Task rounds; interaction replies target the existing A2A Task; interruption uses `CancelTask`. Task detail exposes those rounds and their remote status. The required execution extension is published at <https://tangxusc.github.io/block-play-table/a2a/extensions/execution/v1>; the complete contract is documented in [`docs/a2a-task-protocol.md`](docs/a2a-task-protocol.md).
 
 When `WORKER_TOKEN` is set, user-facing Manager requests must include the token as `Authorization: Bearer <token>`, `X-Manager-Token: <token>`, or a `token` query parameter. `/healthz`, `/readyz`, CORS `OPTIONS`, and `/auth/status` stay open for readiness checks and bootstrapping.
 
@@ -112,7 +104,7 @@ Supported fields are typed by Agent instead of free-form JSON:
 - Codex: `model`, `reasoningEffort`, `sandboxMode`, `approvalPolicy`, `fullAuto`, and `bypassApprovalsAndSandbox`.
 - Claude: `model`, `effort`, and `permissionMode`.
 
-Default empty config keeps the existing CLI behavior for Claude, which runs `claude -p --output-format=stream-json --verbose ...` and maps configured values to `--model`, `--effort`, and `--permission-mode`. Codex tasks run through `codex app-server --listen stdio://`; configured values are passed into the app-server turn as model, reasoning, sandbox, approval, and bypass options so live command/file/permission approvals can use the task interaction channel.
+Default empty config keeps the existing CLI behavior for Claude, which runs `claude -p --output-format=stream-json --verbose ...` and maps configured values to `--model`, `--effort`, and `--permission-mode`. Codex tasks run through `codex app-server --listen stdio://`; configured values are passed into the app-server turn as model, reasoning, sandbox, approval, and bypass options so live command/file/permission approvals can use the task interaction channel. The adapter always sets app-server `approvalsReviewer=user` for thread start, resume, and turn start, ensuring a machine-local `auto_review` setting cannot consume approvals that belong to the Manager interaction workflow.
 
 ## Local UI And Full Stack
 
@@ -187,7 +179,6 @@ docker run --rm --name bpt-worker \
   -e WORKER_ID=worker-local \
   -e WORKER_NAME=local-worker \
   -e WORKER_WORK_DIR=/worker-data \
-  -e WORKER_SUPPORTED_AGENTS=codex,claude \
   -e WORKER_TOKEN=dev-worker-token \
   ghcr.io/tangxusc/block-play-table-worker:latest
 ```
@@ -214,7 +205,7 @@ npm run typecheck
 npm run build
 ```
 
-The Go coverage gate uses cross-package coverage over Manager internals, shared packages, and Worker internals and fails below 80%.
+The coverage gate has three independent 80% checks: Go statement coverage after filtering only files with the standard `Code generated ... DO NOT EDIT.` marker, gobco true/false branch coverage over the same hand-written production files, and Vue Istanbul statement/branch/function/line coverage. `make fuzz` discovers and runs every Go `Fuzz*` target. Generated GraphQL files are excluded by file, while hand-written files in the same package remain in the denominator.
 
 Playwright UI smoke tests are in `e2e/` and expect the local stack to be running:
 
@@ -229,8 +220,8 @@ make stop-local
 
 The repository defines two workflows:
 
-- `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs `make test`, `make coverage`, `make build`, `make ui-typecheck`, `make ui-build`, and `make docker-build`. It intentionally does not run Playwright, `make run-local`, or `make stop-local`.
-- `Deploy UI to GitHub Pages` runs on `main` updates that affect the UI package and on manual dispatch. It builds the static UI from `ui/dist` and publishes it through GitHub Pages.
+- `CI` runs on pull requests, pushes to `main`, and manual dispatch. It runs Go/UI tests, statement and branch coverage, fuzzing, A2A extension validation, builds, Docker builds, and the Go and Playwright end-to-end gates.
+- `Deploy UI to GitHub Pages` runs on `main` updates that affect the UI or A2A extension resources and on manual dispatch. It publishes the static UI plus the stable execution extension URI from `docs/a2a/extensions/`.
 - `Real Agent Release Gate` runs on manual dispatch and `v*` tags. It requires a self-hosted Linux runner labeled `real-agent` with Go, Node.js, npm, bash, curl, python3, Codex CLI, and Claude CLI installed and authenticated. The workflow runs `npm run e2e:real-agents`.
 
 When `CI` passes on `main`, it publishes Docker images to GHCR:
@@ -248,9 +239,9 @@ Real Agent E2E is a release gate and must cover both Codex and Claude. The Worke
 - Codex: `codex app-server --listen stdio://`
 - Claude: `claude -p`
 
-Codex tasks use the app-server JSON-RPC protocol so command, file, permission, and user-input requests can be surfaced in the task detail UI. Claude tasks inspect stream-json `permission_denials` and surface the same `TaskInteraction` workflow; after approval the Worker resumes the same Claude session with the derived `--allowedTools` value. The Manager persists pending `TaskInteraction` records, moves the task to `WAITING_INPUT`, and sends the user's approve/deny/answer decision back to the same Worker before the task resumes.
+Codex tasks use the app-server JSON-RPC protocol so command, file, permission, and user-input requests can be surfaced in the task detail UI. The Worker forces `approvalsReviewer=user` on every Codex thread/turn request so local auto-review configuration cannot bypass Manager. Claude tasks inspect both streaming `system.permission_denied` and final `result.permission_denials` events, correlate them with the originating tool input, and surface the same `TaskInteraction` workflow; after approval the Worker resumes the same Claude session with the derived `--allowedTools` value. The Manager persists pending `TaskInteraction` records, moves the task to `WAITING_INPUT`, and sends the user's approve/deny/answer decision back to the same Worker before the task resumes.
 
-The helper script checks both CLIs and starts Manager/Worker in trusted mode. After it starts, create and verify one fixed `agentType=codex` task and one fixed `agentType=claude` task through UI, GraphQL, or an automated API flow. See [`docs/e2e-testing.md`](docs/e2e-testing.md) for the full acceptance criteria.
+The helper script checks both CLIs, builds temporary Manager/Worker binaries, and starts them in trusted mode on `127.0.0.1:18081` by default so the local UI can remain on `18080`. It creates and verifies one fixed `agentType=codex` task and one fixed `agentType=claude` task through an automated API flow. See [`docs/e2e-testing.md`](docs/e2e-testing.md) for the full acceptance criteria.
 By default the script passes non-empty `agentConfig` without model names; set `REAL_AGENT_CODEX_MODEL` or `REAL_AGENT_CLAUDE_MODEL` to verify explicit model CLI arguments in your environment.
 
 ```bash

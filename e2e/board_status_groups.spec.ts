@@ -1,15 +1,15 @@
 import { expect, test } from "@playwright/test";
-import WebSocket from "ws";
+
+import {
+  e2eGitURL,
+  fakeAgentPrompt,
+  startFakeA2AWorker,
+} from "./support/fake_a2a_worker";
 
 const managerGraphQL =
   process.env.BPT_MANAGER_GRAPHQL_URL || "http://localhost:8080/graphql";
 const managerBaseURL =
   process.env.BPT_MANAGER_URL || managerGraphQL.replace(/\/graphql$/, "");
-const managerWorkerWs =
-  process.env.BPT_MANAGER_WS_URL ||
-  managerGraphQL.replace(/^http/, "ws").replace(/\/graphql$/, "/worker/ws");
-const managerWorkerToken =
-  process.env.BPT_MANAGER_WS_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
 const managerAccessToken =
   process.env.BPT_MANAGER_TOKEN || process.env.WORKER_TOKEN || "dev-worker-token";
 
@@ -53,6 +53,13 @@ function taskLocator(page, title: string) {
   return page.getByRole("group", { name });
 }
 
+function taskInColumn(page, columnTitle: string, taskTitle: string) {
+  const column = page.locator(".board-column").filter({
+    has: page.locator(".board-column-header", { hasText: columnTitle }),
+  });
+  return column.getByRole("group", { name: new RegExp(taskTitle) });
+}
+
 async function openVueApp(page) {
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120000 });
   const state = await page
@@ -68,85 +75,6 @@ async function openVueApp(page) {
     await page.getByRole("button", { name: "Add manager" }).click();
   }
   await expect(page.locator("#app[data-ready='true']")).toBeVisible({ timeout: 120000 });
-}
-
-function connectWorkerUntilStarted(
-  workerId: string,
-  taskId: string,
-  options: { complete?: boolean } = {},
-) {
-  const url = new URL(managerWorkerWs);
-  url.searchParams.set("worker_id", workerId);
-  if (managerWorkerToken) {
-    url.searchParams.set("token", managerWorkerToken);
-  }
-
-  const ws = new WebSocket(url.toString());
-  const now = () => new Date().toISOString();
-  const send = (
-    messageId: string,
-    type: string,
-    payload: Record<string, unknown> = {},
-  ) => {
-    ws.send(
-      JSON.stringify({
-        messageId,
-        type,
-        workerId,
-        taskId,
-        timestamp: now(),
-        payload,
-      }),
-    );
-  };
-
-  const ready = new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener(
-      "error",
-      () => reject(new Error("worker websocket failed")),
-      { once: true },
-    );
-  });
-  const started = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error("timed out waiting for TASK_START"));
-    }, 5000);
-    ws.addEventListener("message", (message) => {
-      const envelope = JSON.parse(String(message.data));
-      if (envelope.type !== "TASK_START") {
-        return;
-      }
-      send(`accepted-${taskId}`, "TASK_ACCEPTED");
-      send(`started-${taskId}`, "TASK_STARTED", {
-        taskId,
-        content: "/tmp/e2e-running-worktree",
-      });
-      if (options.complete) {
-        send(`completed-${taskId}`, "TASK_COMPLETED", {
-          taskId,
-          result: "board group completed",
-        });
-      }
-      clearTimeout(timeout);
-      resolve();
-    });
-    ws.addEventListener(
-      "error",
-      () => {
-        clearTimeout(timeout);
-        reject(new Error("worker websocket failed"));
-      },
-      { once: true },
-    );
-  });
-
-  return {
-    ready,
-    started,
-    close: () => ws.close(),
-  };
 }
 
 test("board scrum groups task statuses into four visual columns", async ({
@@ -167,7 +95,7 @@ test("board scrum groups task statuses into four visual columns", async ({
     {
       input: {
         name: projectName,
-        gitUrl: "e2e-fixture",
+        gitUrl: e2eGitURL(),
         defaultBranch: "main",
         worktreeNamePrefix: "board-groups",
       },
@@ -254,6 +182,7 @@ test("board scrum groups task statuses into four visual columns", async ({
     {
       input: {
         title: `Board Groups Running ${suffix}`,
+        description: fakeAgentPrompt("board group running", { hold: true }),
         projectId: project.id,
         workerId: runningWorkerId,
         agentType: "codex",
@@ -268,6 +197,9 @@ test("board scrum groups task statuses into four visual columns", async ({
     {
       input: {
         title: `Board Groups Done ${suffix}`,
+        description: fakeAgentPrompt("board group completed", {
+          approval: true,
+        }),
         projectId: project.id,
         workerId: doneWorkerId,
         agentType: "codex",
@@ -294,15 +226,20 @@ test("board scrum groups task statuses into four visual columns", async ({
     { taskId: completedBucketTask.createTask.id },
   );
 
-  const workerSocket = connectWorkerUntilStarted(
-    runningWorkerId,
-    runningTask.createTask.id,
-  );
-  const doneWorkerSocket = connectWorkerUntilStarted(
-    doneWorkerId,
-    doneTask.createTask.id,
-    { complete: true },
-  );
+  const workerSocket = startFakeA2AWorker({
+    workerId: runningWorkerId,
+    workerName: `${workerName} Running`,
+    taskId: runningTask.createTask.id,
+    boundProjectIds: [project.id],
+    expectCompletion: false,
+  });
+  const doneWorkerSocket = startFakeA2AWorker({
+    workerId: doneWorkerId,
+    workerName: `${workerName} Done`,
+    taskId: doneTask.createTask.id,
+    boundProjectIds: [project.id],
+    expectInteraction: true,
+  });
   await workerSocket.ready;
   await doneWorkerSocket.ready;
   await graphQL(
@@ -310,19 +247,21 @@ test("board scrum groups task statuses into four visual columns", async ({
     "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status workerId } }",
     { taskId: runningTask.createTask.id },
   );
-  await graphQL(
-    request,
-    "mutation StartTask($taskId: ID!) { startTask(taskId: $taskId) { id status workerId } }",
-    { taskId: doneTask.createTask.id },
-  );
   await workerSocket.started;
-  await doneWorkerSocket.started;
 
   await expect
     .poll(async () => {
       const data = await graphQL(
         request,
-        "query BoardGroupTasks { tasks(filter: { includeArchived: true }) { nodes { title status } } }",
+        `query BoardGroupTasks($runningTaskId: ID!) {
+          tasks(filter: { includeArchived: true }) { nodes { title status } }
+          runningExecutions: taskA2AExecutions(taskId: $runningTaskId) {
+            a2aTaskId contextId remoteStatus lastSequence
+          }
+        }`,
+        {
+          runningTaskId: runningTask.createTask.id,
+        },
       );
       const tasks = data.tasks.nodes as Array<{ title: string; status: string }>;
       return {
@@ -341,19 +280,32 @@ test("board scrum groups task statuses into four visual columns", async ({
             task.title === assignedTask.createTask.title &&
             task.status === "ASSIGNED",
         ),
-        done: tasks.some(
+        transitionReady: tasks.some(
           (task) =>
             task.title === doneTask.createTask.title &&
-            task.status === "COMPLETED",
+            task.status === "ASSIGNED",
         ),
         complete: tasks.some(
           (task) =>
             task.title === completedBucketTask.createTask.title &&
             task.status === "ARCHIVED",
         ),
+        runningExecution: data.runningExecutions[0],
       };
     }, { timeout: 30000 })
-    .toEqual({ pending: true, running: true, ready: true, done: true, complete: true });
+    .toMatchObject({
+      pending: true,
+      running: true,
+      ready: true,
+      transitionReady: true,
+      complete: true,
+      runningExecution: {
+        a2aTaskId: expect.any(String),
+        contextId: expect.any(String),
+        remoteStatus: "WORKING",
+        lastSequence: expect.any(Number),
+      },
+    });
 
   await openVueApp(page);
 
@@ -363,6 +315,70 @@ test("board scrum groups task statuses into four visual columns", async ({
   for (const column of ["Backlog", "Ready", "In Progress", "Done"]) {
     await expect(page.locator(".board-column-header", { hasText: column })).toBeVisible();
   }
+
+  await fillTextField(page, boardSearch, doneTask.createTask.title);
+  await expect(taskInColumn(page, "Ready", doneTask.createTask.title)).toBeVisible();
+  await taskInColumn(page, "Ready", doneTask.createTask.title)
+    .getByRole("button")
+    .click();
+
+  const detailDialog = page.getByRole("dialog");
+  const activeDetailPane = detailDialog.locator(".ant-tabs-tabpane-active");
+  await expect(detailDialog).toBeVisible();
+  await expect(detailDialog.getByText("ASSIGNED", { exact: true }).first()).toBeVisible();
+  await detailDialog.getByRole("button", { name: "Start", exact: true }).click();
+  await doneWorkerSocket.requested;
+  await expect
+    .poll(async () => {
+      const data = await graphQL(
+        request,
+        `query WaitingExecution($taskId: ID!) {
+          taskA2AExecutions(taskId: $taskId) { remoteStatus lastSequence }
+        }`,
+        { taskId: doneTask.createTask.id },
+      );
+      return data.taskA2AExecutions[0];
+    }, { timeout: 15000 })
+    .toMatchObject({
+      remoteStatus: "INPUT_REQUIRED",
+      lastSequence: expect.any(Number),
+    });
+  await expect(
+    detailDialog.getByText("WAITING_INPUT", { exact: true }).first(),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(
+    detailDialog
+      .getByRole("region", { name: "A2A execution rounds" })
+      .getByTestId("a2a-execution-round"),
+  ).toContainText("INPUT_REQUIRED");
+  await detailDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(detailDialog).toBeHidden();
+
+  await expect(
+    taskInColumn(page, "In Progress", doneTask.createTask.title),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(taskInColumn(page, "Ready", doneTask.createTask.title)).toBeHidden();
+  await taskInColumn(page, "In Progress", doneTask.createTask.title)
+    .getByRole("button")
+    .click();
+  await expect(detailDialog.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+  await detailDialog.getByRole("button", { name: "Approve", exact: true }).click();
+  await doneWorkerSocket.completed;
+  await expect(
+    detailDialog.getByText("COMPLETED", { exact: true }).first(),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(activeDetailPane.getByText("board group completed", { exact: true })).toBeVisible();
+  await expect(
+    detailDialog
+      .getByRole("region", { name: "A2A execution rounds" })
+      .getByTestId("a2a-execution-round"),
+  ).toContainText("COMPLETED");
+  await detailDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(detailDialog).toBeHidden();
+  await expect(taskInColumn(page, "Done", doneTask.createTask.title)).toBeVisible({
+    timeout: 15000,
+  });
+
   await fillTextField(page, boardSearch, pendingTask.createTask.title);
   await expect(taskLocator(page, pendingTask.createTask.title)).toBeVisible();
 

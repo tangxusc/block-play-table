@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "ui/**"
+      - "docs/a2a/extensions/**"
+      - "scripts/validate-a2a-extension.mjs"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/pages.yml"
@@ -41,10 +43,16 @@ jobs:
       - name: Typecheck UI
         run: npm run typecheck
 
+      - name: Validate A2A extension assets
+        run: npm run validate:a2a
+
       - name: Build UI for Pages
         env:
           GITHUB_PAGES: "true"
-        run: npm run build
+        run: |
+          npm run build
+          mkdir -p ui/dist/a2a/extensions
+          cp -R docs/a2a/extensions/. ui/dist/a2a/extensions/
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

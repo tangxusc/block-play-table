@@ -524,6 +524,58 @@ select {
   box-shadow: var(--bpt-shadow-sm);
 }
 
+.a2a-rounds {
+  margin-top: 12px;
+}
+
+.a2a-rounds-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.a2a-rounds-header h3 {
+  margin: 0;
+}
+
+.a2a-rounds-table-wrap {
+  margin-top: 10px;
+  overflow-x: auto;
+}
+
+.a2a-rounds-table {
+  width: 100%;
+  min-width: 860px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.a2a-rounds-table th,
+.a2a-rounds-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--bpt-border-soft);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.a2a-rounds-table th {
+  color: #475467;
+  font-weight: 600;
+  background: #f8fafc;
+}
+
+.a2a-round-identifiers {
+  display: grid;
+  gap: 2px;
+}
+
+.a2a-round-error {
+  color: #b42318;
+}
+
 .plan-section {
   margin-top: 12px;
 }

@@ -12,7 +12,7 @@ Block Play Table 是一个面向 AI Agent 任务编排、执行和观察的平�
 | API | GraphQL |
 | GraphQL 服务端 | gqlgen |
 | Manager / Worker | Golang |
-| Manager 与 Worker 通信 | WebSocket |
+| Manager 与 Worker 通信 | A2A JSON-RPC/SSE（任务）+ WebSocket/FRP（发现与隧道） |
 | Manager 存储 | SQLite / PostgreSQL |
 
 核心模块：
@@ -68,10 +68,10 @@ Manager 是业务控制中心。
 2. 管理任务生命周期。
 3. 管理 Worker 注册、心跳、在线状态和负载状态。
 4. 选择合适 Worker 并下发任务。
-5. 接收 Worker 上报的任务事件、日志、对话和结果。
+5. 追踪 Worker A2A Task，并把标准状态和 execution v1 Artifact 投影为任务事件、日志、对话和结果。
 6. 持久化聚合状态、领域事件、任务日志和 AI 对话。
 7. 将任务变化通过 GraphQL Subscription 推送给用户界面。
-8. 通过 WebSocket 与 Worker 建立双向通信。
+8. 通过注册 WebSocket 发现 Worker，通过 FRP 调用 Worker loopback A2A 服务。
 
 #### Worker
 
@@ -82,14 +82,14 @@ Worker 是具体任务执行节点。
 1. 主动连接 Manager。
 2. 定期发送心跳。
 3. 上报自身能力，例如支持的 Agent、工作目录和系统信息。
-4. 接收 Manager 下发的任务启动、中断、取消等命令。
+4. 在 loopback A2A Server 接收标准 SendMessage、Subscribe、GetTask 和 CancelTask 请求。
 5. 根据 Project 的 Git URL 和 worktree 名称前缀创建 Git Worktree。
 6. 初始化任务环境。
 7. 注入当前 Worker 配置中的 Agent 运行时环境变量。
 8. 执行前置命令和后置命令。
 9. 启动 Codex / Claude 等 Agent。
 10. 持续读取 Agent 输出。
-11. 将日志、AI 对话、状态变化和最终结果上报给 Manager。
+11. 将日志、AI 对话、状态变化和最终结果写入 A2A Task/Artifact 流，供 Manager 订阅和恢复。
 
 ## 3. 业务模块
 
@@ -118,13 +118,14 @@ Manager 是系统核心，采用 DDD 架构。
 | 模块 | 说明 |
 | --- | --- |
 | GraphQL API | 为用户界面提供 Query、Mutation、Subscription |
-| Worker Gateway | 管理 Worker WebSocket 连接和消息收发 |
+| Worker Gateway | 管理注册/心跳与 FRP 连接，校验 Agent Card，并承载 A2A SDK transport |
+| A2A Reconciler | 领取持久化 dispatch intent，订阅/查询远端 Task，并执行幂等投影 |
 | Project Application Service | 管理项目 Git URL、默认分支、worktree 命名前缀 |
 | Task Application Service | 编排任务创建、分配、启动、中断和完成 |
 | Worker Application Service | 编排 Worker 注册、心跳、状态变更、Project 绑定和 Agent 运行时环境变量 |
 | Settings Application Service | 管理 Worker 心跳超时、安全策略等系统级配置 |
 | Domain Event Store | 持久化领域事件 |
-| Event Bus | 分发领域事件到订阅、WebSocket、异步处理器 |
+| Event Bus | 分发领域事件到 GraphQL 订阅和内部异步处理器 |
 | Repository | 屏蔽 SQLite / PostgreSQL 差异 |
 | Scheduler | 自动选择可分配 Worker，调度任务执行 |
 
@@ -175,8 +176,9 @@ Worker 的 Agent 运行时环境变量用于在启动 Codex / Claude 等 Agent �
 1. 以 `agentType` 分组保存，每个变量包含变量名、变量值、说明、是否启用、是否敏感。
 2. 敏感变量在 UI、API、日志和事件中必须脱敏展示。
 3. 编辑敏感变量时，如果新值为空，表示保留原有值。
-4. Manager 在下发 `TASK_START` 或 `TASK_CONTINUE` 时，只读取被分配 Worker 上匹配任务 Agent 类型的启用变量。
-5. Worker 合并 Manager 下发的运行时变量与本机环境变量后启动 Agent。
+4. Manager 构造 START、RETRY 或 CONTINUE 的 execution request 时，只读取被分配 Worker 上匹配任务 Agent 类型的启用变量。
+5. 运行时变量只存在于瞬态 A2A 请求和 Agent 进程环境；所有持久化 Task、Artifact、日志和错误必须脱敏。
+6. Worker 合并请求中的运行时变量与本机环境变量后启动 Agent。
 
 调度时必须同时满足 Worker 在线、支持目标 Agent、Project 绑定范围匹配；`currentTaskIds` 只做运行期记录，不限制并发分配。
 
@@ -315,7 +317,7 @@ block-play-table-task_01HR9A-04251030
 
 在当前设计中，Workspace 应被理解为 Worker 本地运行目录和任务 worktree，不作为用户侧独立管理对象。
 
-同一任务重试时，Manager 会清空任务上的旧 Worker、`worktreePath`、会话和结果；Worker 在创建新 Git worktree 前，会在本地仓库缓存中移除同一 `task/{task_id}` 分支的旧 worktree checkout，然后基于最新 base ref 重建任务 worktree。
+同一任务重试时，Manager 会清空任务上的旧 Worker、`worktreePath`、会话和结果；Worker 在创建新 Git worktree 前，会在本地仓库缓存中移除同一 `task/{task_id}` 分支的旧 worktree checkout，然后基于最新 base ref 重建任务 worktree。同一 Worker 上共享仓库缓存路径的 clone、fetch、prune、旧 worktree 清理和 `worktree add` 必须由仓库级互斥锁串行化，不同仓库仍可并行执行。
 
 ### 3.8 看板管理
 
@@ -366,8 +368,8 @@ sequenceDiagram
 
     U->>UI: 启动任务
     UI->>M: GraphQL Mutation startTask
-    M->>M: 校验状态并生成 TaskStartRequested
-    M->>W: WebSocket 下发 TASK_START
+    M->>M: 原子保存 Task、A2A round 与 dispatch intent
+    M->>W: A2A SendStreamingMessage(START)
 
     W->>W: 读取 Project Git URL 和 worktree 前缀
     W->>W: 创建 Git Worktree
@@ -377,11 +379,11 @@ sequenceDiagram
     W->>A: 启动 Codex / Claude
     A-->>W: 输出日志、对话和结果
 
-    W->>M: WebSocket 上报日志和事件
-    M->>M: 持久化日志、状态和领域事件
+    W-->>M: A2A Task 状态与 execution Artifact 流
+    M->>M: 幂等投影日志、状态和领域事件
     M-->>UI: GraphQL Subscription 推送更新
 
-    W->>M: 上报任务完成或失败
+    W-->>M: A2A Task 进入终态
     M->>M: 更新最终状态
     M-->>UI: 展示最终结果
 ```
@@ -429,23 +431,23 @@ Worker 分配支持两种模式：
 2. UI 调用 `startTask` Mutation。
 3. Manager 校验任务状态必须是 `ASSIGNED`。
 4. Manager 校验 Worker 在线、支持目标 Agent、Project 绑定范围匹配。
-5. Manager 生成 `TaskStartRequested` 领域事件。
-6. Manager 通过 WebSocket 向 Worker 发送 `TASK_START`。
-7. Worker 返回 `TASK_ACCEPTED`。
-8. Manager 将任务状态更新为 `STARTING`。
-9. Worker 开始本地任务执行。
+5. Manager 在同一事务中把任务更新为 `STARTING`，创建 A2A round 和 `PENDING` dispatch intent，并产生领域事件。
+6. A2A Reconciler 领取 intent，经 FRP 解析并校验 Worker Agent Card。
+7. Manager 使用官方 SDK 发起带 execution v1 扩展的 `SendStreamingMessage(START)`。
+8. Worker 返回 A2A Task/Context 身份和 `execution.accepted`；Manager 原子绑定 round。
+9. Worker 开始本地任务执行，Manager 持续订阅并投影 Task/Artifact 更新。
 
 ### 4.5 Worker 本地执行流程
 
 ```mermaid
 flowchart TD
-    A[Worker 接收 TASK_START] --> B[拉取任务详情]
+    A[Worker A2A Server 校验 execution request] --> B[Runtime 创建执行绑定]
     B --> C[创建 Git Worktree]
     C --> D[初始化环境]
     D --> E[执行前置命令]
     E --> F[启动 Agent]
     F --> G[读取 Agent 输出]
-    G --> H[上报日志、对话、状态]
+    G --> H[追加 execution Artifact 和 Task 状态]
     H --> I{任务是否结束}
     I -- 否 --> G
     I -- 是 --> J[执行后置命令]
@@ -454,8 +456,8 @@ flowchart TD
 
 Worker 执行步骤：
 
-1. 接收 `TASK_START`。
-2. 解析任务参数。
+1. A2A Server 验证 Bearer token、required extension、消息身份和 operation。
+2. 通过 command ID 幂等占用请求，并建立稳定的 A2A Task/Context 与 execution 绑定。
 3. 根据任务的 `projectId` 获取 Project 的 Git URL、默认分支和 worktree 名称前缀。
 4. 创建 Git Worktree。
 5. 注入当前 Worker 配置中的 Agent 运行时环境变量。
@@ -464,22 +466,20 @@ Worker 执行步骤：
 8. 根据任务 `agentConfig` 构造 Codex / Claude CLI 参数。
 9. 启动 Codex / Claude。
 10. 读取 stdout、stderr、AI 对话、工具调用和状态变化。
-11. 通过 WebSocket 上报执行事件。
+11. 将日志、会话、交互、诊断和结果按连续 sequence 追加为 execution v1 Artifact/DataPart。
 12. Agent 完成后执行后置命令。
-13. 上报 `TASK_COMPLETED` 或 `TASK_FAILED`。
+13. 将 A2A Task 更新为 `completed`、`failed`、`rejected` 或 `canceled` 终态。
 
 ### 4.6 中断任务流程
 
 1. 用户点击中断。
 2. UI 调用 `interruptTask` Mutation。
 3. Manager 校验任务状态是否允许中断。
-4. Manager 生成 `TaskInterruptRequested` 领域事件。
-5. Manager 通过 WebSocket 向 Worker 发送 `TASK_INTERRUPT`。
-6. Worker 停止 Agent 进程。
-7. Worker 清理子进程和临时资源。
-8. Worker 上报 `TASK_INTERRUPTED`。
-9. Manager 更新任务状态为 `INTERRUPTED`。
-10. UI 展示中断结果。
+4. Manager 原子保存 CANCEL intent 和 `TaskInterruptRequested` 领域事件。
+5. A2A Reconciler 对当前远端 Task 调用标准 `CancelTask`。
+6. Worker Runtime 停止 Agent 进程并清理子进程和临时资源。
+7. Worker 将 A2A Task 更新为 `canceled`，Manager 幂等投影为 `INTERRUPTED`。
+8. UI 展示中断结果和对应 A2A round。
 
 ## 5. Manager 领域模型设计
 
@@ -817,9 +817,9 @@ DomainEvent
 flowchart LR
     UI[Vue Web] -->|GraphQL Query/Mutation/Subscription| M[Manager Go + gqlgen]
     M -->|Repository| DB[(SQLite/PostgreSQL)]
-    M <-->|WebSocket| W1[Worker 1]
-    M <-->|WebSocket| W2[Worker 2]
-    M <-->|WebSocket| WN[Worker N]
+    M <-->|注册/心跳 + FRP/A2A| W1[Worker 1]
+    M <-->|注册/心跳 + FRP/A2A| W2[Worker 2]
+    M <-->|注册/心跳 + FRP/A2A| WN[Worker N]
     W1 --> A1[Codex/Claude]
     W2 --> A2[Codex/Claude]
     WN --> AN[Codex/Claude]
@@ -878,8 +878,9 @@ flowchart TD
     APP --> EVENTBUS[Event Bus]
     REPO --> DB[(SQLite/PostgreSQL)]
     EVENTBUS --> SUB[GraphQL Subscription]
-    EVENTBUS --> WS[Worker WebSocket Gateway]
-    WS --> WORKER[Worker]
+    EVENTBUS --> RECONCILER[A2A Reconciler]
+    RECONCILER --> GATEWAY[Worker FRP/A2A Transport]
+    GATEWAY --> WORKER[Worker A2A Server]
 ```
 
 关键设计：
@@ -958,14 +959,14 @@ CLI 参数映射：
 
 | Agent | 默认命令 | 非空配置映射 |
 | --- | --- | --- |
-| Codex | `codex app-server --listen stdio://` + `thread/start`/`turn/start` | `model`、`reasoningEffort`、`sandboxMode`、`approvalPolicy` 写入 app-server JSON-RPC 参数；`fullAuto` 默认映射为 `approvalPolicy=on-failure` + `sandbox=workspace-write`；`bypassApprovalsAndSandbox` 映射为 `approvalPolicy=never` + `sandbox=danger-full-access` |
+| Codex | `codex app-server --listen stdio://` + `thread/start`/`turn/start` | `model`、`reasoningEffort`、`sandboxMode`、`approvalPolicy` 写入 app-server JSON-RPC 参数；start/resume/turn 固定写入 `approvalsReviewer=user`；`fullAuto` 默认映射为 `approvalPolicy=on-failure` + `sandbox=workspace-write`；`bypassApprovalsAndSandbox` 映射为 `approvalPolicy=never` + `sandbox=danger-full-access` |
 | Claude | `claude -p --output-format=stream-json --verbose ... <prompt>` | `model -> --model`；`effort -> --effort`；`permissionMode -> --permission-mode`；用户批准 `permission_denials` 后本轮 `--resume` 追加推导出的 `--allowedTools` |
 
 空配置不追加这些参数，保持本机 CLI 默认模型、推理深度和权限行为。继续任务时使用同一 `agentConfig`，避免会话前后模型或权限漂移。
 
-Codex adapter 使用 app-server 的 server request 作为授权通道：`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 和 `item/tool/requestUserInput` 会映射成统一 `TaskInteraction`；UI 响应后再映射回 app-server 的 `accept`、`acceptForSession`、`decline`、`cancel` 或用户输入 answers。`codex exec --json` 只保留为旧测试辅助路径，不作为需要授权任务的执行通道。
+Codex adapter 使用 app-server 的 server request 作为授权通道：`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 和 `item/tool/requestUserInput` 会映射成统一 `TaskInteraction`；UI 响应后再映射回 app-server 的 `accept`、`acceptForSession`、`decline`、`cancel` 或用户输入 answers。Adapter 在新建、恢复线程及启动 turn 时都强制 `approvalsReviewer=user`，避免 Worker 主机上的 Codex `auto_review` 设置先行消费审批。`codex exec --json` 只保留为旧测试辅助路径，不作为需要授权任务的执行通道。
 
-Claude adapter 使用非交互式 `stream-json` 输出中的 `permission_denials` 作为授权通道。Worker 将 Claude 的 `Bash`、文件编辑和其他工具拒绝分别映射为 `COMMAND_APPROVAL`、`FILE_APPROVAL` 和 `PERMISSION_APPROVAL`，任务进入 `WAITING_INPUT`。当 Claude Plan 模式通过 `ExitPlanMode` 在原始 payload 中携带 Markdown `plan` 时，UI 会在任务详情 Overview 中直接展示该计划，审批流程仍沿用同一个 `TaskInteraction` 闭环。用户响应后 Worker 继续同一个 Claude `session_id`：批准时追加本次或本任务会话内的 `--allowedTools`，拒绝或取消时把用户决定作为 follow-up 消息传回 Claude。
+Claude adapter 使用非交互式 `stream-json` 输出中的流式 `system.permission_denied` 或最终 `result.permission_denials` 作为授权通道。流式拒绝会关联前序 assistant `tool_use` 的精确参数并立即结束当前 CLI 轮次，避免模型在拒绝后持续重试。Worker 将 Claude 的 `Bash`、文件编辑和其他工具拒绝分别映射为 `COMMAND_APPROVAL`、`FILE_APPROVAL` 和 `PERMISSION_APPROVAL`，任务进入 `WAITING_INPUT`。当 Claude Plan 模式通过 `ExitPlanMode` 在原始 payload 中携带 Markdown `plan` 时，UI 会在任务详情 Overview 中直接展示该计划，审批流程仍沿用同一个 `TaskInteraction` 闭环。用户响应后 Worker 继续同一个 Claude `session_id`：批准时追加本次或本任务会话内的 `--allowedTools`，拒绝或取消时把用户决定作为 follow-up 消息传回 Claude。
 
 统一 Agent 事件：
 
@@ -1278,28 +1279,25 @@ type Subscription {
 }
 ```
 
-## 9. WebSocket 协议设计
+## 9. A2A 与 Worker 连接设计
 
 ### 9.1 连接方向
 
-推荐由 Worker 主动连接 Manager。
+Worker 主动连接 Manager 的注册/心跳 WebSocket 与 FRP 隧道；Manager 不直接拨入 Worker 网络。
 
 ```text
-Worker -> Manager
+Worker -> Manager /worker/ws（注册、心跳、能力发现）
+Worker -> Manager /worker/frp（yamux 隧道）
 ```
 
 原因：
 
 1. Worker 可能部署在内网、本地机器或开发机。
-2. Manager 不需要主动访问 Worker。
+2. Manager 通过反向 FRP 隧道访问 Worker loopback 服务，不要求 Worker 暴露公网端口。
 3. 更容易穿透 NAT。
-4. Worker 可自行实现断线重连。
+4. Worker 可自行实现注册和 FRP 断线重连。
 
-Worker 同时会主动连接 Manager 的 FRP WebSocket：
-
-```text
-Worker -> Manager /worker/frp
-```
+`/worker/ws` 不承载任务命令或执行事件。Worker 注册时上报 `a2a_version`、`a2a_transport`、loopback host/port、Agent Card 路径、endpoint 路径和 required extension；Manager 必须逐项验证后才能建立 A2A client。
 
 该连接升级后不承载 JSON 消息，而是使用 yamux 多路复用字节流。Manager 收到 `/proxy/**` HTTP 请求后，根据 `worker: <Worker name>`、可选 `worker_host: <host>` 和 `worker_port: <port>` header 选择 Worker 隧道，打开一个 yamux stream，将请求转发到 Worker 可见网络中的 `http://<host>:<port>`。未提供 `worker_host` 时默认使用 Worker 本机 `127.0.0.1`。Manager 会移除 `/proxy` 前缀，并且不把 `worker`、`worker_host`、`worker_port` 这些路由 header 透传给 Worker 本地服务。FRP 同时支持 WebSocket Upgrade 的双向字节转发，用于 Worker terminal。
 
@@ -1311,102 +1309,59 @@ Workers 列表也提供 Worker terminal。UI 先请求 `GET /terminal/workers/{w
 
 Worker 默认启动本地 Review HTTP 服务并通过 `capabilities` 上报 `review_enabled=true`、`review_host=127.0.0.1` 和动态 `review_port`。Manager 不直接读取 Worker 文件系统；Task Review 的 GraphQL resolver 会校验 Task 已有 `workerId` 和 `worktreePath`、Task 未归档、Worker 在线且 Review capability 可用后，通过同一条 FRP/yamux 隧道调用 Worker 的 `/review/tasks/{taskID}/diff`、`/stage`、`/unstage`、`/discard`、`/restore` 和 `/git-command`。Worker 在本地 worktree 执行 Git diff 和 Git 变更操作，支持 `UNCOMMITTED`、`BRANCH`、`LAST_TURN` 三种范围；其中 `LAST_TURN` 来自 Executor 在 Execute/Continue 前后用临时 index 记录的 Git tree id。Manager 只持久化 turn snapshot 和 backup 元数据，完整 diff 每次从 Worker 实时读取。`discard` 在修改 worktree 前必须写入 backup patch，`restore` 通过 backup patch 恢复。`git-command` 只接受白名单命令：fetch、pull/rebase、rebase、merge base、commit staged、push task branch 和 publish；publish 默认 fast-forward 到 Task base branch，可显式选择 merge commit，不支持 force push，并在 worktree 非 clean 时拒绝执行。
 
-### 9.2 基础消息结构
+### 9.2 Agent Card 与标准操作
 
-```json
-{
-  "messageId": "msg_001",
-  "type": "TASK_START",
-  "workerId": "worker_001",
-  "taskId": "task_001",
-  "timestamp": "2026-04-25T10:00:00Z",
-  "payload": {}
-}
+Worker 在 `/.well-known/agent-card.json` 发布 A2A v1.0 Agent Card，JSON-RPC/SSE endpoint 固定为 `/a2a`。服务只监听 `127.0.0.1` 或 `::1`；Manager 通过对应 Worker 的 FRP session 访问，并把 `WORKER_TOKEN` 作为 Bearer token。Agent Card 必须声明 streaming 能力、JSON-RPC transport 和 required execution v1 extension：
+
+```text
+https://tangxusc.github.io/block-play-table/a2a/extensions/execution/v1
 ```
 
-### 9.3 Manager 下发 Worker 的消息
+Manager 使用官方 SDK 的标准操作：
 
-Manager 不再以"命令式"主动下发任务指令。改为 Worker 通过 `/worker/ws` 连接成功后，Manager 内部 watch pump 订阅领域事件并按"分配给当前 Worker"的过滤条件派发下行 envelope；envelope 形态保持不变以便 Worker 端解析逻辑不动。
-
-| 消息类型 | 说明 |
+| 操作 | 用途 |
 | --- | --- |
-| `TASK_START` | watch pump 在任务进入 STARTING 且无 PendingDirective 时下发，payload 包含任务信息、任务级 Agent CLI 配置、Project Git URL、worktree 前缀，以及被分配 Worker 上匹配 Agent 类型的运行时环境变量 |
-| `TASK_CONTINUE` | watch pump 在任务 STARTING 且 PendingDirective 为 `CONTINUE` 时下发，payload 携带同一任务级 Agent CLI 配置、会话 ID、用户追加消息、worktree 路径和运行时环境变量 |
-| `TASK_INTERRUPT` | watch pump 在任务进入 INTERRUPTING 时下发 |
-| `TASK_INTERACTION_RESPONSE` | watch pump 在任务存在 PendingDirective 为 `INTERACTION_RESPONSE` 时下发，payload 包含 `interactionId`、`decision`、`message`、`payload` |
-| `PING` | 心跳检测 |
+| `SendStreamingMessage` | START、RETRY、CONTINUE，以及既有 Task 上的交互回复 |
+| `GetTask` | 首次对账、SSE 断线恢复和 sequence 缺口修复 |
+| `SubscribeToTask` | 继续订阅非终态 Task |
+| `CancelTask` | 中断当前执行 |
 
-`TASK_CANCEL` 与 `WORKER_CONFIG_UPDATE` 已下线：取消等价于中断（统一走 `TASK_INTERRUPT`）；Worker 配置变更通过下次 `WORKER_REGISTER` 携带最新 capabilities，无需独立消息。
+START、RETRY、CONTINUE 各创建一个可独立追踪的 A2A Task round。交互回复必须同时引用已有 `taskId` 和 `contextId`；Cancel 直接引用已有 `taskId`。Manager 对同一 Task 的执行 SSE 流实行独占调度：交互回复等待旧对账流退出后接管该流，避免终态与旧快照并发投影；Cancel 不等待流锁，以保证活跃执行始终可中断。`USER_INPUT` 只接受非空 message/payload 或 `CANCEL`，审批类交互必须显式提供 `APPROVE`、`APPROVE_FOR_SESSION`、`DENY` 或 `CANCEL`，Adapter 对未知决定再次拒绝，不能默认批准。Manager 在任何网络 I/O 前原子持久化 round 与 dispatch intent，使用唯一 `commandId` 保证 Worker 重试返回同一远端 Task。
 
-`TASK_START` payload 示例：
+### 9.3 Execution v1 扩展
 
-```json
-{
-  "task": {
-    "id": "task_001",
-    "title": "实现任务功能",
-    "description": "根据需求完成代码修改",
-    "agentType": "codex",
-    "agentConfig": {
-      "workMode": "implement",
-      "codex": {
-        "model": "gpt-5.4",
-        "reasoningEffort": "high",
-        "sandboxMode": "workspace-write",
-        "approvalPolicy": "never",
-        "fullAuto": true
-      }
-    },
-    "baseBranch": "main"
-  },
-  "project": {
-    "id": "project_001",
-    "gitUrl": "git@github.com:example/block-play-table.git",
-    "defaultBranch": "main",
-    "worktreeNamePrefix": "block-play-table"
-  },
-  "agentRuntimeEnv": [
-    {
-      "key": "OPENAI_API_KEY",
-      "value": "<runtime-value>",
-      "sensitive": true
-    }
-  ]
-}
-```
+标准 A2A Message 携带 `bpt.execution.request` DataPart，包含 operation、Manager Task/Worker 身份、attempt/turn、Project/worktree、Agent 配置、前后置命令和当前 Worker 对应 Agent 的运行时环境。Worker 不把敏感值写入 A2A TaskStore、Artifact、journal、日志或错误；持久化副本统一替换为 `[REDACTED]`。
 
-说明：`agentConfig` 来自任务分配动作，`TASK_START` 和 `TASK_CONTINUE` 使用同一份配置。`agentRuntimeEnv` 来自被分配 Worker 的配置，并且只包含当前任务 Agent 类型下已启用的变量。`value` 在 UI 和 API 展示时必须脱敏；下发给 Worker 执行任务时必须是可用明文值，因此生产环境必须使用 `wss` 并限制 Worker Token 权限。
+Worker 通过 Task 状态和带连续 `sequence` 的 `bpt.execution.event` 表达进度，事件闭集包括：
 
-### 9.4 Worker 上报 Manager 的消息
+- `execution.accepted`、`workspace.ready`
+- `agent.session.started`、`agent.session.updated`
+- `log.chunk`、`conversation.message`
+- `interaction.requested`、`interaction.resolved`
+- `result.updated`、`execution.diagnostic`
+- `execution.terminal`
 
-| 消息类型 | 说明 |
+Artifact role 分为 manifest、log、conversation、interaction、result、output 和 diagnostic。manifest 是恢复所需的最新快照；其他 Artifact 可重放增量事件。单个日志分块不得超过 32 KiB。Manager 用 `(roundId, eventId)` inbox 去重，日志、会话和诊断投影的全局记录 ID 同样包含 round ID，避免不同 execution 复用 event ID 时发生主键碰撞。Manager 要求 sequence 连续、远端 Task/Context 身份不变、终态单调；发现缺口时必须通过 `GetTask` 恢复，不能猜测缺失事件。
+
+### 9.4 状态投影与恢复
+
+| A2A/扩展状态 | Manager 投影 |
 | --- | --- |
-| `WORKER_REGISTER` | Worker 注册 |
-| `WORKER_HEARTBEAT` | Worker 心跳 |
-| `TASK_ACCEPTED` | Worker 接收任务 |
-| `TASK_STARTED` | 任务已启动 |
-| `TASK_LOG` | 任务日志 |
-| `TASK_CONVERSATION` | AI 对话 |
-| `TASK_WAITING_INPUT` | 等待用户输入 |
-| `TASK_INTERACTION_REQUEST` | Agent 请求用户输入、命令审批、文件审批或权限审批 |
-| `TASK_INTERACTION_RESOLVED` | Worker 确认 Agent 已接收用户响应，任务可恢复运行 |
-| `TASK_INTERRUPTED` | 任务已中断 |
-| `TASK_COMPLETED` | 任务已完成 |
-| `TASK_FAILED` | 任务失败 |
-| `TASK_RESULT` | 任务结果 |
+| submitted/working + `execution.accepted` | `STARTING` |
+| `workspace.ready` | 保存 worktree 并进入 `RUNNING` |
+| input-required/auth-required + `interaction.requested` | `WAITING_INPUT` |
+| completed + terminal COMPLETED | `COMPLETED` |
+| failed/rejected + 对应 terminal | `FAILED` |
+| Runtime 接受前的标准 rejected 文本状态 | `FAILED`，不消耗 execution sequence |
+| canceled + terminal CANCELED | `INTERRUPTED` |
 
-Manager 下发给 Worker 的实时交互消息：
+Manager 启动时扫描未终态 round 和到期 intent：发送前失败可重新领取；已绑定远端 Task 时先 `GetTask`，再 `SubscribeToTask`；SSE 不可用或 idle timeout 时回退为定期 `GetTask`。无法确认远端 Task 不存在时保持可恢复，确认不存在后才写入稳定失败码。Worker 重启时在探测 Codex/Claude CLI readiness 之前恢复 TaskStore：先识别 binding 已推进而新 A2A Task 尚未落盘的中断 CONTINUE，严格核对脱敏 command 后以 CAS 回滚到上一终态 Task，并保留 sequence、session 和 worktree；其余无法恢复的内存 Runtime 对应 Task 原子收敛为失败，并保留脱敏恢复摘要。
 
-| 消息类型 | 说明 |
-| --- | --- |
-| `TASK_INTERACTION_RESPONSE` | 用户对同一 `interactionId` 的批准、拒绝、取消或文本回答 |
-
-实时交互不复用 `TASK_CONTINUE`。`continueTask` 只用于已完成任务基于 `agentSessionId` 继续会话；运行中的授权和提问走 `TaskInteraction` 持久化闭环。
+Worker 在启动恢复后立即执行一次 retention/compaction，之后每 24 小时执行。终态 Task 的完整 Artifact 和 event journal 保留 90 天；到期后 Task 只保留最新 manifest、result、diagnostic Artifact 与终态状态，execution binding 继续保留 context、session 和 worktree。journal 以 `(executionId, turn)` 的终态 Task 作为删除边界，并同时要求事件自身 `created_at` 已到期；同 execution 下尚未终态的 turn 事件不能因较早 turn 到期而被删除。command inbox 到期后只清空 `request_json`，command hash、task/context/execution 等幂等摘要继续保留。
 
 ### 9.5 FRP 代理约束
 
-FRP 使用独立 `/worker/frp` WebSocket，避免与 `/worker/ws` 的 JSON 控制消息混流。Worker name 在 Manager 侧强制唯一，`/proxy/**`、`/terminal/tasks/{taskID}/ws` 和 `/terminal/workers/{workerID}/ws` 都按 name 精确匹配在线隧道。`worker_host` 允许 Worker 可解析的主机名或 IP，`worker_port` 允许任意合法 TCP 端口，因此该功能只适合可信网络；调用方可以通过 Manager 访问 Worker 本机或 Worker 网络中监听的 HTTP 服务。Task terminal 和 Worker terminal 进一步提供 Worker shell 访问，部署时必须按 trusted-mode 处理。
-`TASK_INTERACTION_RESOLVED` 会回带 `responded/decision/message/payload`，用于让 Manager 在恢复任务前幂等落库用户响应，避免 Agent 极快完成时终态清理把已响应交互误取消。
+FRP 使用独立 `/worker/frp` WebSocket，并以 yamux 多路复用 A2A、Review、terminal 和通用 proxy 流量。Worker name 在 Manager 侧强制唯一并只用于名称路由与冲突检测；A2A、Review 和 terminal 按不可变 Worker ID 查找在线 session，因此在线改名不会中断已有隧道。A2A 额外限制目标 host 必须是 loopback、端口和路径必须与 capability/Agent Card 一致。通用 `worker_host`/`worker_port` 路由仍按显式 Worker name 访问；这些路由和 terminal 提供 Worker 网络及 shell 访问，因此只适合 trusted mode。
 
 ## 10. 数据架构
 
@@ -1591,7 +1546,7 @@ PostgreSQL Implementation
 flowchart TD
     UI[Vue Web] --> M[Manager]
     M --> DB[(SQLite)]
-    M <-->|WebSocket| W[Local Worker]
+    M <-->|注册/心跳 + FRP/A2A| W[Local Worker]
     W --> A[Codex/Claude]
     W --> FS[Project Git Worktree]
 ```
@@ -1614,9 +1569,9 @@ flowchart TD
     U2[User Web/Desktop/App] --> LB
     LB --> M[Manager Service]
     M --> PG[(PostgreSQL)]
-    M <-->|WebSocket| W1[Worker Node 1]
-    M <-->|WebSocket| W2[Worker Node 2]
-    M <-->|WebSocket| W3[Worker Node N]
+    M <-->|注册/心跳 + FRP/A2A| W1[Worker Node 1]
+    M <-->|注册/心跳 + FRP/A2A| W2[Worker Node 2]
+    M <-->|注册/心跳 + FRP/A2A| W3[Worker Node N]
     W1 --> A1[Codex/Claude]
     W2 --> A2[Codex/Claude]
     W3 --> A3[Codex/Claude]
@@ -1628,7 +1583,7 @@ flowchart TD
 2. 使用 PostgreSQL 存储。
 3. Worker 可横向扩展。
 4. 用户通过 HTTP / HTTPS 访问 Manager。
-5. Worker 通过 WebSocket 长连接 Manager。
+5. Worker 通过注册/心跳 WebSocket 和 FRP 长连接 Manager，任务控制使用反向隧道内的 A2A。
 6. 通过反向代理统一 TLS、路由和访问入口。
 
 ### 11.3 推荐端口与路径
@@ -1636,7 +1591,8 @@ flowchart TD
 | 服务 | 默认端口 | 说明 |
 | --- | ---: | --- |
 | Manager HTTP / GraphQL | `8080` | GraphQL API |
-| Manager WebSocket | `8080` | 可与 HTTP 共用端口 |
+| Manager Worker 连接 | `8080` | 注册/心跳 WebSocket 与 FRP，共用 HTTP 端口 |
+| Worker A2A | 动态 loopback 端口 | 仅通过 FRP 访问，不对外暴露 |
 | PostgreSQL | `5432` | 生产数据库 |
 | Vue/Vite Dev | `3000` 或 `5173` | 开发环境 |
 
@@ -1648,11 +1604,12 @@ flowchart TD
 | `/auth/verify` | Manager token 校验 |
 | `/graphql` | GraphQL Query / Mutation |
 | `/subscriptions` | GraphQL Subscription |
-| `/worker/ws` | Worker WebSocket |
+| `/worker/ws` | Worker 注册、心跳和 capability 发现 |
+| `/worker/frp` | Worker yamux 反向隧道，承载 A2A/Review/terminal/proxy |
 | `/healthz` | 健康检查 |
 | `/readyz` | 就绪检查 |
 
-当 Manager 设置 `WORKER_TOKEN` 时，`/graphql`、`/subscriptions`、`/terminal/**` 和 `/proxy/**` 需要同一个固定 token；`/worker/ws` 和 `/worker/frp` 继续通过 `token` query 参数校验 Worker 连接。
+当 Manager 设置 `WORKER_TOKEN` 时，Manager 与 Worker 进程必须配置相同值；`/graphql`、`/subscriptions`、`/terminal/**` 和 `/proxy/**` 需要这个固定 token，`/worker/ws` 和 `/worker/frp` 通过 `token` query 参数校验连接，Manager 经 FRP 调用 Worker `/a2a` 时再发送同值 Bearer token。两端必须同时留空才能使用无 token 的本地兼容模式。
 
 ### 11.4 Docker 多阶段构建策略
 
@@ -1747,6 +1704,7 @@ last_heartbeat_at 超过 3 个心跳周期
 1. Worker 心跳超时 → 标记为 `OFFLINE`。
 2. 若 Worker 在 OFFLINE 时仍持有 `currentTaskIds`，则其名下处于 `ASSIGNED`/`STARTING`/`RUNNING`/`WAITING_INPUT`/`INTERRUPTING` 的任务一律 `Fail(reason="worker_lost: <workerID>")`，并清空 worker 的 `currentTaskIds`。
 3. 用户后续可对失败任务调用 `retryTask` 重新分配并启动；该 mutation 会清空旧 worker、`worktreePath`、`agentSessionId` 与 `result`，回到 `CREATED` 状态。
+4. 已认证控制连接发来的后续心跳会把非 `DISABLED` Worker 恢复为 `ONLINE`，避免墙钟跃迁或瞬时扫描竞态造成永久离线；禁用状态不能由心跳绕过。
 
 ### 12.2 事件可靠性
 
@@ -1761,7 +1719,7 @@ last_heartbeat_at 超过 3 个心跳周期
 事务提交后异步发布：
 
 1. GraphQL Subscription。
-2. Worker WebSocket 消息。
+2. A2A Task/Artifact 更新和 GraphQL Subscription。
 3. 内部异步处理器。
 
 ### 12.3 Worker 重连
@@ -1784,29 +1742,30 @@ Manager 根据上报信息恢复状态。
 
 1. Worker 注册。
 2. Worker 心跳。
-3. Task Start 下发。
-4. Task Log 上报。
-5. Task Completed 上报。
-6. Task Failed 上报。
-7. Task Interrupted 上报。
+3. A2A command intent 领取和发送。
+4. Worker command inbox 去重。
+5. Task/Context 绑定。
+6. execution event/Artifact 投影。
+7. Cancel 与终态投影。
 
-每条 WebSocket 消息应包含 `messageId`，Manager 记录已处理消息，避免重复消费。
+Manager 使用稳定 `commandId` 去重下发，Worker 对规范化请求内容做 hash 冲突校验；Manager 使用 `(roundId, eventId)` inbox 原子去重上行事件。
 
-### 12.5 Watch+Reconcile 控制面
+### 12.5 A2A Dispatch+Reconcile 控制面
 
-Manager 的下行不是命令式 push，而是 watch+reconcile 两段式：
+Manager 把用户命令与网络传输解耦为两段：
 
-1. **Watch pump**：Worker 通过 `/worker/ws` 连接成功后，Manager 内部为该连接启动一个 goroutine——先按 `workerID` list 一遍当前未终态的已分配任务并下发对应 envelope（`TASK_START` / `TASK_CONTINUE` / `TASK_INTERRUPT` / `TASK_INTERACTION_RESPONSE`），随后订阅领域事件，过滤出 `workerId == self` 的 `TaskAssigned` / `TaskStartRequested` / `TaskContinueRequested` / `TaskInterruptRequested` / `TaskDirectiveQueued` / `TaskDirectiveAcked` 事件并按当前 task 状态重新派生 envelope。Worker 短暂掉线再重连时，list 阶段会自然把缺漏的指令重发，无需 Manager 单独维护"未送达消息"队列。
-
-2. **Reconciler loop**：Manager 进程启动一个独立的 reconcile loop（默认间隔为心跳超时的 1/3）。每次 tick 扫描所有 Worker：
+1. **Command commit**：GraphQL mutation 在一个事务中校验 Task/Worker OCC，更新聚合，创建 A2A round，写入带唯一 command ID 的 `PENDING` dispatch intent，并保存领域事件。事务成功前不进行网络调用。
+2. **Dispatch/Reconcile loop**：后台循环领取到期 intent，通过 FRP/Agent Card 创建官方 A2A client，发送或取消远端 Task，并原子提交 Task/Context 绑定及每条流事件投影。Manager 重启时重新领取超时的 `SENDING` intent，并对所有已绑定非终态 round 先执行 `GetTask` 再恢复订阅。
+3. **Worker availability loop**：Manager 以心跳超时的 1/3 为默认间隔扫描 Worker：
    - `ONLINE` 且心跳新鲜：跳过；
    - `ONLINE` 且心跳过期、无 `currentTaskIds`：仅标 `OFFLINE`（等价于温和下线）；
    - 任何 `currentTaskIds` 仍非空但 Worker 已 OFFLINE 或心跳过期：调用 `MarkWorkerLost(workerID)`，把 Worker 标 OFFLINE 并将其名下所有未终态任务 `Fail("worker_lost: <workerID>")`，同时取消该任务下所有 PENDING 交互、释放 worker 上的 task 占用。
-   - `WorkerDisconnected`（WS 主动断开被 readLoop 检出）后也会立刻触发 `MarkWorkerLost`，无需等下次 reconciler tick；该方法本身幂等，与定时 loop 并存安全。
+   - 活跃控制连接的下一次合法心跳会恢复非禁用 Worker 的 `ONLINE` 状态；`DISABLED` 必须通过显式启用流程恢复。
+   - 注册 WebSocket 或 FRP 断开后也会触发不可达处理；该方法本身幂等，与定时 loop 并存安全。
 
 这套模型替代了旧的 `MonitorWorkerHeartbeats`：原先只把 Worker 标 OFFLINE，任务会永久卡在 `RUNNING`；现在保证 Worker 不可达时任务必然进入终态，用户可通过 `retryTask` 自行恢复。
 
-任务级别的瞬态指令（`continueTask` 的 message、`respondTaskInteraction` 的 decision/payload）通过 Task 聚合上的 `PendingDirective` 字段承载——写入聚合即等同于"投递"，watch pump 根据 directive 派生下行 envelope。Worker 上行 `TASK_STARTED`（CONTINUE 已被消费）或 `TASK_INTERACTION_RESOLVED`（INTERACTION 已被消费）时 Manager 自动清除 directive，无需新增独立的 ack 协议。
+CONTINUE 和交互回复的 message/decision/payload 保存在独立 dispatch intent 中；敏感环境值只在发送时从 Worker 配置重建，不进入 intent。远端 A2A Task 的状态、sequence 和 terminal 事件是消费确认来源，不再使用 Task 聚合上的瞬态 directive。
 
 ## 13. 安全设计
 
@@ -1814,8 +1773,8 @@ Manager 的下行不是命令式 push，而是 watch+reconcile 两段式：
 
 当前 trusted mode 支持两种模式：
 
-1. 本地兼容模式：`WORKER_TOKEN` 为空时，Manager 用户侧入口和 Worker WebSocket 保持开放。
-2. 固定 Token 模式：`WORKER_TOKEN` 非空时，同一个 token 保护 Manager 用户侧入口和 Worker WebSocket/FRP 连接。
+1. 本地兼容模式：`WORKER_TOKEN` 为空时，Manager 用户侧入口、Worker 注册/FRP 和 loopback A2A 端点保持开放。
+2. 固定 Token 模式：`WORKER_TOKEN` 非空时，同一个 token 保护 Manager 用户侧入口、Worker 注册/FRP，并作为 Manager 调用 Worker A2A 的 Bearer token。
 
 Manager 用户侧入口支持三种 token 传递方式：
 
@@ -1836,6 +1795,7 @@ ws://manager:8080/worker/frp?worker_id=worker-001&worker_name=team-worker&token=
 
 ```text
 wss://manager.example.com/worker/ws
+wss://manager.example.com/worker/frp
 ```
 
 ### 13.2 权限
@@ -1987,8 +1947,8 @@ worker:
 1. Manager 是业务核心，Worker 是执行节点。
 2. Domain 层保持纯粹，不依赖基础设施和外部协议。
 3. 所有关键业务行为都应产生领域事件。
-4. GraphQL 面向用户界面，WebSocket 面向 Worker。
-5. Worker 主动连接 Manager。
+4. GraphQL 面向用户界面，A2A 面向任务执行；WebSocket 只负责 Worker 发现和 FRP 隧道。
+5. Worker 主动建立注册和 FRP 连接，Manager 通过反向隧道访问 loopback A2A 服务。
 6. SQLite 面向本地模式，PostgreSQL 面向生产模式。
 7. Agent 执行通过统一接口抽象，便于扩展 Codex、Claude 或其他 Agent。
 8. Project 是 Git 仓库配置的唯一业务来源，Task 不重复保存 Git URL。
